@@ -1,11 +1,11 @@
 'use client';
-import { AppShell, Burger } from '@mantine/core';
+import { AppShell, Burger, Flex, Image, NavLink } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 
 export function ClientAppShell({ children }: { children: React.ReactNode }) {
   const [opened, { toggle }] = useDisclosure();
-
+  const router = useRouter();
   return (
     <AppShell
       header={{ height: 60 }}
@@ -22,20 +22,10 @@ export function ClientAppShell({ children }: { children: React.ReactNode }) {
       </AppShell.Header>
 
       <AppShell.Navbar p="md">
-        <ul>
-          <li>
-            <Link href="/dashboard">Dashboard</Link>
-          </li>
-          <li>
-            <Link href="/dashboard/appointments">Appointments</Link>
-          </li>
-          <li>
-            <Link href="/dashboard/products">Products</Link>
-          </li>
-          <li>
-            <Link href="/dashboard/profile">Profile</Link>
-          </li>
-        </ul>
+        <NavLink href="/dashboard" label="Dashboard" />
+        <NavLink href="/dashboard/appointments" label="Appointments" />
+        <NavLink href="/dashboard/products" label="Products" />
+        <NavLink href="/dashboard/profile" label="Profile" />
       </AppShell.Navbar>
       <AppShell.Main>{children}</AppShell.Main>
     </AppShell>
