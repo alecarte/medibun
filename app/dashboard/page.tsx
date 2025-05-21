@@ -1,3 +1,9 @@
+import { Text } from '@mantine/core';
+
 export default function DashboardPage() {
-  return <div>Dashboard</div>;
-}   
+  return (
+    <>
+      <Text size="xl">Dashboard</Text>
+    </>
+  );
+}
