@@ -1,5 +1,5 @@
-import { ClientAppShell } from '../components/layouts/ClientAppShell';
+import { AppShell } from '../components/layouts/AppShell';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  return <ClientAppShell>{children}</ClientAppShell>;
+  return <AppShell>{children}</AppShell>;
 }
