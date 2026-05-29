@@ -1,46 +1,32 @@
 {
-  "name": "medplum-nextjs-demo",
-  "version": "4.1.5",
+  "name": "medibun",
+  "version": "0.0.0",
   "private": true,
+  "license": "UNLICENSED",
   "type": "module",
+  "packageManager": "pnpm@11.4.0",
+  "engines": {
+    "node": ">=22.18.0"
+  },
   "scripts": {
-    "build": "next build",
-    "dev": "next dev",
-    "lint": "next lint",
-    "start": "next start"
-  },
-  "prettier": {
-    "printWidth": 120,
-    "singleQuote": true,
-    "trailingComma": "es5"
-  },
-  "eslintConfig": {
-    "extends": [
-      "@medplum/eslint-config"
-    ]
-  },
-  "dependencies": {
-    "@mantine/core": "7.17.7",
-    "@mantine/hooks": "7.17.7",
-    "@mantine/notifications": "7.17.7",
-    "@medplum/core": "^4.1.5",
-    "@medplum/react": "^4.1.5",
-    "@next/bundle-analyzer": "15.3.2",
-    "@tabler/icons-react": "^3.33.0",
-    "next": "15.3.2",
-    "react": "19.1.0",
-    "react-dom": "19.1.0",
-    "rfc6902": "5.1.2"
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,css}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,css}\""
   },
   "devDependencies": {
-    "@medplum/fhirtypes": "4.1.5",
-    "@types/node": "20.17.47",
-    "@types/react": "19.1.4",
-    "@types/react-dom": "19.1.5",
-    "eslint": "8.57.1",
-    "eslint-config-next": "15.3.2",
-    "postcss": "8.5.3",
-    "postcss-preset-mantine": "1.17.0",
-    "typescript": "5.8.3"
+    "turbo": "^2.5.0",
+    "typescript": "catalog:",
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "@eslint/js": "catalog:",
+    "typescript-eslint": "catalog:",
+    "prettier": "catalog:",
+    "eslint-config-prettier": "catalog:",
+    "vitest": "catalog:",
+    "@vitest/coverage-v8": "catalog:"
   }
 }

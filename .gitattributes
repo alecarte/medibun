@@ -1,3 +1,2 @@
-package-lock.json -diff
-package-lock.json linguist-generated=true
-
+pnpm-lock.yaml -diff
+pnpm-lock.yaml linguist-generated=true
