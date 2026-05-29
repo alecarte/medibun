@@ -54,3 +54,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 expo-env.d.ts
+
+# claude code local state
+.claude/scheduled_tasks.lock
