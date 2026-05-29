@@ -1,0 +1,42 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Centralized dependency versions (pnpm catalogs). Reference with "catalog:".
+# Keeps the two Next.js apps, the Expo app, and the shared packages aligned.
+catalog:
+  # Core language / runtime
+  typescript: 6.0.2
+  "@types/node": ^22.10.0
+
+  # React (web) — Next 16 + React 19
+  react: ^19.0.0
+  react-dom: ^19.0.0
+  "@types/react": ^19.0.0
+  "@types/react-dom": ^19.0.0
+
+  # Web framework
+  next: ^16.2.0
+
+  # Styling (web)
+  tailwindcss: ^4.0.0
+  "@tailwindcss/postcss": ^4.0.0
+  motion: ^12.0.0
+  next-themes: ^0.4.0
+
+  # Design tokens build
+  style-dictionary: ^5.0.0
+
+  # Testing (web + packages)
+  vitest: ^4.0.0
+  "@vitest/coverage-v8": ^4.0.0
+  "@testing-library/react": ^16.1.0
+  "@testing-library/jest-dom": ^6.6.0
+  jsdom: ^25.0.0
+
+  # Lint / format
+  eslint: ^9.18.0
+  "@eslint/js": ^9.18.0
+  typescript-eslint: ^8.20.0
+  prettier: ^3.4.0
+  eslint-config-prettier: ^9.1.0
