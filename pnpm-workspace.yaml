@@ -4,6 +4,7 @@ packages:
 
 # Allow build scripts only for vetted native deps (Next.js image optimization).
 allowBuilds:
+  esbuild: true
   sharp: true
   unrs-resolver: true
 

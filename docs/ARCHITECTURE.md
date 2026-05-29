@@ -121,6 +121,17 @@ GUI — web swaps a `[data-brand]` CSS-variable scope; mobile swaps the restyle 
 hardcode brand values. Cross-platform theme sync is solved here (shared neutral tokens), not by
 sharing a styling engine.
 
+## Medplum deployment (dev vs prod)
+
+- **Dev:** a **self-hosted Medplum server runs locally via Docker Compose** (`infra/medplum/`,
+  pinned 5.1.9). Synthetic data only; no BAA needed (our infrastructure, never exposed). See
+  `infra/medplum/README.md`.
+- **Prod (later):** **Medplum Cloud** (Phase 1), which requires the Medplum BAA before any real PHI.
+- The Medplum SDK lives only in `packages/medplum-backend` (the first slice of the backend/BFF) —
+  never in the product apps. `createMedplumClient` reads connection + credentials from the
+  environment; the local Subscription→Bot loop is proven by
+  `packages/medplum-backend/src/scripts/verify-subscription.ts`.
+
 ## Stack (locked)
 
 Monorepo: pnpm 11 + Turborepo 2, TypeScript 6 strict. Web (`portal`, `staff`): Next 16 App Router

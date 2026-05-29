@@ -10,8 +10,10 @@ Core, auth, org model (Handal + Aureva). Start the slow paperwork **now**: BAAs 
 comms, Sentry, PostHog), DoseSpot enrollment, Apple Developer. Verify 4D's export capability.
 
 *Bootstrap status (2026-05-29):* monorepo scaffold ✅ · CLAUDE.md ✅ · `.claude/` hardening ✅ ·
-`/docs` stubs ✅ · Medplum wiring = next (`[PLAN]`, approval-gated). See
-`PROJECT_BRIEF.md` §6 / memory `bootstrap-sequencing`.
+`/docs` stubs ✅ · Medplum wiring ✅ (self-hosted local dev; Subscription→Bot proven end to end).
+All §6 bootstrap steps done. **Dev = self-hosted Medplum (`infra/medplum/`); prod = Medplum Cloud
+later (needs BAA).** Outstanding paperwork: start the Medplum **BAA** clock + Cloud account for
+Phase 1; DoseSpot enrollment; Apple Developer; verify 4D export.
 
 ## Phase 1 — Aureva launch (months 1–3)
 

@@ -16,6 +16,9 @@ Rule: clinical data never moves into the experience DB and vice versa; they refe
 ID. PHI lives in Medplum (and transiently in the BFF), never in client storage, logs, analytics, or
 Stripe. See `.claude/rules/{security,fhir}.md`.
 
+The Medplum side runs self-hosted locally for dev (`infra/medplum/`) and on Medplum Cloud for prod
+later; the SDK lives only in `packages/medplum-backend`. See `docs/ARCHITECTURE.md`.
+
 ## Aureva FHIR model — TO BE DESIGNED (ask first)
 
 The brief's first real work item is the **Aureva** (medspa) FHIR data model. Do not model these
