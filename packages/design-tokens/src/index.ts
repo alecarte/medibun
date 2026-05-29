@@ -20,7 +20,12 @@ export const brandVariableNames = [
  * The default restyle theme object for the mobile app. Mirrors the same tokens the web
  * apps consume as CSS variables. A brand swap replaces this object via restyle's
  * ThemeProvider; the semantic keys stay identical across platforms.
+ *
+ * Dimension tokens are authored as `px` strings (for web CSS variables); React Native
+ * needs unitless numbers, so spacing/radii are parsed to numbers here for restyle.
  */
+const px = (value: string): number => Number.parseFloat(value);
+
 export const defaultTheme = {
   colors: {
     primary: tokens["brand-color-primary"],
@@ -30,16 +35,16 @@ export const defaultTheme = {
     muted: tokens["brand-color-muted"],
   },
   spacing: {
-    s: tokens["space-2"],
-    m: tokens["space-4"],
-    l: tokens["space-6"],
-    xl: tokens["space-8"],
+    s: px(tokens["space-2"]),
+    m: px(tokens["space-4"]),
+    l: px(tokens["space-6"]),
+    xl: px(tokens["space-8"]),
   },
   borderRadii: {
-    sm: tokens["radius-sm"],
-    md: tokens["radius-md"],
-    lg: tokens["radius-lg"],
-    full: tokens["radius-full"],
+    sm: px(tokens["radius-sm"]),
+    md: px(tokens["radius-md"]),
+    lg: px(tokens["radius-lg"]),
+    full: px(tokens["radius-full"]),
   },
 } as const;
 
