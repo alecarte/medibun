@@ -1,32 +1,51 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-package-lock.json
+
 # dependencies
-/node_modules
-/.pnp
+node_modules/
+.pnp
 .pnp.js
 
-# testing
-/coverage
+# testing / coverage
+coverage/
+
+# turborepo
+.turbo/
 
 # next.js
-/.next/
-/out/
+.next/
+out/
 
-# production
-/build
+# production builds
+build/
+dist/
+
+# expo / react native / metro
+.expo/
+.expo-shared/
+*.orig.*
+web-build/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+ios/
+android/
 
 # misc
 .DS_Store
 *.pem
 
-# debug
+# debug logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
 # local env files
-.env*.local
+.env
+.env.*
+!.env.example
 
 # vercel
 .vercel
@@ -34,3 +53,4 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+expo-env.d.ts
