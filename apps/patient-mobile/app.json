@@ -7,9 +7,17 @@
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-    "plugins": ["expo-router"],
+    "plugins": [
+      "expo-router"
+    ],
     "experiments": {
       "typedRoutes": true
+    },
+    "android": {
+      "package": "com.anonymous.aurevapatient"
+    },
+    "ios": {
+      "bundleIdentifier": "com.anonymous.aurevapatient"
     }
   }
 }
