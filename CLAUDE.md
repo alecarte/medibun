@@ -23,6 +23,14 @@ already made; read it for context. This file governs *how* we work.
 5. **Whole-repo awareness** — before non-trivial work, read `/docs/ARCHITECTURE.md`,
    `/docs/DATA_MODEL.md`, and `/docs/ROADMAP.md`; keep the system-wide view.
 
+**Calibrate to the task.** Trade speed for caution on non-trivial work; exercise judgment on
+trivial tasks — don't apply heavy ceremony to a one-line fix. The principles are a discipline, not
+a bureaucracy.
+
+**Success indicators** (the principles are working when): fewer unnecessary diff changes; fewer
+rewrites caused by over-engineering; clarifying questions asked *upfront* rather than corrections
+needed after implementation.
+
 ## Security & HIPAA — non-negotiable
 
 - PHI never leaks into: logs, error messages, analytics/telemetry, URLs or query params, push or
