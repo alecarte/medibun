@@ -1,0 +1,4 @@
+/* Runtime-theming contract: the brand CSS variables (overridable per [data-brand]). */
+@import "@medibun/design-tokens/theme.css";
+/* Tailwind v4 + the generated @theme that maps color utilities to those variables. */
+@import "@medibun/design-tokens/tailwind.css";

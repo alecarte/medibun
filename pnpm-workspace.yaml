@@ -2,6 +2,10 @@ packages:
   - "apps/*"
   - "packages/*"
 
+# Allow build scripts only for vetted native deps (Next.js image optimization).
+allowBuilds:
+  sharp: true
+
 # Centralized dependency versions (pnpm catalogs). Reference with "catalog:".
 # Keeps the two Next.js apps, the Expo app, and the shared packages aligned.
 catalog:

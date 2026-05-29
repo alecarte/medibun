@@ -2,6 +2,7 @@
   "name": "medibun",
   "version": "0.0.0",
   "private": true,
+  "license": "UNLICENSED",
   "type": "module",
   "packageManager": "pnpm@11.4.0",
   "engines": {
