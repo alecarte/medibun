@@ -8,6 +8,6 @@ import { defineConfig } from "vitest/config";
  */
 export default defineConfig({
   test: {
-    projects: ["packages/*", "apps/portal", "apps/staff"],
+    projects: ["packages/*", "apps/api", "apps/portal", "apps/staff"],
   },
 });
