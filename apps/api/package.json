@@ -11,6 +11,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@medibun/api-client": "workspace:*",
+    "@medibun/fhir-types": "workspace:*",
     "@medibun/medplum-backend": "workspace:*",
     "hono": "catalog:",
     "@hono/node-server": "catalog:"

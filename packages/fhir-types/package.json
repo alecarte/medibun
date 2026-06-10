@@ -20,6 +20,9 @@
     "lint": "eslint .",
     "test": "vitest run"
   },
+  "dependencies": {
+    "@medplum/fhirtypes": "5.1.9"
+  },
   "devDependencies": {
     "typescript": "catalog:",
     "vitest": "catalog:",
