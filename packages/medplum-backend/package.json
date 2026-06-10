@@ -19,7 +19,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "verify:subscription": "tsx --env-file=../../infra/medplum/.env src/scripts/verify-subscription.ts"
+    "verify:subscription": "tsx --env-file=../../infra/medplum/.env src/scripts/verify-subscription.ts",
+    "seed:patient": "tsx --env-file=../../infra/medplum/.env src/scripts/seed-synthetic-patient.ts"
   },
   "dependencies": {
     "@medplum/core": "5.1.9",

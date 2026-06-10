@@ -119,6 +119,12 @@ importers:
       '@hono/node-server':
         specifier: 'catalog:'
         version: 1.19.14(hono@4.12.25)
+      '@medibun/api-client':
+        specifier: workspace:*
+        version: link:../../packages/api-client
+      '@medibun/fhir-types':
+        specifier: workspace:*
+        version: link:../../packages/fhir-types
       '@medibun/medplum-backend':
         specifier: workspace:*
         version: link:../../packages/medplum-backend
@@ -419,6 +425,10 @@ importers:
         version: 4.1.7(@types/node@22.19.19)(@vitest/coverage-v8@4.1.7)(jsdom@25.0.1)(vite@8.0.14(@types/node@22.19.19)(esbuild@0.28.0)(jiti@2.7.0)(terser@5.48.0)(tsx@4.22.3)(yaml@2.9.0))
 
   packages/fhir-types:
+    dependencies:
+      '@medplum/fhirtypes':
+        specifier: 5.1.9
+        version: 5.1.9
     devDependencies:
       '@eslint/js':
         specifier: 'catalog:'
