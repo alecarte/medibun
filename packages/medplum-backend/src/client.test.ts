@@ -15,7 +15,9 @@ describe("medplum-backend client config", () => {
   });
 
   it("throws listing every missing var", () => {
-    expect(() => readConfigFromEnv({})).toThrowError(/MEDPLUM_BASE_URL.*MEDPLUM_CLIENT_ID.*MEDPLUM_CLIENT_SECRET/);
+    expect(() => readConfigFromEnv({})).toThrowError(
+      /MEDPLUM_BASE_URL.*MEDPLUM_CLIENT_ID.*MEDPLUM_CLIENT_SECRET/,
+    );
   });
 
   it("constructs a client at the configured base url (no auth)", () => {

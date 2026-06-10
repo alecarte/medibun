@@ -6,7 +6,7 @@ violate a rule here, **refuse and explain** rather than comply. When a complianc
 unclear, **STOP and ask** — never guess on HIPAA, access, or audit.
 
 `PROJECT_BRIEF.md` remains the authoritative record of what we're building and the decisions
-already made; read it for context. This file governs *how* we work.
+already made; read it for context. This file governs _how_ we work.
 
 ---
 
@@ -28,7 +28,7 @@ trivial tasks — don't apply heavy ceremony to a one-line fix. The principles a
 a bureaucracy.
 
 **Success indicators** (the principles are working when): fewer unnecessary diff changes; fewer
-rewrites caused by over-engineering; clarifying questions asked *upfront* rather than corrections
+rewrites caused by over-engineering; clarifying questions asked _upfront_ rather than corrections
 needed after implementation.
 
 ## Security & HIPAA — non-negotiable

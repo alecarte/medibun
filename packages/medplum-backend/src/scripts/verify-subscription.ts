@@ -71,7 +71,9 @@ async function main(): Promise<void> {
     console.log("✓ bot fired — AuditEvent:", found.id);
     console.log("\nPASS: Subscription fired the Bot end to end.");
   } else {
-    console.error("\nFAIL: no AuditEvent observed within 20s. Check the server logs and that the bot deployed.");
+    console.error(
+      "\nFAIL: no AuditEvent observed within 20s. Check the server logs and that the bot deployed.",
+    );
     process.exitCode = 1;
   }
 }

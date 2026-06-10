@@ -33,7 +33,9 @@ export function readConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Medplum
     .filter(([, v]) => !v)
     .map(([k]) => k);
   if (missing.length > 0) {
-    throw new Error(`Missing Medplum env vars: ${missing.join(", ")} (see infra/medplum/.env.example)`);
+    throw new Error(
+      `Missing Medplum env vars: ${missing.join(", ")} (see infra/medplum/.env.example)`,
+    );
   }
   return { baseUrl: baseUrl!, clientId: clientId!, clientSecret: clientSecret! };
 }

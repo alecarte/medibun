@@ -5,12 +5,12 @@ the environment is up, and per the brief we **ask before modeling**. Nothing bel
 
 ## Two stores, one reconciliation key
 
-| | **Medplum (clinical)** | **Our DB (experience)** |
-|---|---|---|
-| Owns | FHIR clinical record — the source of truth | Non-clinical experience data |
-| Examples | Patient, Practitioner, Encounter, Observation, consents, charting, prescriptions | Memberships, loyalty/rewards, app preferences, push tokens, growth-journey state |
-| Accessed via | The BFF only (server-side Medplum SDK) | The BFF (its own database) |
-| Reconciled by | **patient ID** ←──────────────────────────→ **patient ID** | |
+|               | **Medplum (clinical)**                                                           | **Our DB (experience)**                                                          |
+| ------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Owns          | FHIR clinical record — the source of truth                                       | Non-clinical experience data                                                     |
+| Examples      | Patient, Practitioner, Encounter, Observation, consents, charting, prescriptions | Memberships, loyalty/rewards, app preferences, push tokens, growth-journey state |
+| Accessed via  | The BFF only (server-side Medplum SDK)                                           | The BFF (its own database)                                                       |
+| Reconciled by | **patient ID** ←──────────────────────────→ **patient ID**                       |                                                                                  |
 
 Rule: clinical data never moves into the experience DB and vice versa; they reference each other by
 ID. PHI lives in Medplum (and transiently in the BFF), never in client storage, logs, analytics, or
@@ -30,7 +30,7 @@ the rationale:
 - **Treatment series** — multi-session treatment plans/packages and progress. Likely CarePlan /
   related Procedures; TBD.
 - **Consents** — treatment/photo/financial consents. FHIR Consent; TBD.
-- **Memberships** — note the split: clinical eligibility vs. the membership *product/billing* (the
+- **Memberships** — note the split: clinical eligibility vs. the membership _product/billing_ (the
   latter is experience data + Stripe, not FHIR). TBD where the line sits.
 
 Each model entry should record: chosen FHIR resource(s), any custom extension (with URL + why

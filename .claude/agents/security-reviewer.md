@@ -43,6 +43,7 @@ Review the current diff (`git diff` and staged changes). For every changed hunk,
 Start with a verdict line: `VERDICT: PASS` or `VERDICT: CHANGES REQUIRED`.
 
 Then, for each finding:
+
 - `severity` (BLOCKER / HIGH / MEDIUM / LOW)
 - `file:line`
 - what the rule is and how the change violates it

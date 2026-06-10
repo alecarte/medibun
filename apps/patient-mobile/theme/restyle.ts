@@ -1,8 +1,4 @@
-import {
-  createBox,
-  createText,
-  useTheme as useRestyleTheme,
-} from "@shopify/restyle";
+import { createBox, createText, useTheme as useRestyleTheme } from "@shopify/restyle";
 import type { Theme } from "./index";
 
 /** Typed restyle primitives bound to our Theme. */
