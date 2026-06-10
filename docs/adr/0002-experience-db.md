@@ -1,7 +1,7 @@
 # ADR-0002: Experience database (vendor + ORM)
 
-- **Status:** Proposed (decision checkpoint: Alec — this is also the human-approval gate for a
-  new PHI-touching service per CLAUDE.md)
+- **Status:** Accepted (Alec, 2026-06-10 — including the human-approval gate for Neon as a new
+  PHI-touching service per CLAUDE.md; BAA still required before production data)
 - **Date:** 2026-06-10
 - **Sprint:** 01, goal 2 (see `docs/sprints/2026-06-10-sprint-01.md`)
 

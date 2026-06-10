@@ -1,6 +1,6 @@
 # ADR-0001: BFF runtime
 
-- **Status:** Proposed (decision checkpoint: Alec)
+- **Status:** Accepted (Alec, 2026-06-10)
 - **Date:** 2026-06-10
 - **Sprint:** 01, goal 2 (see `docs/sprints/2026-06-10-sprint-01.md`)
 
