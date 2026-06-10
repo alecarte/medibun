@@ -9,7 +9,7 @@ coding speed — so every paperwork clock starts on day one and runs in parallel
 Core, auth, org model (Handal + Aureva). Start the slow paperwork **now**: BAAs (Medplum, Vercel,
 comms, Sentry, PostHog), DoseSpot enrollment, Apple Developer. Verify 4D's export capability.
 
-*Bootstrap status (2026-05-29):* monorepo scaffold ✅ · CLAUDE.md ✅ · `.claude/` hardening ✅ ·
+_Bootstrap status (2026-05-29):_ monorepo scaffold ✅ · CLAUDE.md ✅ · `.claude/` hardening ✅ ·
 `/docs` stubs ✅ · Medplum wiring ✅ (self-hosted local dev; Subscription→Bot proven end to end).
 All §6 bootstrap steps done. **Dev = self-hosted Medplum (`infra/medplum/`); prod = Medplum Cloud
 later (needs BAA).** Outstanding paperwork: start the Medplum **BAA** clock + Cloud account for

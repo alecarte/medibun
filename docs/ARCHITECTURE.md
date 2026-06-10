@@ -73,7 +73,7 @@ Keeping this line clean is what stops the BFF bloating into #3 or duplicating Me
 
 ### Known itches + additive escape valves (none require leaving #2)
 
-- **Latency / double round-trip** → allow *selective* direct FHIR **reads** from the staff app via
+- **Latency / double round-trip** → allow _selective_ direct FHIR **reads** from the staff app via
   the Medplum SDK + AccessPolicy later (writes/orchestration stay behind the BFF). Keep
   `api-client` shaped so a read-through path can be added without a rewrite.
 - **DTO⇄FHIR translation drift** → codegen from FHIR profiles, or share `@medplum/fhirtypes` for

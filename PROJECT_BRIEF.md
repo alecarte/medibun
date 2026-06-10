@@ -5,7 +5,7 @@
 This is the seed brief for the project and the authoritative record of what we're building, the
 decisions already made, and the order to build in. Read it in full before doing anything. Your
 first job is the **Bootstrap Plan** in §6: scaffold the repo, generate `CLAUDE.md` from the
-*Operating Constitution* in §4, stand up the `.claude/` hardening and `/docs`, and wire Medplum.
+_Operating Constitution_ in §4, stand up the `.claude/` hardening and `/docs`, and wire Medplum.
 Work through it in order, using plan mode for the steps marked `[PLAN]`, pausing for my approval
 at each checkpoint. Apply the four working principles (think before coding, simplicity first,
 surgical changes, goal-driven) to your own bootstrap work too. When a compliance question is
@@ -23,7 +23,7 @@ We own three product surfaces — a patient mobile app, a patient web portal, an
 (practitioner + front-desk) app — plus a growth/CRM engine. The marketing site is built
 externally and only deep-links into our portal.
 
-End state: we *are* our own EMR. Clinicians document in our own UI, Medplum is the clinical data
+End state: we _are_ our own EMR. Clinicians document in our own UI, Medplum is the clinical data
 core, and regulated commodity services (prescribing, payments) are integrated, never rebuilt.
 
 ## 2. Decisions already made (don't relitigate)
@@ -32,7 +32,7 @@ core, and regulated commodity services (prescribing, payments) are integrated, n
   FHIR-native, HIPAA-eligible, with Subscriptions + Bots. Start on Medplum Cloud; self-hosting
   later is possible because it's open source.
 - **One core for both practices.** A single clinical record of truth across Handal and Aureva.
-- **Anti-corruption boundary:** apps talk only to *our* backend, never directly to Medplum or
+- **Anti-corruption boundary:** apps talk only to _our_ backend, never directly to Medplum or
   any EMR. This isolation is what lets us evolve the core and add tenants later.
 - **Two sources of truth:** Medplum owns clinical data; our database owns experience data
   (memberships, loyalty, app preferences, push tokens, growth-journey state). Reconcile by
@@ -138,12 +138,13 @@ paperwork clock on day one and run it in parallel with the build.
 ## 6. Bootstrap Plan (execute in order)
 
 `[PLAN]` **1. Scaffold the monorepo and stack** from §3. Don't install any PHI-touching
-dependency without flagging it for approval. *Verify:* `pnpm install`, typecheck, and a dev
+dependency without flagging it for approval. _Verify:_ `pnpm install`, typecheck, and a dev
 build run for each app.
 
-**2. Generate `CLAUDE.md`** at the repo root from §4. *Verify:* it loads as project memory.
+**2. Generate `CLAUDE.md`** at the repo root from §4. _Verify:_ it loads as project memory.
 
 **3. Create the `.claude/` hardening:**
+
 - `settings.json` hooks — a PreToolUse gate that blocks edits/commits introducing secrets or PHI
   patterns and denies destructive commands (`rm -rf`, force-push, db drops); a PostToolUse hook
   running typecheck + lint + tests after Write/Edit; a prompt-type hook routing any edit touching
@@ -152,13 +153,13 @@ build run for each app.
   the rules in §4 and reports violations.
 - `rules/security.md`, `rules/fhir.md` (Medplum resource + AccessPolicy conventions),
   `rules/testing.md` (test-first; definition of done).
-*Verify:* hooks fire on a test edit; the deny rule blocks a sample `rm -rf`.
+  _Verify:_ hooks fire on a test edit; the deny rule blocks a sample `rm -rf`.
 
 **4. Create `/docs` stubs** seeded from this brief: `ARCHITECTURE.md`, `DATA_MODEL.md`,
 `ROADMAP.md`.
 
 `[PLAN]` **5. Wire Medplum Cloud** — SDK, one hello-world Bot, one Subscription — and confirm
-auth with a test patient. No real PHI. *Verify:* a Subscription fires the Bot end to end.
+auth with a test patient. No real PHI. _Verify:_ a Subscription fires the Bot end to end.
 
 When the environment is up, the first real work item is the Aureva FHIR data model in
 `DATA_MODEL.md` — the resources and extensions for injection maps, treatment series, consents,
