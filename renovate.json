@@ -1,0 +1,34 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":semanticCommitsDisabled"],
+  "timezone": "America/New_York",
+  "schedule": ["before 9am on monday"],
+  "prConcurrentLimit": 5,
+  "rangeStrategy": "bump",
+  "postUpdateOptions": ["pnpmDedupe"],
+  "packageRules": [
+    {
+      "description": "Medplum packages move in lockstep (same version) — one PR for all of them. Pinned exact; a Medplum bump may affect clinical behavior, so review deliberately.",
+      "matchPackageNames": ["@medplum/**", "medplum/**"],
+      "groupName": "medplum (lockstep)",
+      "rangeStrategy": "pin",
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Expo SDK + React Native move together via the Expo upgrade flow, not piecemeal — surface but never auto-PR.",
+      "matchPackageNames": ["expo*", "@expo/**", "react-native*", "@react-native/**"],
+      "groupName": "expo sdk",
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Group safe minor/patch updates for the rest into a weekly PR.",
+      "matchUpdateTypes": ["minor", "patch"],
+      "matchPackageNames": ["!@medplum/**", "!expo*", "!@expo/**", "!react-native*"],
+      "groupName": "weekly minor + patch"
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "schedule": ["at any time"]
+  }
+}
