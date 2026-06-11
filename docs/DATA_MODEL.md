@@ -1,8 +1,9 @@
 # Data model
 
-Seeded from `PROJECT_BRIEF.md`. The Aureva model below is **v1 DRAFT — pending Alec's review**
-(Sprint 01, goal 5; this document is the "ask before modeling" artifact). Nothing below is
-implemented; no code is written against this model until the draft is accepted.
+Seeded from `PROJECT_BRIEF.md`. The Aureva model below is **v1 — validated and accepted
+2026-06-11** (Sprint 01, goal 5). It was adversarially reviewed against the FHIR R4 spec and
+Medplum 5.1.x docs; corrections from that review are incorporated. Nothing below is implemented
+yet; implementation follows the normal PR + security-reviewer discipline.
 
 ## Two stores, one reconciliation key
 
@@ -23,11 +24,20 @@ later; the SDK lives only in `packages/medplum-backend`. See `docs/ARCHITECTURE.
 ## Multi-tenant (Handal + Aureva) — DECIDED
 
 **One Medplum Project, parameterized AccessPolicies** — see `docs/adr/0003-multi-tenancy.md`
-(Accepted 2026-06-11). `Organization` per practice; every clinical resource tagged with its owning
-practice at write time; access via Organization-parameterized AccessPolicy templates bound through
-`ProjectMembership`. Least-privilege, default-deny; policy widening is approval-gated.
+(Accepted 2026-06-11). Mechanics (verified against Medplum docs):
 
-## Aureva FHIR model — v1 DRAFT (pending review)
+- `Organization` per practice; clinical resources carry the owning practice in **`meta.accounts`**
+  (plural — the current field; singular `meta.account` is legacy).
+- Policy criteria use Medplum parameter substitution (e.g.
+  `Patient?_compartment=%organization`), with `ProjectMembership.access[].parameter[]` supplying
+  the Organization per membership. Least-privilege, default-deny; widening is approval-gated.
+- **Tagging mechanics:** only project admins can write `meta.accounts` directly; the supported
+  mutation path is the `$set-accounts` operation. Account tags auto-propagate only for resources
+  in the **Patient compartment**; non-patient-compartment resources (Schedule, Location, …) need
+  explicit tagging or criteria-based scoping. The BFF's ClientApplication therefore needs the
+  rights to set accounts — granting that is itself an approval-gated access decision.
+
+## Aureva FHIR model — v1 (accepted 2026-06-11)
 
 ### Org & people
 
@@ -36,49 +46,70 @@ practice at write time; access via Organization-parameterized AccessPolicy templ
 | Practice | `Organization` (`org-aureva`)            | Tenancy anchor (ADR-0003).                                              |
 | Site     | `Location` (managed by the Organization) | One per physical site.                                                  |
 | Staff    | `Practitioner` + `PractitionerRole`      | Role binds practitioner ⇄ org ⇄ specialty; shared staff = role per org. |
-| Patient  | `Patient` (core-wide)                    | One record across practices. Cross-practice visibility: see open Q1.    |
+| Patient  | `Patient` (core-wide)                    | One record across practices. Visibility: decided, see below.            |
 | Visit    | `Encounter`                              | One per appointment-turned-visit; everything clinical hangs off it.     |
+
+**Cross-practice visibility (decided):** demographics shared; clinical history **org-siloed by
+default** (Aureva staff do not see Handal surgical records). An explicit break-glass path can come
+later as its own approval-gated design.
 
 ### Booking (owned online booking, Phase 1)
 
-- `Schedule` (per practitioner+location) → `Slot` → `Appointment`. Standard FHIR scheduling; the
-  BFF owns the booking UX and writes `Appointment` (status `proposed`→`booked`); a Bot handles
-  confirmations/reminders on Subscription.
+- Use **Medplum's scheduling operations** — `$find` / `$hold` / `$book` / `$confirm` / `$cancel` —
+  rather than raw `Appointment`/`Slot` writes. Slots are _synthetic_ (computed on demand from the
+  Schedule's availability) and `$book` creates the Appointment + busy Slot atomically, so Medplum
+  owns double-booking prevention.
+- Medplum constraint: a `Schedule` has **exactly one actor** (the `Practitioner`, with the
+  timezone extension); location is carried on the Appointment, not as a second Schedule actor.
+  Note: Medplum's availability definition is currently **Alpha** — track it as a dependency risk.
 - **Service menu lives in the experience DB** (names, durations, prices, Stripe product ids — no
   PHI, freely editable). Each service row carries a code from our CodeSystem
-  `https://medibun.com/fhir/CodeSystem/services`, which is what appears in
-  `Appointment.serviceType` / `Procedure.code`. Price never enters FHIR; what-was-performed never
-  lives only in the experience DB.
+  `https://medibun.com/fhir/CodeSystem/services`, used in `Appointment.serviceType` (CodeableConcept,
+  example binding — custom CodeSystem is conformant) and `Procedure.code`. Price never enters
+  FHIR; what-was-performed never lives only in the experience DB.
 
 ### Clinical capture v1 — injectables (the flagship Aureva workflow)
 
-- **`MedicationAdministration` per product per injection site** — neurotoxin/filler administration
-  is literally medication administration: `dosage.dose` (units), `dosage.site` (SNOMED body site),
-  `medication` → `Medication` with `batch.lotNumber`. Grouped under a `Procedure` (the treatment,
-  e.g. "Botox treatment") within the `Encounter`.
-- **Injection-map coordinates** (the tap-on-face diagram): custom extension on
+- **`MedicationAdministration` per product per injection site**: `status: completed` (required),
+  `subject` → Patient (required), `effectiveDateTime` (required), `dosage.dose` (units),
+  `dosage.site` (SNOMED body site), `dosage.route`, **`partOf` → `Procedure`** (the treatment,
+  e.g. "Botox treatment") and `context` → `Encounter`.
+- **Lot tracking:** `medication` → a standalone `Medication` per **product + lot**
+  (`batch.lotNumber`), not per product — one shared per-product resource would corrupt lot history
+  across administrations, and standalone per-lot resources keep recalls searchable via the
+  standard `lot-number` search parameter ("which patients received lot X").
+- **Injection-map coordinates** (the tap-on-face diagram): complex extension on
   `MedicationAdministration.dosage` —
-  `https://medibun.com/fhir/StructureDefinition/injection-point` carrying normalized `{x, y, view}`
-  (view ∈ front/left/right/back). **Rationale for the extension:** FHIR has no element for 2D
-  diagram coordinates; SNOMED body sites stay the semantic truth, the extension is presentation
-  geometry only.
-- **Clinical photos**: `Media` (+ `Binary`) linked to the Encounter; capture/use gated on the photo
-  `Consent`. PHI: same handling as any clinical resource.
+  `https://medibun.com/fhir/StructureDefinition/injection-point` with `{x, y, view}` sub-extensions
+  (view ∈ front/left/right/back), normalized to a canonical face diagram. **Rationale:** FHIR has
+  no element for 2D diagram coordinates; SNOMED body sites stay the semantic truth, the extension
+  is presentation geometry only. Exact shape finalizes with the staff-app canvas design (deferred).
+- **Clinical photos**: `Media` (`encounter` link; content via `Attachment.url` → `Binary`,
+  presigned on read). Capture/use gated on the photo `Consent`; review Medplum's Binary security
+  context for photo access. Note: `Media` was removed in FHIR R5 (folded into DocumentReference) —
+  this is an R4-lifetime choice, fine on Medplum (R4), recorded here deliberately.
+  Retention/size policy: **deferred until photos ship** (open item).
 
 ### Treatment series (packages of N sessions)
 
-- **Clinical progress → FHIR `CarePlan`** per series (e.g. "laser hair removal ×6"): activities
-  reference the scheduled `Appointment`s / performed `Procedure`s; status tracks the series.
+- **Clinical progress → FHIR `CarePlan`** per series (`status` + `intent` required), one
+  `activity` per session. R4 legality (corrected at review): booked-not-yet-done sessions →
+  `activity.reference` → `Appointment`; **performed sessions → `activity.outcomeReference` →
+  `Procedure`** (Procedure is not a legal `activity.reference` target); back-link
+  `Procedure.basedOn` → CarePlan. "3 of 6 done" = activities with an outcomeReference.
 - **Commercial state → experience DB** `package` table (patient id, care-plan id, sessions
   purchased/remaining, Stripe payment refs). The split: what happened to the body is FHIR; what
   was bought and what's left is experience data. Reconciled by patient id + care-plan id.
 
 ### Consents
 
-- `Consent` per consent type (treatment, photo/media use, financial policy), with
-  `sourceReference` → `DocumentReference`/`Binary` (the signed artifact) and `provision.period`
-  for validity. Intake/medical-history forms: versioned `Questionnaire` definitions +
-  `QuestionnaireResponse` per submission.
+- `Consent` per consent type (treatment, photo/media use, financial policy). Required fields:
+  `status`, `scope`, `category`, and a `policy`/`policyRule` (invariant ppc-1).
+  `sourceReference` → **`DocumentReference`** (the signed artifact; its
+  `content.attachment.url` points at the `Binary` — `Binary` is not a legal sourceReference
+  target). `provision.period` bounds validity — **nothing auto-expires a Consent**: the BFF/Bot
+  must evaluate the period, not just `status: active`. Intake/medical-history forms: versioned
+  `Questionnaire` definitions + `QuestionnaireResponse` per submission.
 - Later (not v1): a Bot that flags clinical capture lacking an active treatment Consent.
 
 ### Memberships & loyalty
@@ -86,9 +117,10 @@ practice at write time; access via Organization-parameterized AccessPolicy templ
 - **Entirely experience data + Stripe.** `membership` table (patient id, tier, status,
   `stripe_customer_id`, `stripe_subscription_id`); loyalty ledger likewise. Nothing in FHIR at v1
   (no clinical eligibility semantics yet).
-- **Stripe hard constraint** (CLAUDE.md): generic product names ("Aureva Membership"), no
-  patient/diagnosis/service context in metadata/descriptors/customer fields. See open Q4 on the
-  minimum customer identity Stripe needs.
+- **Stripe hard constraint** (CLAUDE.md), decided at review: Stripe customers get **email only**
+  (receipts) and generic product names ("Aureva Membership") — no real name unless
+  disputes/chargebacks force it, and never patient/diagnosis/service context in
+  metadata/descriptors/customer fields.
 
 ### AccessPolicy & audit expectations (per resource family)
 
@@ -102,21 +134,17 @@ practice at write time; access via Organization-parameterized AccessPolicy templ
 
 Default-deny everything else. Policies are **templates parameterized by Organization** (ADR-0003);
 no hand-rolled per-user policies. Every policy lands via reviewed code (Medplum CLI), never the
-admin UI, and goes through security-reviewer.
+admin UI, and goes through security-reviewer. AuditEvent emission is a deployment setting that
+must be verified per environment — see `docs/AUTH.md` (attribution section).
 
-### Open questions (resolve at review)
+### Review log
 
-1. **Cross-practice visibility:** shared `Patient` demographics for both practices — but should
-   Aureva clinicians see Handal surgical history by default? Proposed default: **no** (org-scoped
-   clinical reads; demographics shared), with an explicit break-glass path later.
-2. **MedicationAdministration vs Observation** for injectables — MA proposed above for semantic
-   fidelity; confirm against the actual clinician charting workflow before locking.
-3. **Injection-point extension shape** — `{x, y, view}` normalized to a canonical face diagram;
-   needs the staff-app canvas design to validate.
-4. **Stripe customer identity minimum** — proposal: email only (receipts) + generic product names;
-   confirm this satisfies receipts/disputes without leaking patronage context.
-5. **Photo retention/size policy** — Binary storage budget and retention schedule, before photos
-   ship.
+- **2026-06-11 — accepted** (Alec) after adversarial validation against hl7.org/fhir/R4 and
+  medplum.com docs. Corrections applied: CarePlan activity/outcomeReference split; Consent
+  sourceReference → DocumentReference only + required fields; Medplum `$book` scheduling +
+  one-actor Schedules; Medication per product+lot; `meta.accounts`/`$set-accounts` tenancy
+  mechanics. Deferred items: injection-point extension final shape (with staff-app canvas), photo
+  retention policy (before photos ship), minors/guardianship (Phase 2+).
 
 ## Migration (Handal off 4D) — later
 

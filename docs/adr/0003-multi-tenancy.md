@@ -15,8 +15,12 @@ models: parameterized AccessPolicies within a single Project, or one Project per
 **A single Medplum Project for both practices.** Tenancy is expressed in data and policy:
 
 - An `Organization` resource per practice (`org-handal`, `org-aureva`); `Location` per site.
-- Every clinical resource is tagged with its owning practice (`meta.accounts` /
-  `managingOrganization` where native) at write time — the BFF and Bots enforce this invariant.
+- Every clinical resource is tagged with its owning practice via **`meta.accounts`** (plural;
+  the current field). Mechanics verified 2026-06-11: direct `meta.accounts` writes are
+  admin-only; the supported path is the `$set-accounts` operation, and tags auto-propagate only
+  within the Patient compartment — non-patient-compartment resources (Schedule, Location) need
+  explicit tagging or criteria-based scoping. Granting the BFF account-tagging rights is itself
+  approval-gated. See `DATA_MODEL.md` for the criteria pattern (`_compartment=%organization`).
 - Access is granted through **AccessPolicy templates parameterized by Organization** and bound via
   `ProjectMembership` — least-privilege, default-deny. Shared staff get one membership per
   practice role; nobody gets project-wide access by default.
