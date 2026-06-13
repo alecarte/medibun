@@ -6,6 +6,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsx watch --env-file-if-exists=../../infra/medplum/.env src/index.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx --env-file=../../infra/medplum/.env src/db/migrate.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run"
@@ -15,7 +17,9 @@
     "@medibun/fhir-types": "workspace:*",
     "@medibun/medplum-backend": "workspace:*",
     "hono": "catalog:",
-    "@hono/node-server": "catalog:"
+    "@hono/node-server": "catalog:",
+    "drizzle-orm": "catalog:",
+    "pg": "catalog:"
   },
   "devDependencies": {
     "typescript": "catalog:",
@@ -24,6 +28,9 @@
     "@eslint/js": "catalog:",
     "typescript-eslint": "catalog:",
     "eslint-config-prettier": "catalog:",
-    "tsx": "^4.19.0"
+    "tsx": "^4.19.0",
+    "drizzle-kit": "catalog:",
+    "@types/pg": "catalog:",
+    "@electric-sql/pglite": "catalog:"
   }
 }

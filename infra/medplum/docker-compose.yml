@@ -1,5 +1,6 @@
 # Self-hosted Medplum stack for LOCAL DEV ONLY. Based on Medplum's official
-# docker-compose.full-stack.yml, pinned to 5.1.13 (server/app) for reproducibility.
+# docker-compose.full-stack.yml, pinned to 5.1.9 (server/app) for reproducibility — NOT 5.1.13,
+# which has a SubscriptionQueue backoff regression that breaks bot execution.
 # Production will use Medplum Cloud (see docs/ARCHITECTURE.md). Synthetic data only — never
 # put real PHI in this local instance, and never expose it on a public network.
 services:
@@ -76,6 +77,9 @@ services:
       MEDPLUM_VM_CONTEXT_BOTS_ENABLED: "true"
       MEDPLUM_DEFAULT_BOT_RUNTIME_VERSION: "vmcontext"
       MEDPLUM_ALLOWED_ORIGINS: "*"
+      # AuditEvents on RESTful interactions (docs/AUTH.md attribution requirement).
+      # Emitted to the server log; prod (Medplum Cloud) needs log streaming enabled by Medplum.
+      MEDPLUM_LOG_AUDIT_EVENTS: "true"
       MEDPLUM_INTROSPECTION_ENABLED: "true"
       MEDPLUM_SHUTDOWN_TIMEOUT_MILLISECONDS: 30000
     healthcheck:
@@ -104,5 +108,25 @@ services:
       timeout: 5s
       retries: 5
 
+  # The BFF's experience database (ADR-0002: Neon in prod; plain Postgres for local dev).
+  # Separate service from Medplum's postgres to keep the two-stores boundary physical.
+  experience-postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=medibun
+      - POSTGRES_PASSWORD=medibun
+      - POSTGRES_DB=medibun_experience
+    ports:
+      - "5433:5432"
+    volumes:
+      - experience-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medibun -d medibun_experience"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   medplum-postgres-data:
+  experience-postgres-data:
