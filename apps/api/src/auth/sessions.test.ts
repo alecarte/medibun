@@ -1,9 +1,11 @@
 import { randomBytes } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 import { PGlite } from "@electric-sql/pglite";
 import { RefreshRejectedError } from "@medibun/medplum-backend";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
+import { migrate } from "drizzle-orm/pglite/migrator";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { createTokenCipher } from "./crypto.js";
@@ -11,6 +13,10 @@ import { createSessionStore, type SessionStore } from "./sessions.js";
 import * as schema from "../db/schema.js";
 
 const cipher = createTokenCipher(randomBytes(32).toString("base64"));
+
+// Apply the REAL checked-in migration (drizzle/) so tests and prod share one schema
+// definition — hand-written DDL here already drifted once (missing index).
+const migrationsFolder = fileURLToPath(new URL("../../drizzle", import.meta.url));
 
 const tokens = {
   profileReference: "Patient/p-1",
@@ -27,25 +33,7 @@ let db: ReturnType<typeof drizzle>;
 beforeEach(async () => {
   const client = new PGlite();
   db = drizzle(client, { schema });
-  await client.query(`
-    CREATE TABLE sessions (
-      id uuid PRIMARY KEY,
-      profile_reference text NOT NULL,
-      medplum_login_id text NOT NULL,
-      access_token_enc text NOT NULL,
-      refresh_token_enc text,
-      access_expires_at timestamptz NOT NULL,
-      created_at timestamptz NOT NULL DEFAULT now(),
-      revoked_at timestamptz
-    )
-  `);
-  await client.query(`
-    CREATE TABLE login_attempts (
-      id integer PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-      ip text NOT NULL,
-      attempted_at timestamptz NOT NULL DEFAULT now()
-    )
-  `);
+  await migrate(db, { migrationsFolder });
   refreshCalls = [];
   store = createSessionStore(db, cipher, {
     refresh: (refreshToken) => {
