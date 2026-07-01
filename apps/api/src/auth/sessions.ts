@@ -42,7 +42,7 @@ export type SessionUser = {
 export type SessionStore = {
   readonly create: (s: NewSession) => Promise<string>;
   readonly getUser: (sessionId: string) => Promise<SessionUser | null>;
-  readonly revoke: (sessionId: string) => Promise<{ loginId: string; accessToken: string } | null>;
+  readonly revoke: (sessionId: string) => Promise<{ loginId: string } | null>;
   /**
    * Atomically record this attempt and return whether the IP is now over the limit
    * within the window. One statement to insert + count closes the check-then-act race
@@ -62,6 +62,15 @@ export function createSessionStore(
 
   function isFresh(accessExpiresAt: Date): boolean {
     return accessExpiresAt.getTime() > Date.now() + EXPIRY_SKEW_MS;
+  }
+
+  /** Decrypt failures (rotated key, corruption) mean the session is unusable — never a 500. */
+  function tryDecrypt(enc: string): string | null {
+    try {
+      return cipher.decrypt(enc);
+    } catch {
+      return null;
+    }
   }
 
   return {
@@ -91,10 +100,15 @@ export function createSessionStore(
         return null;
       }
       if (isFresh(session.accessExpiresAt)) {
-        return {
-          profileReference: session.profileReference,
-          accessToken: cipher.decrypt(session.accessTokenEnc),
-        };
+        const accessToken = tryDecrypt(session.accessTokenEnc);
+        if (accessToken === null) {
+          await db
+            .update(sessions)
+            .set({ revokedAt: new Date(), ...CLEARED_TOKENS })
+            .where(eq(sessions.id, sessionId));
+          return null;
+        }
+        return { profileReference: session.profileReference, accessToken };
       }
       if (session.refreshTokenEnc === null) {
         return null;
@@ -117,10 +131,15 @@ export function createSessionStore(
           }
           if (isFresh(locked.accessExpiresAt)) {
             // Another worker refreshed while we waited on the lock.
-            return {
-              profileReference: locked.profileReference,
-              accessToken: cipher.decrypt(locked.accessTokenEnc),
-            };
+            const accessToken = tryDecrypt(locked.accessTokenEnc);
+            if (accessToken === null) {
+              await tx
+                .update(sessions)
+                .set({ revokedAt: new Date(), ...CLEARED_TOKENS })
+                .where(eq(sessions.id, sessionId));
+              return null;
+            }
+            return { profileReference: locked.profileReference, accessToken };
           }
           if (locked.refreshTokenEnc === null) {
             return null;
@@ -172,12 +191,11 @@ export function createSessionStore(
         if (!locked) {
           return null;
         }
-        const accessToken = cipher.decrypt(locked.accessTokenEnc);
         await tx
           .update(sessions)
           .set({ revokedAt: new Date(), ...CLEARED_TOKENS })
           .where(eq(sessions.id, sessionId));
-        return { loginId: locked.medplumLoginId, accessToken };
+        return { loginId: locked.medplumLoginId };
       });
     },
 

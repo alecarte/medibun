@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 import { PGlite } from "@electric-sql/pglite";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -65,10 +66,33 @@ describe("session store", () => {
     expect(await store.getUser("not-a-uuid")).toBeNull();
   });
 
-  it("returns null after revocation and surfaces the tokens to revoke upstream", async () => {
+  it("returns null after revocation and surfaces the login id to revoke upstream", async () => {
     const sessionId = await store.create(tokens);
     const revoked = await store.revoke(sessionId);
-    expect(revoked).toEqual({ loginId: "login-1", accessToken: "at-1" });
+    expect(revoked).toEqual({ loginId: "login-1" });
+    expect(await store.getUser(sessionId)).toBeNull();
+  });
+
+  it("treats an undecryptable access token as an invalid session, not an error", async () => {
+    const sessionId = await store.create(tokens);
+    await db
+      .update(schema.sessions)
+      .set({ accessTokenEnc: "k1.not.real.ciphertext" })
+      .where(eq(schema.sessions.id, sessionId));
+    expect(await store.getUser(sessionId)).toBeNull();
+    // The dead row is revoked so it can't be retried forever.
+    const rows = await db.select().from(schema.sessions).where(eq(schema.sessions.id, sessionId));
+    expect(rows[0]?.revokedAt).not.toBeNull();
+    expect(rows[0]?.accessTokenEnc).toBe("");
+  });
+
+  it("revokes a session with an undecryptable access token without throwing", async () => {
+    const sessionId = await store.create(tokens);
+    await db
+      .update(schema.sessions)
+      .set({ accessTokenEnc: "k1.not.real.ciphertext" })
+      .where(eq(schema.sessions.id, sessionId));
+    expect(await store.revoke(sessionId)).toEqual({ loginId: "login-1" });
     expect(await store.getUser(sessionId)).toBeNull();
   });
 
