@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 import { PGlite } from "@electric-sql/pglite";
+import { RefreshRejectedError } from "@medibun/medplum-backend";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -118,9 +119,9 @@ describe("session store", () => {
     expect(row.refreshTokenEnc).toBeNull();
   });
 
-  it("ends the session with null (not a throw) when the refresh grant fails", async () => {
+  it("ends the session with null (not a throw) when the refresh grant is REJECTED", async () => {
     const failingStore = createSessionStore(db, cipher, {
-      refresh: () => Promise.reject(new Error("invalid_grant")),
+      refresh: () => Promise.reject(new RefreshRejectedError(400)),
     });
     const sessionId = await failingStore.create({ ...tokens, expiresIn: 0 });
     await expect(failingStore.getUser(sessionId)).resolves.toBeNull();
@@ -128,6 +129,16 @@ describe("session store", () => {
     const row = (await db.select().from(schema.sessions))[0]!;
     expect(row.revokedAt).not.toBeNull();
     expect(row.refreshTokenEnc).toBeNull();
+  });
+
+  it("keeps the session alive when the refresh fails transiently", async () => {
+    const failingStore = createSessionStore(db, cipher, {
+      refresh: () => Promise.reject(new Error("fetch failed")),
+    });
+    const sessionId = await failingStore.create({ ...tokens, expiresIn: 0 });
+    await expect(failingStore.getUser(sessionId)).rejects.toThrow("fetch failed");
+    // Transient failure did not revoke: the healthy store refreshes on the next attempt.
+    expect((await store.getUser(sessionId))?.accessToken).toBe("at-2");
   });
 
   it("prunes attempts older than the retention window on record", async () => {

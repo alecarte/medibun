@@ -37,7 +37,17 @@ function buildAuthDeps(): AuthDeps | undefined {
     return undefined;
   }
   const medplumConfig = readConfigFromEnv();
-  const pool = new pg.Pool({ connectionString: dbUrl });
+  // Bounded waits, ordered so a slow-but-succeeding refresh is never killed mid-grant
+  // (which would strand a rotated refresh token): refresh fetch aborts at 15s (see
+  // medplum-backend tokenGrant) < statement_timeout 30s (lock-waiters give up after the
+  // holder finished) < idle_in_transaction 60s (backstop only).
+  const pool = new pg.Pool({
+    connectionString: dbUrl,
+    max: 10,
+    connectionTimeoutMillis: 10_000,
+    statement_timeout: 30_000,
+    idle_in_transaction_session_timeout: 60_000,
+  });
   const db = drizzle(pool);
   const store = createSessionStore(db, createTokenCipher(key), {
     refresh: (refreshToken) => refreshUserTokens(medplumConfig, refreshToken),

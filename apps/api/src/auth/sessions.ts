@@ -1,4 +1,4 @@
-import type { RefreshedTokens } from "@medibun/medplum-backend";
+import { RefreshRejectedError, type RefreshedTokens } from "@medibun/medplum-backend";
 import { and, eq, gt, isNull, lt, sql } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 
@@ -147,7 +147,12 @@ export function createSessionStore(
           let refreshed: RefreshedTokens;
           try {
             refreshed = await deps.refresh(cipher.decrypt(locked.refreshTokenEnc));
-          } catch {
+          } catch (err) {
+            if (!(err instanceof RefreshRejectedError)) {
+              // Transient (network/5xx/timeout): keep the session; this request 500s
+              // and the next retry refreshes. Only a definitive rejection ends it.
+              throw err;
+            }
             // Refresh token expired or Login revoked upstream: end the session cleanly
             // (callers see 401, not 500) instead of retrying a dead grant forever.
             await tx

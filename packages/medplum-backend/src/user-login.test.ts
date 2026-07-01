@@ -6,6 +6,7 @@ import {
   InvalidCredentialsError,
   MfaRequiredError,
   MultipleMembershipsError,
+  RefreshRejectedError,
 } from "./user-login.js";
 
 const config = {
@@ -154,5 +155,35 @@ describe("refreshUserTokens", () => {
     });
     expect(calls[0]!.url).toBe("http://medplum.test/oauth2/token");
     expect(String(calls[0]!.init.body)).toContain("grant_type=refresh_token");
+  });
+
+  it("throws RefreshRejectedError when the refresh grant is rejected (400/401)", async () => {
+    const { fetchImpl } = sequencedFetch([{ status: 400, body: { error: "invalid_grant" } }]);
+    await expect(refreshUserTokens(config, "dead-rt", fetchImpl)).rejects.toBeInstanceOf(
+      RefreshRejectedError,
+    );
+  });
+
+  it("throws a plain Error (not RefreshRejectedError) on a transient refresh failure", async () => {
+    const { fetchImpl } = sequencedFetch([{ status: 502, body: {} }]);
+    const err = await refreshUserTokens(config, "rt-1", fetchImpl).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(RefreshRejectedError);
+  });
+
+  it("does NOT map a rejected authorization_code grant to RefreshRejectedError", async () => {
+    const { fetchImpl } = sequencedFetch([
+      { status: 200, body: { login: "login-123", code: "code-abc" } },
+      { status: 400, body: { error: "invalid_grant" } },
+    ]);
+    const err = await directUserLogin(
+      config,
+      projectId,
+      "synth@example.test",
+      "pw",
+      fetchImpl,
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(RefreshRejectedError);
   });
 });

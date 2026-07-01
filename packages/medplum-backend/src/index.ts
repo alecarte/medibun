@@ -12,6 +12,7 @@ export {
   InvalidCredentialsError,
   MfaRequiredError,
   MultipleMembershipsError,
+  RefreshRejectedError,
   type UserTokens,
   type RefreshedTokens,
 } from "./user-login.js";

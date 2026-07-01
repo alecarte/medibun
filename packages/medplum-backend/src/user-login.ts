@@ -58,6 +58,18 @@ export class MultipleMembershipsError extends Error {
   }
 }
 
+/**
+ * The refresh_token grant was definitively rejected by Medplum (400/401 — expired,
+ * rotated-and-reused, or revoked). This is the ONLY refresh failure that should end a
+ * session; transport/5xx errors are transient and must leave the session intact.
+ */
+export class RefreshRejectedError extends Error {
+  constructor(status: number) {
+    super(`medplum refresh grant rejected (status ${status})`);
+    this.name = "RefreshRejectedError";
+  }
+}
+
 function base64url(buf: Buffer): string {
   return buf.toString("base64url");
 }
@@ -79,8 +91,16 @@ async function tokenGrant(
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: params.toString(),
+    // Bounded on purpose: the session store calls this while holding a row lock.
+    signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) {
+    if (
+      params.get("grant_type") === "refresh_token" &&
+      (res.status === 400 || res.status === 401)
+    ) {
+      throw new RefreshRejectedError(res.status);
+    }
     throw new Error(`medplum token exchange failed (status ${res.status})`);
   }
   const body = (await res.json()) as {
@@ -150,6 +170,9 @@ export async function directUserLogin(
   if (body.mfaRequired === true || body.mfaEnrollRequired === true) {
     throw new MfaRequiredError();
   }
+  // Verified against the Medplum v5.1.9 server source (sendLoginResult): `code` and
+  // `memberships` are mutually exclusive response branches, so a resolved single-
+  // membership login can never carry `memberships` — this guard cannot false-positive.
   if (body.memberships !== undefined || body.code === undefined || body.login === undefined) {
     throw new MultipleMembershipsError();
   }
