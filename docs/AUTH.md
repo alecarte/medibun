@@ -151,3 +151,14 @@ explicit human approval.
   refresh-race serialization; durable rate limiting + Medplum upstream login-cap as an onboarding
   item; AuditEvent emission made an explicit per-environment verification; MFA enforcement
   mechanics + brokered-UX cost; signup abuse controls; offboarding revokes all Logins.
+- **2026-07-01 — hardening after multi-agent code review** (approved by Alec). Undecryptable
+  stored tokens (key rotation/corruption) now invalidate the session (revoke + 401) instead of
+  500ing; sessions are revoked **only** on a definitive refresh rejection
+  (`RefreshRejectedError`, Medplum 400/401) — transient failures keep the session; the refresh
+  fetch is bounded (15s) below `statement_timeout` (30s) and `idle_in_transaction` (60s) so a
+  succeeding grant is never killed mid-rotation; migrations wired into setup-dev/CI plus a boot
+  fail-fast; the FOR UPDATE concurrency suite now runs in CI against a real Postgres; graceful
+  shutdown drains the server and closes the pool. Verified against Medplum v5.1.9 source:
+  `/auth/login` returns `code` XOR `memberships`, so the single-membership guard cannot
+  false-positive. Deferred consciously: centralized domain-error→HTTP mapping (when the third
+  auth route lands) and env-tunable auth constants.

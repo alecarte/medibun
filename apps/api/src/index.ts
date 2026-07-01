@@ -54,9 +54,10 @@ function buildAuthDeps(): { auth: AuthDeps; pool: pg.Pool } | undefined {
     console.error(
       JSON.stringify({
         msg: "experience db check failed — run: pnpm --filter @medibun/api db:migrate",
+        code: (err as { code?: string }).code,
+        error: err instanceof Error ? err.message : String(err),
       }),
     );
-    console.error(err);
     process.exit(1);
   });
   const store = createSessionStore(db, createTokenCipher(key), {

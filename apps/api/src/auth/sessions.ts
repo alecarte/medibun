@@ -73,6 +73,12 @@ export function createSessionStore(
     }
   }
 
+  /** Identifier-only signal: a key rotation/misconfig self-revokes every session — make
+   *  that distinguishable from ordinary 401s in the logs (security review, 2026-07-01). */
+  function logUndecryptable(sessionId: string): void {
+    console.log(JSON.stringify({ msg: "session revoked: stored token undecryptable", sessionId }));
+  }
+
   return {
     async create(s) {
       const id = crypto.randomUUID();
@@ -102,6 +108,7 @@ export function createSessionStore(
       if (isFresh(session.accessExpiresAt)) {
         const accessToken = tryDecrypt(session.accessTokenEnc);
         if (accessToken === null) {
+          logUndecryptable(sessionId);
           await db
             .update(sessions)
             .set({ revokedAt: new Date(), ...CLEARED_TOKENS })
@@ -133,6 +140,7 @@ export function createSessionStore(
             // Another worker refreshed while we waited on the lock.
             const accessToken = tryDecrypt(locked.accessTokenEnc);
             if (accessToken === null) {
+              logUndecryptable(sessionId);
               await tx
                 .update(sessions)
                 .set({ revokedAt: new Date(), ...CLEARED_TOKENS })
