@@ -136,3 +136,8 @@ SESSION_ENCRYPTION_KEY=$(openssl rand -base64 32)
 API_COOKIE_INSECURE_DEV=1
 EOF
 echo "✓ wrote $HERE/.env (gitignored). Client: $CID  Bot: $BID  Project: $PID"
+
+echo "→ migrating experience db…"
+(cd "$HERE/../.." && pnpm --filter @medibun/api db:migrate) \
+  && echo "  ✓ experience db migrated" \
+  || { echo "✗ experience db migration failed"; exit 1; }

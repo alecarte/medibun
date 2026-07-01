@@ -52,9 +52,10 @@ beforeEach(async () => {
   }
 });
 
-// `reachable` is set in beforeAll (after collection), so the per-test ctx.skip() below is
-// what actually guards a missing DB; this gate just keeps the suite out of CI entirely.
-describe.runIf(process.env.CI !== "true")("session refresh under real DB concurrency", () => {
+// The per-test ctx.skip() below guards a missing DB (local runs without the dev stack);
+// CI provides a real experience-postgres service and runs this suite for the FOR UPDATE
+// guarantee — the headline "refresh exactly once" behavior is only proven here.
+describe("session refresh under real DB concurrency", () => {
   it("refreshes an expired token exactly once across two concurrent connections", async (ctx) => {
     if (!reachable) {
       ctx.skip();

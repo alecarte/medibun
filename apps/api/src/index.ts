@@ -49,6 +49,16 @@ function buildAuthDeps(): AuthDeps | undefined {
     idle_in_transaction_session_timeout: 60_000,
   });
   const db = drizzle(pool);
+  // Fail fast on an unmigrated DB: a clear boot error beats a 500 on first login.
+  void pool.query("select 1 from sessions limit 1").catch((err: unknown) => {
+    console.error(
+      JSON.stringify({
+        msg: "experience db check failed — run: pnpm --filter @medibun/api db:migrate",
+      }),
+    );
+    console.error(err);
+    process.exit(1);
+  });
   const store = createSessionStore(db, createTokenCipher(key), {
     refresh: (refreshToken) => refreshUserTokens(medplumConfig, refreshToken),
   });

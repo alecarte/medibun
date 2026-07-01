@@ -7,7 +7,7 @@
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsx watch --env-file-if-exists=../../infra/medplum/.env src/index.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx --env-file=../../infra/medplum/.env src/db/migrate.ts",
+    "db:migrate": "tsx --env-file-if-exists=../../infra/medplum/.env src/db/migrate.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run"
