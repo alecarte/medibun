@@ -24,7 +24,7 @@ const LOGIN_MAX_ATTEMPTS = 10;
 const LOGIN_WINDOW_MS = 15 * 60_000;
 
 /** Real auth wiring per docs/AUTH.md. Requires the experience DB + encryption key. */
-function buildAuthDeps(): AuthDeps | undefined {
+function buildAuthDeps(): { auth: AuthDeps; pool: pg.Pool } | undefined {
   const dbUrl = process.env.EXPERIENCE_DATABASE_URL;
   const key = process.env.SESSION_ENCRYPTION_KEY;
   const projectId = process.env.MEDPLUM_PROJECT_ID;
@@ -63,7 +63,7 @@ function buildAuthDeps(): AuthDeps | undefined {
     refresh: (refreshToken) => refreshUserTokens(medplumConfig, refreshToken),
   });
 
-  return {
+  const auth: AuthDeps = {
     async login(email, password) {
       const tokens = await directUserLogin(medplumConfig, projectId, email, password);
       const sessionId = await store.create(tokens);
@@ -118,6 +118,7 @@ function buildAuthDeps(): AuthDeps | undefined {
         ? (req) => req.header("x-real-ip") ?? "direct"
         : undefined,
   };
+  return { auth, pool };
 }
 
 /**
@@ -133,10 +134,12 @@ const getPatientProfile: AppDeps["getPatientProfile"] = config.devUnauthenticate
     }
   : undefined;
 
+const authWiring = buildAuthDeps();
+
 const app = createApp({
   log: (entry) => console.log(JSON.stringify(entry)),
   checkMedplum: checkMedplumConnection,
-  auth: buildAuthDeps(),
+  auth: authWiring?.auth,
   getPatientProfile,
 });
 
@@ -144,6 +147,18 @@ if (config.devUnauthenticatedRoutes) {
   console.log(JSON.stringify({ msg: "DEV MODE: unauthenticated routes mounted" }));
 }
 
-serve({ fetch: app.fetch, port: config.port }, (info) => {
+const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(JSON.stringify({ msg: "api listening", port: info.port }));
 });
+
+// Drain in-flight requests, then release DB connections. The unref'd failsafe means a
+// wedged connection can't block shutdown forever (exit 1 → the platform force-restarts).
+const shutdown = (signal: string): void => {
+  console.log(JSON.stringify({ msg: "shutting down", signal }));
+  server.close(() => {
+    void (authWiring?.pool.end() ?? Promise.resolve()).finally(() => process.exit(0));
+  });
+  setTimeout(() => process.exit(1), 10_000).unref();
+};
+process.once("SIGTERM", () => shutdown("SIGTERM"));
+process.once("SIGINT", () => shutdown("SIGINT"));
