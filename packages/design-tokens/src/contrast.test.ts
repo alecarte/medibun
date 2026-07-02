@@ -63,3 +63,18 @@ describe.each(cases)("brand %s — WCAG 2.1 AA", (_name, t) => {
     }
   });
 });
+
+describe("categorical service colors — WCAG 2.1 AA", () => {
+  const CATEGORIES = ["sage", "teal", "indigo", "plum", "clay", "slate"] as const;
+
+  it("every category text meets AA on its wash (calendar blocks)", async () => {
+    const { tokens } = await import("./tokens.generated.js");
+    const t = tokens as Record<string, string>;
+    for (const c of CATEGORIES) {
+      const text = t[`color-category-${c}-text`]!;
+      const wash = t[`color-category-${c}-wash`]!;
+      expect(text, `${c} text token missing`).toBeDefined();
+      expect(contrast(text, wash), `${c}: ${text} on ${wash}`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+});

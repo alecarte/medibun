@@ -8,6 +8,7 @@
     "dev": "tsx watch --env-file-if-exists=../../infra/medplum/.env src/index.ts",
     "db:generate": "drizzle-kit generate",
     "e2e:harness": "tsx scripts/e2e-harness.ts",
+    "demo:seed": "tsx --env-file=../../infra/medplum/.env scripts/seed-demo.ts",
     "db:migrate": "tsx --env-file-if-exists=../../infra/medplum/.env src/db/migrate.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",

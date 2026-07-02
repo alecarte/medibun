@@ -7,4 +7,13 @@
  * (data minimization applies to the type surface too); prefer domain DTOs at the app edge.
  */
 
-export type { Patient, HumanName } from "@medplum/fhirtypes";
+export type {
+  Patient,
+  HumanName,
+  // Booking groundwork (S3): the seed + booking paths in the backend app.
+  Identifier,
+  Resource,
+  Organization,
+  Location,
+  Slot,
+} from "@medplum/fhirtypes";

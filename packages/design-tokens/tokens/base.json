@@ -10,6 +10,33 @@
       "900": { "$value": "#1B1B16" }
     },
     "paper": { "$value": "#FFFFFF" },
+    "category": {
+      "$description": "Categorical pairs for service/visit types on calendars (S3 delta, approved 2026-07-02). Text on wash must hold WCAG AA — enforced by the contrast tests. Assignment to service families happens in data, not here.",
+      "sage": {
+        "text": { "$value": "#4C6144" },
+        "wash": { "$value": "#EAF0E7" }
+      },
+      "teal": {
+        "text": { "$value": "#2C6E68" },
+        "wash": { "$value": "#E0EFED" }
+      },
+      "indigo": {
+        "text": { "$value": "#4C5B8A" },
+        "wash": { "$value": "#E7EAF4" }
+      },
+      "plum": {
+        "text": { "$value": "#6D4A78" },
+        "wash": { "$value": "#F0E7F2" }
+      },
+      "clay": {
+        "text": { "$value": "#84543A" },
+        "wash": { "$value": "#F4EAE2" }
+      },
+      "slate": {
+        "text": { "$value": "#525C66" },
+        "wash": { "$value": "#E8EBEE" }
+      }
+    },
     "status": {
       "success": {
         "text": { "$value": "#3F6B3D" },
