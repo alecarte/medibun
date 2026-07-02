@@ -341,9 +341,10 @@ the demo is grounded and cited (no smoke-and-mirrors); all writes audited and at
 
 ## 9. Slice status log
 
-| Slice  | Status      | Notes                                   |
-| ------ | ----------- | --------------------------------------- |
-| S1–S12 | Not started | Awaiting final confirmation of the cut. |
+| Slice  | Status            | Notes                                                                                                                                               |
+| ------ | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| S1     | Built — in review | Thermae tokens (2 brands, WCAG contract tests), portal + staff shells, runtime brand swap live-verified (screenshots), dev login-rate-limit raised. |
+| S2–S12 | Not started       | S2 (portal patient auth) is next.                                                                                                                   |
 
 ## 10. Review log
 

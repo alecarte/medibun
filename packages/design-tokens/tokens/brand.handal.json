@@ -1,0 +1,29 @@
+{
+  "brand": {
+    "name": { "$type": "string", "$value": "Handal" },
+    "logo": {
+      "$type": "string",
+      "$description": "Asset reference (URL or bundle key) resolved per platform, not hardcoded.",
+      "$value": "/brand/handal-logo.svg"
+    },
+    "color": {
+      "$type": "color",
+      "$description": "PLACEHOLDER brand values (Thermae panel): surgical register — cooler ink/paper, palm accent, tighter radius.",
+      "primary": { "$value": "#2E4B3F" },
+      "primary-contrast": { "$value": "#FFFEFB" },
+      "background": { "$value": "#F9F8F4" },
+      "foreground": { "$value": "#23211C" },
+      "muted": { "$value": "{color.stone.600}" },
+      "wash": { "$value": "#E4EAE3" },
+      "glow": { "$value": "#F0F2EC" }
+    },
+    "radius": {
+      "$type": "dimension",
+      "control": { "$value": "{radius.sm}" }
+    },
+    "font": {
+      "$type": "string",
+      "display-settings": { "$value": "'SOFT' 0, 'WONK' 0" }
+    }
+  }
+}

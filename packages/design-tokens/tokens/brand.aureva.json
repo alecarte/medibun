@@ -1,0 +1,29 @@
+{
+  "brand": {
+    "name": { "$type": "string", "$value": "Aureva" },
+    "logo": {
+      "$type": "string",
+      "$description": "Asset reference (URL or bundle key) resolved per platform, not hardcoded.",
+      "$value": "/brand/aureva-logo.svg"
+    },
+    "color": {
+      "$type": "color",
+      "$description": "PLACEHOLDER brand values (Thermae panel). Real Aureva branding is in progress externally; swapping it in is a change to this file only (docs/V0_PROPOSAL.md §6).",
+      "primary": { "$value": "#8A5A2E" },
+      "primary-contrast": { "$value": "#FFFEFB" },
+      "background": { "$value": "{color.linen.0}" },
+      "foreground": { "$value": "{color.basalt.900}" },
+      "muted": { "$value": "{color.stone.600}" },
+      "wash": { "$value": "#F1DFD3" },
+      "glow": { "$value": "#F6E7D2" }
+    },
+    "radius": {
+      "$type": "dimension",
+      "control": { "$value": "{radius.md}" }
+    },
+    "font": {
+      "$type": "string",
+      "display-settings": { "$value": "'SOFT' 100, 'WONK' 0" }
+    }
+  }
+}

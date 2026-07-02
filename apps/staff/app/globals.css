@@ -1,4 +1,63 @@
 /* Runtime-theming contract: the brand CSS variables (overridable per [data-brand]). */
 @import "@medibun/design-tokens/theme.css";
+@import "@medibun/design-tokens/brand.aureva.css";
+@import "@medibun/design-tokens/brand.handal.css";
 /* Tailwind v4 + the generated @theme that maps color utilities to those variables. */
 @import "@medibun/design-tokens/tailwind.css";
+
+/* Non-color token bridges into Tailwind utilities (colors come from the generated file).
+   Fonts resolve through next/font variables set on <html> (Fragment Mono joins when the
+   first data table ships). */
+@theme inline {
+  --font-display: var(--font-fraunces);
+  --font-sans: var(--font-instrument-sans);
+  --shadow-low: var(--elevation-low);
+  --shadow-mid: var(--elevation-mid);
+  --shadow-high: var(--elevation-high);
+  --radius-control: var(--brand-radius-control);
+}
+
+@layer base {
+  body {
+    background-color: var(--color-surface-canvas);
+    color: var(--color-text-primary);
+    font-family: var(--font-sans);
+    /* Staff surfaces run the compact register (Thermae work register). */
+    line-height: var(--font-leading-compact);
+  }
+}
+
+@layer components {
+  /* Display type carries the brand's variable-font voice (the SOFT/WONK axis differs
+     per brand via --brand-font-display-settings — one token, not a second font).
+     On staff screens it appears once per screen ("Today", "Room 3"). */
+  .type-display {
+    font-family: var(--font-display);
+    font-variation-settings: var(--brand-font-display-settings);
+    line-height: var(--font-leading-display);
+  }
+  .type-kicker {
+    font-size: var(--font-size-kicker);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: var(--font-tracking-kicker);
+    text-transform: uppercase;
+    color: var(--color-text-secondary);
+  }
+  /* Status chips: wash + text + solid dot + label — glanceable, never color-alone. */
+  .status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    border-radius: var(--radius-full);
+    padding: var(--space-1) var(--space-3);
+    font-size: var(--font-size-kicker);
+    font-weight: var(--font-weight-medium);
+  }
+  .status-chip::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-full);
+    background-color: currentColor;
+  }
+}

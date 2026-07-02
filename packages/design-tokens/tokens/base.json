@@ -1,17 +1,37 @@
 {
   "color": {
     "$type": "color",
-    "neutral": {
-      "50": { "$value": "#fafafa" },
-      "100": { "$value": "#f5f5f5" },
-      "200": { "$value": "#e5e5e5" },
-      "300": { "$value": "#d4d4d4" },
-      "500": { "$value": "#737373" },
-      "700": { "$value": "#404040" },
-      "900": { "$value": "#171717" }
+    "linen": {
+      "0": { "$value": "#FBF8F3" },
+      "100": { "$value": "#F3EEE5" }
     },
-    "white": { "$value": "#ffffff" },
-    "black": { "$value": "#000000" }
+    "paper": { "$value": "#FFFEFB" },
+    "stone": {
+      "200": { "$value": "#E2DACB" },
+      "500": { "$value": "#857A6A" },
+      "600": { "$value": "#6B6153" }
+    },
+    "basalt": {
+      "900": { "$value": "#28221A" }
+    },
+    "status": {
+      "success": {
+        "text": { "$value": "#3F6B3D" },
+        "wash": { "$value": "#E8F0E7" }
+      },
+      "warning": {
+        "text": { "$value": "#8F5A10" },
+        "wash": { "$value": "#F7EDDC" }
+      },
+      "danger": {
+        "text": { "$value": "#A63A2A" },
+        "wash": { "$value": "#F8E4E0" }
+      },
+      "info": {
+        "text": { "$value": "#2F6D73" },
+        "wash": { "$value": "#E2EEEF" }
+      }
+    }
   },
   "space": {
     "$type": "dimension",
@@ -20,13 +40,65 @@
     "3": { "$value": "12px" },
     "4": { "$value": "16px" },
     "6": { "$value": "24px" },
-    "8": { "$value": "32px" }
+    "8": { "$value": "32px" },
+    "12": { "$value": "48px" },
+    "16": { "$value": "64px" }
   },
   "radius": {
     "$type": "dimension",
     "sm": { "$value": "6px" },
     "md": { "$value": "10px" },
     "lg": { "$value": "16px" },
+    "xl": { "$value": "20px" },
+    "sheet": { "$value": "28px" },
     "full": { "$value": "9999px" }
+  },
+  "elevation": {
+    "$type": "string",
+    "low": { "$value": "0 1px 2px rgba(40, 34, 26, 0.06)" },
+    "mid": { "$value": "0 2px 8px rgba(40, 34, 26, 0.08)" },
+    "high": { "$value": "0 8px 24px rgba(40, 34, 26, 0.12)" }
+  },
+  "motion": {
+    "$type": "string",
+    "duration": {
+      "fast": { "$value": "120ms" },
+      "base": { "$value": "200ms" },
+      "slow": { "$value": "320ms" },
+      "feature": { "$value": "600ms" }
+    },
+    "easing": {
+      "standard": { "$value": "cubic-bezier(0.22, 1, 0.36, 1)" }
+    }
+  },
+  "font": {
+    "$type": "string",
+    "family": {
+      "display": { "$value": "Fraunces" },
+      "text": { "$value": "Instrument Sans" },
+      "data": { "$value": "Fragment Mono" }
+    },
+    "size": {
+      "kicker": { "$value": "12px" },
+      "body-sm": { "$value": "14px" },
+      "body": { "$value": "16px" },
+      "title-sm": { "$value": "20px" },
+      "title": { "$value": "24px" },
+      "display-sm": { "$value": "32px" },
+      "display": { "$value": "44px" }
+    },
+    "weight": {
+      "regular": { "$value": "400" },
+      "medium": { "$value": "500" },
+      "semibold": { "$value": "600" }
+    },
+    "leading": {
+      "text": { "$value": "1.55" },
+      "compact": { "$value": "1.35" },
+      "display": { "$value": "1.1" }
+    },
+    "tracking": {
+      "kicker": { "$value": "0.04em" }
+    }
   }
 }

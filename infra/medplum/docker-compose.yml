@@ -82,6 +82,10 @@ services:
       MEDPLUM_LOG_AUDIT_EVENTS: "true"
       MEDPLUM_INTROSPECTION_ENABLED: "true"
       MEDPLUM_SHUTDOWN_TIMEOUT_MILLISECONDS: 30000
+      # Dev only: the 5.1.9 default is 5 logins/min/IP (ratelimit.ts `defaultLoginRateLimit`),
+      # which the seed + demo (patient, front desk, clinician in quick succession) would trip.
+      # Prod (Medplum Cloud) instead needs the project `loginRateLimit` raised — AUTH.md checklist.
+      MEDPLUM_DEFAULT_LOGIN_RATE_LIMIT: 1000
     healthcheck:
       test:
         [
