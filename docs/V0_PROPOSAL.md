@@ -191,6 +191,14 @@ accent, washes, radius, type voice, logo) applied at runtime (web `[data-brand]`
 `ThemeProvider`). Ingesting the real branding is a one-file token swap + font files in a small
 PR; CI contrast tests re-verify WCAG AA against whatever values arrive.
 
+### How we stay distinctive (binding tenets)
+
+`docs/DESIGN.md` (added 2026-07-02 after calibration with Alec) is the binding companion to this
+section: quiet-tool register on both apps, Anthropic/Claude × Notion as the bar, craft budget
+concentrated on the signature domain objects (refined-schematic face-map, treatment-card dose
+anatomy, day sheet, timeline), a written product voice, undo-over-confirm for reversible staff
+actions, and screenshot review of every slice.
+
 ### The system (rev. 2 values)
 
 - **Neutrals, light:** canvas `#FAFAF7`, cards pure white, wells `#F2F2EC`, hairlines `#E6E5DD`,
@@ -290,3 +298,7 @@ the demo is grounded and cited (no smoke-and-mirrors); all writes audited and at
   accents (initial), and sidebar navigation on both web apps. Token architecture, AA contrast
   tests, and brand-swap mechanics unchanged; §6 rewritten; S1 revised in place and re-verified
   (screenshots + live Handal swap).
+- 2026-07-02 — **Design tenets added** (`docs/DESIGN.md`, calibrated with Alec): quiet tool both
+  sides; Anthropic/Claude + Notion as the bar; face-map = refined custom schematic;
+  undo-over-confirm for reversible staff actions (clinical writes keep explicit confirm); voice
+  guide; anti-slop mechanics (real synthetic content, screenshot review, copy review).
