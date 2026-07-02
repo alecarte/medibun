@@ -6,7 +6,7 @@ import { RefreshRejectedError } from "@medibun/medplum-backend";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createTokenCipher } from "./crypto.js";
 import { createSessionStore, type SessionStore } from "./sessions.js";
@@ -30,10 +30,17 @@ let store: SessionStore;
 let refreshCalls: string[];
 let db: ReturnType<typeof drizzle>;
 
-beforeEach(async () => {
+// One PGlite + one migration per file: booting and migrating per test blows vitest's
+// hook timeout on slow CI runners. Tests are isolated by wiping rows instead.
+beforeAll(async () => {
   const client = new PGlite();
   db = drizzle(client, { schema });
   await migrate(db, { migrationsFolder });
+});
+
+beforeEach(async () => {
+  await db.delete(schema.sessions);
+  await db.delete(schema.loginAttempts);
   refreshCalls = [];
   store = createSessionStore(db, cipher, {
     refresh: (refreshToken) => {
