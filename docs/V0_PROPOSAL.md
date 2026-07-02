@@ -184,6 +184,21 @@ enforceable tokens and its verified contrast math needs no per-brand exceptions;
 failure in its primary button and template-adjacency, Afterglow (luminous-glass) on a dark/light
 staff split that doubles the QA matrix plus GPU-expensive glass effects.
 
+### Branding is deferred by construction (Alec, 2026-07-02)
+
+Alec's real branding is being developed externally right now, so v0 treats **every brand-specific
+value below as a placeholder**. This costs nothing: design tokens are already the binding single
+source of truth (CLAUDE.md — never hardcode brand values), and Thermae was structured for exactly
+this. The brand-independent system (semantic token layer, surfaces, density, motion, contrast
+guardrails) is what S1 actually builds; brand identity lives in **one file per practice**
+(`brand.aureva.json`: ~14 aliases — accent ramp, wash, glow, display-font axis, control radius,
+temperature nudge, logo) applied at runtime (web `[data-brand]`, mobile restyle `ThemeProvider`).
+When the real branding lands, ingesting it is a **one-file token swap + font files in a small
+PR** — zero component hunting; even the neutral and status ramps are tokens (with the reserved
+`neutral.temperature` escape hatch), so a bolder rebrand is still one place. CI contrast checks
+run against whatever values the token files hold, so the incoming brand is automatically
+WCAG-checked on arrival.
+
 ### Thesis
 
 Medibun feels like walking from a bright street into a good spa: the light warms, sound drops,
@@ -345,3 +360,8 @@ the demo is grounded and cited (no smoke-and-mirrors); all writes audited and at
   recorded: **A4 = option (b)** (non-MFA synthetic dev staff for v0; TOTP before any real staff
   account); **A2–A7 approved in principle** (each still lands via reviewed PR + security-reviewer;
   Alec merges auth/AccessPolicy PRs). A1 (the amended cut) awaiting final confirmation.
+- 2026-07-02 — **Branding deferred** (Alec): real branding is in progress externally; all Thermae
+  brand values are placeholders behind the token layer (§6 "Branding is deferred by
+  construction"). Every color/visual is tokenized and swappable in one place; per-practice
+  configurability confirmed as the existing `[data-brand]`/`ThemeProvider` design. With this
+  change folded in, **A1 (the cut) is approved — execution begins at S1.**
