@@ -162,3 +162,9 @@ explicit human approval.
   `/auth/login` returns `code` XOR `memberships`, so the single-membership guard cannot
   false-positive. Deferred consciously: centralized domain-error→HTTP mapping (when the third
   auth route lands) and env-tunable auth constants.
+- **2026-07-02 — v0 staff-MFA decision** (Alec, via the v0 proposal's A4 ask — see
+  `docs/V0_PROPOSAL.md` §5): for the synthetic-data-only v0, dev staff accounts are invited
+  **without** `mfaRequired`; the brokered TOTP enroll/verify flow is an early post-v0 slice and
+  is **required before any real staff account exists**. The "staff invites always set
+  `mfaRequired: true`" rule stands for real accounts; this is a scoped, recorded exception for
+  synthetic dev identities only.

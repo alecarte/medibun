@@ -28,6 +28,12 @@ This cut showcases both halves of the thesis: the "Starbucks" consumer feel (boo
 concierge) and the "unburdened" clinical side (ambient capture that feels like magic, not forms).
 AI is the headline in both directions — capture in, concierge out.
 
+**Focus confirmed (Alec, 2026-07-02): v0 is aesthetics-first.** The "spine journey" above is
+simply the single end-to-end user journey we polish — and it is entirely the Aureva
+MedSpa/aesthetics use case (injectable booking, face-map capture, treatment history). Handal
+(cosmetic/plastic surgery) is the later tenant on the same core, a theme + config per ADR-0003;
+nothing in v0 builds for other verticals.
+
 **A stated bet:** with Stripe deferred (§5), v0 demos **zero** commerce/membership/loyalty
 mechanics. v0 proves the thesis on beauty, speed, and AI alone; the commerce loop is the first
 post-v0 work. And v0's patient surface is web — it proves "beautiful, fast, AI-native," not yet
@@ -71,11 +77,28 @@ demo.
    to **HCP-facing** software, so the concierge cannot ride that lane — it stays administrative.
    Concretely: **aftercare content shown to patients is practice-authored (canned), surfaced by
    the concierge — never LLM-generated care advice.** This line is drawn in ADR-0004.
-3. **Staff copilot: visit summary** (small). Drafts a visit summary/follow-up from the structured
-   encounter data; HCP-facing, shows its basis, human edits/approves.
+3. **Staff assistant** (agentic chat in the staff app — Alec's 2026-07-02 amendment, expanding
+   the original visit-summary copilot). A command-K palette + chat panel: contextual AI search
+   that resolves patients, appointments, and schedules, answers questions about a patient
+   grounded in their record (citations open the real chart), answers general clinical questions
+   with its basis shown (HCP-facing — this one **can** ride the FDA non-device CDS lane, unlike
+   the patient concierge), and **takes scheduling actions**: find openings, book, reschedule,
+   cancel, block time. Implementation: a server-side Claude tool-use loop inside the BFF's AI
+   module whose tools are internal BFF functions executed **under the staff member's own
+   session** — the assistant can never see or do more than the logged-in user (AccessPolicy
+   enforcement and audit attribution are inherited by construction, not re-implemented). Every
+   mutation is draft-only: the model returns an action card, the human confirms, the confirmed
+   action executes through the normal endpoints with `AuditEvent` + AI-assist `Provenance`. The
+   visit-summary draft becomes one capability of this assistant rather than a separate feature.
 
 Deferred AI (Phase 2, the growth engine on Bots/Subscriptions where it belongs): no-show risk,
-smart scheduling, proactive rebooking nudges.
+smart scheduling, proactive rebooking nudges. **On pulling the growth engine into v0 (Alec's
+open challenge): recommend no.** The engine's compounding value is real, but its levers are
+commerce (memberships/packages — deferred with Stripe), outbound messaging (SMS/push — vendor +
+BAA paperwork), and event volume; a synthetic single-patient demo of it would be exactly the
+smoke-and-mirrors this proposal bans. v0 already demos the engine's _taste_ honestly — the
+concierge's grounded "when should I come back?" rebooking proposal — and S6's AI boundary plus
+the Bots/Subscriptions rails are the engine's foundation. First post-v0 work alongside Stripe.
 
 **The AI boundary is part of the work:** one module (`packages/ai` or `apps/api/src/ai`) is the
 only place the Anthropic SDK is imported — provider/model swappable, PHI gate shut by
@@ -104,7 +127,8 @@ green on `main`.
 | S8  | Ambient AI capture                  | Shorthand/dictation → Claude draft on the face-map → human confirm → same write path as S7 plus `Provenance` marking AI assistance.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Live: dictate the demo script's treatment → confirm → FHIR + AuditEvent + Provenance verified.                        |
 | S9  | Treatment history timeline          | Portal read path: history endpoints + the patient-facing face-map timeline (built **before** the concierge so the concierge grounds over real endpoints and its citations link to real UI).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Live: today's captured visit renders on the patient's timeline.                                                       |
 | S10 | Patient concierge                   | Grounded chat over history endpoints + service menu; booking proposals human-confirmed; practice-authored aftercare content; citations open the history UI.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Live: "what did I get last visit?" answers with citation; "book my usual" proposes a real slot.                       |
-| S11 | Staff copilot + demo polish         | Visit-summary draft; perf budget pass (below); `design:accessibility-review` on all built surfaces; demo rehearsal against the §8 script.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | The §8 demo runs start-to-finish from the one-command setup, budgets met.                                             |
+| S11 | Staff assistant (agentic chat)      | Command-K palette + chat in the staff app; BFF tool-use loop bound to the staff session (read tools: patient/appointment/schedule/history search; action tools: draft-only booking/reschedule/cancel/block cards → human confirm → normal endpoints + AuditEvent + AI Provenance); grounded patient Q&A with citations; visit-summary capability.                                                                                                                                                                                                                                                                                                                          | Live: "what did Mia have last visit?" cites the chart; "find an opening tomorrow" → confirmed card books a real slot. |
+| S12 | Demo polish                         | Perf budget pass (below); `design:accessibility-review` on all built surfaces; demo rehearsal against the §8 script.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | The §8 demo runs start-to-finish from the one-command setup, budgets met.                                             |
 
 Reordering within this sequence to unblock a dependency is mine; changing the cut's scope or
 dropping a slice is a re-cut → Alec.
@@ -114,6 +138,12 @@ sub-100ms perceived interactions via optimistic UI. Accessibility: WCAG 2.1 AA o
 built.
 
 ## 5. Approval-gated items this cut touches — batched as one ask
+
+**Decision status (2026-07-02):** A2–A7 are **approved in principle** by Alec — each still lands
+via reviewed PR + security-reviewer, and Alec personally merges anything touching
+auth/AccessPolicy. A4 is **decided: option (b)**. A1 is amended per Alec's feedback (aesthetics
+focus confirmed §1, staff assistant added §3/S11, growth engine kept out §3) — awaiting final
+confirmation of the amended cut.
 
 - **A1 — The cut itself** (this doc), including: mobile stubbed, Stripe memberships deferred out
   of v0 (an explicit Phase-1 re-scope), signup trimmed, and the **re-deferral of the accepted
@@ -131,12 +161,11 @@ built.
   setup contradicts AUTH.md's own least-privilege table), the `$set-accounts` grant for org
   tagging, and (optional, makes logout revocation authoritative — the standing deferred item) the
   scoped `Login` grant for the service client.
-- **A4 — Staff MFA for v0**: AUTH.md says staff invites always set `mfaRequired: true`, and MFA
-  login currently 501s. Two options, your call **before S5**: (a) build brokered TOTP
-  verify/enroll now (Medplum 5.1.9 has the `/auth/mfa` router — buildable, but AUTH.md itself
-  flags the brokered UX as a real budget item), or (b) approve non-MFA synthetic dev staff for
-  v0 with MFA landing before any real staff account. I recommend (b) for v0 speed with (a) as an
-  early post-v0 slice — but it's a control decision, so it's yours.
+- **A4 — Staff MFA for v0 — DECIDED (Alec, 2026-07-02): option (b).** Non-MFA **synthetic dev
+  staff only** for v0; brokered TOTP enroll/verify (Medplum 5.1.9 has the `/auth/mfa` router) is
+  an early post-v0 slice and is **required before any real staff account exists**. Recorded in
+  AUTH.md's review log. (Rejected for v0: (a) building brokered TOTP now — AUTH.md flags the
+  brokered UX as a real budget item.)
 - **A5 — Anthropic SDK + ADR-0004** (new dependency; PHI-touching once the BAA gate opens).
 - **A6 — Experience-DB schema migrations**: `services` catalog (S3); any later additions flagged
   per-slice.
@@ -279,8 +308,12 @@ color+icon+label; deuteranopia-checked semantic pairs.
    FHIR writes land: 5 × `MedicationAdministration` (+ injection-point extensions) → `Procedure`
    → Encounter, `Medication` with lot C3421A, `AuditEvent` + `Provenance` (AI-assisted) on every
    write — verifiable in Medplum.
-4. **The copilot summarizes.** Dr. Reyes accepts an AI-drafted visit summary (edits one line —
-   human always in the loop).
+4. **The staff assistant works.** Dr. Reyes hits ⌘K: "what did Mia have last time she was in?"
+   — the assistant answers from the chart, citations open the actual records. "Draft the visit
+   summary" — she accepts it, editing one line (human always in the loop). Then Noor: "find Mia
+   an opening with Dr. Reyes in two weeks" — the assistant proposes a slot as an action card;
+   Noor confirms and the booking lands through the normal endpoints, audited, with AI-assist
+   Provenance.
 5. **Mia sees it.** Back in the portal, Mia's treatment history shows today's visit on her own
    face-map. She asks the concierge "what should I avoid tonight?" — it surfaces Aureva's
    practice-authored post-Botox aftercare (canned content, cited), and "when should I come back?"
@@ -293,9 +326,9 @@ the demo is grounded and cited (no smoke-and-mirrors); all writes audited and at
 
 ## 9. Slice status log
 
-| Slice  | Status      | Notes                       |
-| ------ | ----------- | --------------------------- |
-| S1–S11 | Not started | Awaiting proposal approval. |
+| Slice  | Status      | Notes                                   |
+| ------ | ----------- | --------------------------------------- |
+| S1–S12 | Not started | Awaiting final confirmation of the cut. |
 
 ## 10. Review log
 
@@ -305,3 +338,10 @@ the demo is grounded and cited (no smoke-and-mirrors); all writes audited and at
   administrative (patient-facing ≠ HCP-CDS lane); phone-OTP re-deferral made explicit; history
   timeline sequenced before concierge; seed/demo grown per-slice; Encounter creation assigned to
   a check-in Bot; dev login-rate-limit raise added to S1.
+- 2026-07-02 — Amended per Alec's review: aesthetics-first focus confirmed (§1); staff copilot
+  expanded into the **agentic staff assistant** (contextual search + grounded patient Q&A +
+  confirm-gated scheduling actions) as its own slice S11, demo polish split to S12; growth
+  engine challenge answered — stays Phase 2 (recommendation accepted rationale in §3). Decisions
+  recorded: **A4 = option (b)** (non-MFA synthetic dev staff for v0; TOTP before any real staff
+  account); **A2–A7 approved in principle** (each still lands via reviewed PR + security-reviewer;
+  Alec merges auth/AccessPolicy PRs). A1 (the amended cut) awaiting final confirmation.
