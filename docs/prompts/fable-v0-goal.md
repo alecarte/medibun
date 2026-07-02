@@ -34,21 +34,23 @@ medical-industry best practices and standards, (c) AI-forward as the headline di
 fhir-types,medplum-backend}`, `infra/medplum/`.
 
 **Current state you're building on:** Sprint 01 shipped CI, the Hono BFF skeleton, a dev-only
-vertical slice, the accepted data-model + auth designs, and a **real auth implementation** on the
-unmerged branch `feat/auth-sessions` (single clean commit, security-reviewed, live-verified —
-Medplum direct-login brokered by the BFF, encrypted server-side sessions, `/patients/me`). The
-three product apps are still near-scaffold. Local dev runs self-hosted Medplum 5.1.9
-(`infra/medplum/setup-dev.sh`); no BAA is signed yet, so **no real PHI touches anything** — all
-work is synthetic-data-only.
+vertical slice, the accepted data-model + auth designs, and a **real auth implementation** on
+branch `feat/auth-sessions` / PR #9 (Medplum direct-login brokered by the BFF, encrypted
+server-side sessions, `/patients/me`) — hardened 2026-07-01 after a multi-agent review (decrypt
+guards, refresh-rejection semantics, bounded lock/pool waits, migrations wired into dev + CI,
+graceful shutdown; see AUTH.md's review log), security-reviewed, live-verified, CI green
+including the FOR UPDATE concurrency suite against a real Postgres. The three product apps are
+still near-scaffold. Local dev runs self-hosted Medplum 5.1.9 (`infra/medplum/setup-dev.sh`);
+no BAA is signed yet, so **no real PHI touches anything** — all work is synthetic-data-only.
 
-**Step zero — reconcile and merge the auth branch before anything else.** Verify branch state
-first: as of this writing, LOCAL `feat/auth-sessions` holds the clean squashed commit (`b857eb1`)
-but the remote / PR #9 still shows the older 4-commit history. Reconciling needs a force-push,
-which the repo's hooks reserve for Alec to run by hand
-(`git push --force-with-lease origin feat/auth-sessions`). Then do the review this pause was for:
-review PR #9 fresh (its description is the review guide, including the deferred approval-gated
-items), raise anything you'd change, and merge only with Alec's go-ahead. Do not build v0 surfaces
-on an unmerged auth foundation, and do not re-implement anything that branch already contains.
+**Step zero — get PR #9 merged before anything else.** The branch and remote are already
+reconciled (2026-07-01): PR #9 holds the squashed foundation commit plus the hardening commits,
+its description is the review guide (including the deferred approval-gated items), and CI is
+green. Verify that's still true (`git fetch`, `gh pr view 9`, CI status — operationally: the CI
+job on the PR's head commit is SUCCESS, no merge conflicts against `main`, remote matches local),
+review fresh if anything has moved since, and merge only with Alec's explicit go-ahead — an
+auth-touching merge is his sign-off by definition. Do not build v0 surfaces on an unmerged auth foundation, and do
+not re-implement anything that branch already contains.
 
 ## Phase 0 — Propose the v0 cut (do this before building anything)
 
@@ -73,7 +75,8 @@ Produce a short **v0 proposal** that:
 7. Lists the **external asks of Alec** — actions only he can take, with lead times, so the
    paperwork clocks start immediately: Medplum Cloud BAA + onboarding asks (raise `loginRateLimit`,
    enable audit-log streaming), Vercel HIPAA add-on, GitHub Pro (branch protection), the Renovate
-   app install, Apple Developer, and the Anthropic/LLM BAA when AI features approach real PHI.
+   app install, Apple Developer, and the Anthropic/LLM BAA (blocks only real-PHI AI —
+   synthetic-data AI proceeds without it; start the paperwork clock anyway).
 8. Defines the **v0 acceptance demo script** — the exact end-to-end walkthrough (personas, steps,
    surfaces) that will be the standard for "v0 is done." Write it down now; hold yourself to it.
 
@@ -121,7 +124,8 @@ Treat AI as the core differentiator of v0, not a bolt-on. Be ambitious. Candidat
 - **Design language:** establish a distinctive, modern, warm-but-clinical aesthetic — the opposite
   of legacy EMR grey. Use the `frontend-design` skill for the web surfaces; aim for a look that
   feels like a premium consumer product, not healthtech. Motion (`motion/react` on web, Reanimated
-  on mobile) used with taste. Optimistic UI so nothing feels like it's waiting on FHIR.
+  on mobile; mobile theming stays `@shopify/restyle` per the locked stack) used with taste.
+  Optimistic UI so nothing feels like it's waiting on FHIR.
 - **Design tokens are the single source of truth** (`@medibun/design-tokens`, DTCG + Style
   Dictionary → web CSS vars/Tailwind + mobile restyle). Brand is runtime-configurable
   (web `[data-brand]`, mobile restyle `ThemeProvider`) — **never hardcode brand values**; Aureva
@@ -165,8 +169,10 @@ silently.
 Known deferred / approval-gated items already on record (in AUTH.md and code TODOs), relevant if
 your cut touches them: grant the BFF service client a scoped `Login` AccessPolicy to make logout
 revocation authoritative; full MFA verify/enroll flow; multi-membership selection; remove the
-`API_DEV_UNAUTHENTICATED` dev route + portal `/dev/patient` page when real auth reaches the portal;
-CI Postgres service for the concurrency test.
+`API_DEV_UNAUTHENTICATED` dev route + portal `/dev/patient` page when real auth reaches the
+portal; centralize domain-error→HTTP mapping when the third auth route lands; env-tunable auth
+constants when a deployment needs them. (The CI Postgres service for the concurrency suite landed
+2026-07-01 — no longer deferred.)
 
 ## How to work (from CLAUDE.md — the definition of done applies to every PR)
 
@@ -197,6 +203,19 @@ CI Postgres service for the concurrency test.
   auto-memory at real milestones, and record every accepted spec change in the relevant doc's
   review log — a fresh session must be able to resume from the repo alone, without archaeology.
 
+## Decision authority at a glance
+
+- **Yours to decide** (state the decision and move): implementation details within the locked
+  stack, test design, UI composition and polish, token-set expansion, slice ordering within the
+  approved proposal (reordering to unblock a dependency is yours; changing the cut's scope or
+  dropping a slice is a re-cut → Alec), when and how to spend agents.
+- **Alec's to decide** (propose and wait): the v0 cut itself, any spec/ADR amendment, everything
+  on the CLAUDE.md approval-gate list (auth/authz/AccessPolicy, schema/FHIR migrations,
+  PHI-touching dependencies, destructive ops, weakening controls), merging auth/PHI-touching PRs,
+  external asks (BAAs, vendor add-ons), anything near the FDA device-lane boundary.
+- **Nobody's to decide silently:** if it's ambiguous which bucket a decision falls in, treat it
+  as Alec's.
+
 ## Use the full Fable 5 harness — this prompt is your standing authorization
 
 You are Fable 5; work like it. Multi-agent orchestration is **pre-authorized** for this effort —
@@ -218,7 +237,15 @@ don't (trivial mechanical edits, conversational turns).
   `security-reviewer` subagent where PHI/auth/AccessPolicy is touched — mandatory), boundary
   discipline (did anything leak across the ACL?), and accessibility on UI surfaces. Verify
   findings adversarially so plausible-but-wrong review comments don't churn the diff.
-- **Skills, not improvisation:** `frontend-design` for every web surface you build;
+- **Script fixed-shape fan-outs as Workflows.** When an orchestration has a known structure
+  (N design concepts → M judges → synthesize; finders → adversarial verifiers → report), write it
+  as a Workflow script — the Claude Code `Workflow` tool, a JS orchestration script that spawns
+  agents deterministically (nothing to do with Medplum/FHIR workflows) — rather than hand-driving
+  agents: deterministic control flow, resumable, and the shape is reviewable before it runs.
+  Hand-drive only genuinely exploratory work.
+- **Skills, not improvisation:** `superpowers:writing-plans` to turn each approved slice into a
+  concrete task-by-task plan, executed via `superpowers:subagent-driven-development` (or
+  `superpowers:executing-plans` inline); `frontend-design` for every web surface you build;
   `design:accessibility-review` on finished surfaces; `superpowers:test-driven-development` for
   implementation; `verify` / live-run the stack (self-hosted Medplum via
   `infra/medplum/setup-dev.sh`) with browser-preview tooling to see and screenshot what you built
@@ -226,6 +253,10 @@ don't (trivial mechanical edits, conversational turns).
 - **Isolate parallel work in worktrees.** Slices that touch disjoint surfaces can proceed as
   parallel agents in separate worktrees; anything sharing files stays sequential. Each slice is
   its own branch and PR.
+- **Never block on long waits.** Push, arm a background watcher on the CI run (or dev server, or
+  long build), and keep working on something independent; report the verdict when it lands.
+- **When blocked on an approval, park — don't idle, don't proceed.** Never work past a gate;
+  instead pick up the next independent slice and batch the pending asks for Alec in one place.
 - **Think hard where it matters.** Architecture, compliance, and spec-challenge decisions get
   extended reasoning and stated alternatives — not the first workable answer. Cheap mechanical
   stages (codemods, token plumbing) get cheap effort. Calibrate.
@@ -233,7 +264,8 @@ don't (trivial mechanical edits, conversational turns).
 ## v0 is done when
 
 - The **acceptance demo script** from your approved proposal runs end-to-end, polished, on
-  synthetic data, from the documented one-command setup — and it looks and feels like the thesis.
+  synthetic data, from the documented one-command setup — and it looks and feels like the thesis
+  (**Alec's demo sign-off is the explicit bar** for that subjective half; his call, not yours).
 - The performance budgets are met on the spine journey; the built surfaces pass an accessibility
   review; the AI features are grounded and honest (no smoke-and-mirrors in the demo path).
 - Every deferred approval-gated item is either done or explicitly re-deferred by Alec in writing —
