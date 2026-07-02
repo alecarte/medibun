@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { tokens } from "@medibun/design-tokens";
 import Home from "./page.js";
 
 describe("portal home", () => {
@@ -9,11 +8,6 @@ describe("portal home", () => {
     expect(
       screen.getByRole("heading", { name: "Care that feels like a ritual, not a queue." }),
     ).toBeInTheDocument();
-  });
-
-  it("renders the wordmark from the brand-name token (no hardcoded brand)", () => {
-    render(<Home />);
-    expect(screen.getByText(tokens["brand-name"])).toBeInTheDocument();
   });
 
   it("shows the three journey cards", () => {

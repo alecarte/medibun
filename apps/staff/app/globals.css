@@ -7,13 +7,18 @@
 
 /* Non-color token bridges into Tailwind utilities (colors come from the generated file).
    Fonts resolve through next/font variables set on <html> (Fragment Mono joins when the
-   first data table ships). */
+   first data table ships). @theme inline resolves at use-sites, so mapping --radius-lg to
+   the :root token of the same name is not circular. */
 @theme inline {
-  --font-display: var(--font-fraunces);
+  --font-display: var(--font-instrument-sans);
   --font-sans: var(--font-instrument-sans);
   --shadow-low: var(--elevation-low);
   --shadow-mid: var(--elevation-mid);
   --shadow-high: var(--elevation-high);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
   --radius-control: var(--brand-radius-control);
 }
 
@@ -22,18 +27,19 @@
     background-color: var(--color-surface-canvas);
     color: var(--color-text-primary);
     font-family: var(--font-sans);
-    /* Staff surfaces run the compact register (Thermae work register). */
+    /* Staff surfaces run the compact register. */
     line-height: var(--font-leading-compact);
   }
 }
 
 @layer components {
-  /* Display type carries the brand's variable-font voice (the SOFT/WONK axis differs
-     per brand via --brand-font-display-settings — one token, not a second font).
-     On staff screens it appears once per screen ("Today", "Room 3"). */
+  /* Display type: same family as text (sleek single-sans system), distinguished by
+     weight + tight tracking. --brand-font-display-settings stays the brand-voice seam. */
   .type-display {
     font-family: var(--font-display);
     font-variation-settings: var(--brand-font-display-settings);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: var(--font-tracking-display);
     line-height: var(--font-leading-display);
   }
   .type-kicker {
@@ -43,6 +49,9 @@
     text-transform: uppercase;
     color: var(--color-text-secondary);
   }
+}
+
+@layer components {
   /* Status chips: wash + text + solid dot + label — glanceable, never color-alone. */
   .status-chip {
     display: inline-flex;

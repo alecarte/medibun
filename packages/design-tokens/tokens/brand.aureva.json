@@ -8,14 +8,14 @@
     },
     "color": {
       "$type": "color",
-      "$description": "PLACEHOLDER brand values (Thermae panel). Real Aureva branding is in progress externally; swapping it in is a change to this file only (docs/V0_PROPOSAL.md §6).",
-      "primary": { "$value": "#8A5A2E" },
-      "primary-contrast": { "$value": "#FFFEFB" },
-      "background": { "$value": "{color.linen.0}" },
-      "foreground": { "$value": "{color.basalt.900}" },
-      "muted": { "$value": "{color.stone.600}" },
-      "wash": { "$value": "#F1DFD3" },
-      "glow": { "$value": "#F6E7D2" }
+      "$description": "PLACEHOLDER brand values (sleek-neutral direction, Alec 2026-07-02: lighter tones, bright olive accent). Real Aureva branding is in progress externally; swapping it in is a change to this file only (docs/V0_PROPOSAL.md §6).",
+      "primary": { "$value": "#4F6B0F" },
+      "primary-contrast": { "$value": "#FFFFFF" },
+      "background": { "$value": "{color.neutral.0}" },
+      "foreground": { "$value": "{color.neutral.900}" },
+      "muted": { "$value": "{color.neutral.600}" },
+      "wash": { "$value": "#ECF2D7" },
+      "glow": { "$value": "#F4F8E6" }
     },
     "radius": {
       "$type": "dimension",
@@ -23,7 +23,7 @@
     },
     "font": {
       "$type": "string",
-      "display-settings": { "$value": "'SOFT' 100, 'WONK' 0" }
+      "display-settings": { "$value": "normal" }
     }
   }
 }

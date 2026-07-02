@@ -173,124 +173,42 @@ confirmation of the amended cut.
 - **A7 — Check-in Bot** (new Bot + Subscription; stated here so Encounter creation ownership is
   explicit — the Bot creates it, not the BFF, per the policy table + boundary discipline).
 
-## 6. Design language direction — **Thermae: Warm Light on Stone**
+## 6. Design language direction — sleek neutral, olive accent (rev. 2)
 
-Chosen by a judge panel: 4 genuinely distinct concepts (spa-sanctuary / editorial-print /
-consumer-wellness / luminous-glass), scored by 3 independent judges (consumer-brand, clinical-
-workflow, and design-systems/a11y lenses — each recomputed the concepts' WCAG contrast math
-before scoring). **Unanimous winner: Thermae**, hardened with grafts from the runners-up.
-Judges' one-liner: Thermae's identity survives mediocre execution because it lives in
-enforceable tokens and its verified contrast math needs no per-brand exceptions; MASTHEAD
-(editorial) lost on its photography/curation dependency, Crema (consumer-wellness) on a real AA
-failure in its primary button and template-adjacency, Afterglow (luminous-glass) on a dark/light
-staff split that doubles the QA matrix plus GPU-expensive glass effects.
+**Rev. 2 (Alec, 2026-07-02, approved direction):** neutral and modern — the look and feel of
+leading technology products (Anthropic's product surfaces are the named reference), with lighter
+tones and **bright olive green accents** as the initial accent voice, and a **persistent sidebar
+for navigation** on both web apps. This supersedes rev. 1's warm "Thermae" palette (a 4-concept /
+3-judge panel pick — its token architecture, contrast discipline, status-chip rules, and motion
+system all carry forward unchanged; only the aesthetic register moved from warm-spa to
+sleek-neutral).
 
-### Branding is deferred by construction (Alec, 2026-07-02)
+### Branding is deferred by construction
 
-Alec's real branding is being developed externally right now, so v0 treats **every brand-specific
-value below as a placeholder**. This costs nothing: design tokens are already the binding single
-source of truth (CLAUDE.md — never hardcode brand values), and Thermae was structured for exactly
-this. The brand-independent system (semantic token layer, surfaces, density, motion, contrast
-guardrails) is what S1 actually builds; brand identity lives in **one file per practice**
-(`brand.aureva.json`: ~14 aliases — accent ramp, wash, glow, display-font axis, control radius,
-temperature nudge, logo) applied at runtime (web `[data-brand]`, mobile restyle `ThemeProvider`).
-When the real branding lands, ingesting it is a **one-file token swap + font files in a small
-PR** — zero component hunting; even the neutral and status ramps are tokens (with the reserved
-`neutral.temperature` escape hatch), so a bolder rebrand is still one place. CI contrast checks
-run against whatever values the token files hold, so the incoming brand is automatically
-WCAG-checked on arrival.
+Alec's real branding is being developed externally, so all brand values are **placeholders**
+behind the token layer: brand identity lives in one file per practice (`brand.<name>.json` —
+accent, washes, radius, type voice, logo) applied at runtime (web `[data-brand]`, mobile restyle
+`ThemeProvider`). Ingesting the real branding is a one-file token swap + font files in a small
+PR; CI contrast tests re-verify WCAG AA against whatever values arrive.
 
-### Thesis
+### The system (rev. 2 values)
 
-Medibun feels like walking from a bright street into a good spa: the light warms, sound drops,
-someone already knows your name. The UI is one constant warm-material room — linen surfaces,
-stone text, water-like motion — and each brand changes only **the light in the room** (accent,
-glow, a temperature nudge), never the room itself. No pure white, no pure black, no cold grey
-anywhere: the literal opposite of legacy EMR.
-
-### Palette (all ratios computed)
-
-**Constant neutral axis (hue ~38–42°):** linen-0 `#FBF8F3` (app canvas), paper `#FFFEFB`
-(cards/data, the only near-white, always layered on linen), linen-100 `#F3EEE5` (wells, table
-headers), stone-200 `#E2DACB` (decorative hairlines only), stone-500 `#857A6A` (interactive
-borders/icons, 3.97:1), stone-600 `#6B6153` (secondary text, 5.73:1), basalt-900 `#28221A`
-(ink, 14.9:1).
-
-**Shared warm semantic set:** success moss `#3F6B3D` (5.86:1) · warning ochre `#8F5A10`
-(5.45:1) · danger madder `#A63A2A` (6.08:1) · info deep-teal `#2F6D73` (5.57:1). Status chips:
-50-tint wash + 700-grade text (≥6:1) + solid 8px dot + label — glanceable at row-scan speed,
-never color-alone.
-
-**Aureva (aesthetic, indulgent):** bronze-700 `#8A5A2E` actions (5.53:1; white-on-bronze
-5.86:1), blush wash `#F1DFD3`, champagne glow gradient `#F6E7D2→transparent`, control radius
-10px, warm paper tint.
-**Handal (surgical, authoritative):** palm-700 `#2E4B3F` (9.03:1; white-on-palm 9.57:1), sage
-wash `#E4EAE3`, ivory glow, control radius 6px, ink/paper nudged cooler — real surgical distance
-beyond the accent. Both accents pass 4.5:1 as normal text, so **no per-brand contrast exceptions
-ever ship**.
-
-### Typography (open-license, Google Fonts)
-
-- **Display:** Fraunces variable — Aureva SOFT=100/WONK=0 (poured, rounded); Handal SOFT=0
-  (incised) via one `fontVariationSettings` token. Display slots only, enforced by typography
-  role tokens (`typography.display/title/body/label/kicker/data`), never below 20px — the
-  rationing rule lives in token shape, not policy. Dating risk priced in: swapping the display
-  face is a one-token change.
-- **Text/UI:** Instrument Sans 400/500/600. Patient scale (1.2): 14/16 body → 44 display,
-  line-height 1.55. Staff: 13/14 body, line-height 1.35, same tokens × compact multiplier.
-- **Data:** Fragment Mono for reference codes/timestamps/dosage units; `tabular-nums` on every
-  numeric column. Eyebrow kicker (11–12px caps, +0.04em) above section titles, system-wide.
-
-### Shape, depth, surfaces
-
-River-stone geometry: inputs/chips 10px (Handal 6px), cards 16px, feature 20px, sheets 28px top,
-CTAs full pill. Three linen layers: linen-0 room → paper cards → linen-100 wells. Shadows are
-warm light, never black: basalt-tinted (`rgba(40,34,26,…)`) at three elevations. Staff tables
-drop shadows entirely — broadsheet discipline: paper-on-linen, horizontal hairlines only, no
-zebra, selection = 2px accent left-rule + brand wash (zero layout shift). Hairlines always
-accompany surface shifts on mobile (cheap-panel ΔL guard); low-end fallback tokens ship opaque
-equivalents for every gradient/tint.
-
-### Motion
-
-One easing family `cubic-bezier(0.22,1,0.36,1)`, durations 120/200/320/600ms, opacity+transform
-only, no bounces. Optimistic UI as physics: actions "set down" instantly; the server merely
-confirms. Signature moments: **Sunrise Confirmation** (brand glow blooms radially behind the
-confirmation card, 600ms), **Ritual Stepper** (steps settle like folded linen; liquid-fill
-progress pill), **Stone Settle** (staff optimistic writes: row lifts 1px, settles with an
-accent-wash flash — no row-level spinners, ever), **Glowline** (a 1.5px accent beam along a
-card's top edge as the peripheral pending cue for background syncs). Every moment has a
-`prefers-reduced-motion` crossfade.
-
-### Staff density — same language, work register
-
-Density is a token dimension (`[data-density]` / restyle density object): spacing ×0.75,
-controls 40→32px (`control.height`, `row.height` component aliases), compact type. The room
-stays warm; hierarchy comes from three-surface layering + tabular numerals, not grey borders.
-Accent is rationed to primary action, active nav, focus. Fraunces appears exactly once per
-screen ("Today", "Room 3"). A 40-row day-sheet scans at ten feet with zero cold pixels.
-
-### Token implications
-
-Three DTCG layers: `base.json` (linen/stone/basalt ramps replacing the grey ramp; status
-primitives; shadow/typography/motion/gradient tokens), `semantic.json`
-(`color.surface/text/border/action/status`, `elevation`, `density`, plus a reserved
-`neutral.temperature` alias slot — the pre-planned escape hatch if a future tenant demands cool
-neutrals), and `brand.aureva.json` / `brand.handal.json` (~14 aliases: accent ramp, wash, glow
-gradient, display axis settings, control radius, ink/paper temperature nudge, logo). Brands may
-only override `brand.*` — structurally enforced. CI additions: a contract test asserting both
-emitted themes (CSS vars + restyle) expose identical semantic key sets, and token-usage lint
-rules for the named contrast traps. A **warm-dark theme** (basalt room, luminous accents) is
-specced in v0 as a mode of the same semantic layer — not deferred — since mobile OLED users
-expect it.
-
-### Accessibility commitments
-
-WCAG 2.1 AA verified in CI, not eyeballed: body ≥4.5:1 on every surface it sits on; interactive
-borders/icons ≥3:1 (stone-500); focus ring 2px accent + 2px offset. Named traps with token-level
-guards: stone-200 never aliased to interactive slots; stone-500 text restricted to true
-large-text sizes (≥18.66px bold / 24px); no text over glow gradients; status always
-color+icon+label; deuteranopia-checked semantic pairs.
+- **Neutrals, light:** canvas `#FAFAF7`, cards pure white, wells `#F2F2EC`, hairlines `#E6E5DD`,
+  interactive borders `#85857A` (3.7:1), secondary text `#5D5D52` (6.6:1), ink `#1B1B16`.
+- **Aureva placeholder accent — olive:** primary `#4F6B0F` (5.8:1 as text on canvas; white on it
+  6.1:1 — AA with no exceptions), bright olive washes `#ECF2D7` / glow `#F4F8E6` carry the
+  "bright" register on active nav, chips, and highlights. Handal placeholder: deep palm
+  `#2E4B3F` on cooler near-white — same system, one token file apart.
+- **Type: single sans.** Instrument Sans for display and text (display = semibold + tight
+  tracking, the tech-brand register); Fragment Mono for data/codes when tables land. The
+  `brand-font-display-settings` token remains the per-brand type-voice seam.
+- **Shape/depth:** compact radii (controls 8px Aureva / 6px Handal, cards 12px), barely-there
+  ink-tinted shadows, hairlines over borders.
+- **Sidebar navigation** on portal and staff: wordmark, nav (active item = olive wash + olive
+  text; unbuilt destinations honestly chipped "Soon"), sign-in anchored at the bottom.
+- **Unchanged from rev. 1:** DTCG token layers (base → semantic → brand), WCAG 2.1 AA enforced
+  by CI contrast tests on both brands, status chips always color+dot+label, motion tokens
+  (120/200/320/600ms, one easing family), optimistic-UI discipline, staff compact register.
 
 ## 7. External asks of Alec — start the clocks now
 
@@ -342,10 +260,10 @@ the demo is grounded and cited (no smoke-and-mirrors); all writes audited and at
 
 ## 9. Slice status log
 
-| Slice  | Status            | Notes                                                                                                                                               |
-| ------ | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| S1     | Built — in review | Thermae tokens (2 brands, WCAG contract tests), portal + staff shells, runtime brand swap live-verified (screenshots), dev login-rate-limit raised. |
-| S2–S12 | Not started       | S2 (portal patient auth) is next.                                                                                                                   |
+| Slice  | Status            | Notes                                                                                                                                                                                      |
+| ------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| S1     | Built — in review | Sleek-neutral tokens rev. 2 (olive accent, 2 brands, WCAG contract tests), sidebar shells for portal + staff, runtime brand swap live-verified (screenshots), dev login-rate-limit raised. |
+| S2–S12 | Not started       | S2 (portal patient auth) is next.                                                                                                                                                          |
 
 ## 10. Review log
 
@@ -367,3 +285,8 @@ the demo is grounded and cited (no smoke-and-mirrors); all writes audited and at
   construction"). Every color/visual is tokenized and swappable in one place; per-practice
   configurability confirmed as the existing `[data-brand]`/`ThemeProvider` design. With this
   change folded in, **A1 (the cut) is approved — execution begins at S1.**
+- 2026-07-02 — **Design direction rev. 2** (Alec, at S1 review): restyle to a sleek, neutral,
+  modern tech-product register (Anthropic-referenced) with lighter tones, bright olive green
+  accents (initial), and sidebar navigation on both web apps. Token architecture, AA contrast
+  tests, and brand-swap mechanics unchanged; §6 rewritten; S1 revised in place and re-verified
+  (screenshots + live Handal swap).

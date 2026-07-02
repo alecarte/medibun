@@ -1,13 +1,8 @@
 import type { Metadata } from "next";
-import { Fraunces, Instrument_Sans } from "next/font/google";
+import { Instrument_Sans } from "next/font/google";
 import { tokens } from "@medibun/design-tokens";
+import { Sidebar } from "./components/sidebar";
 import "./globals.css";
-
-const fraunces = Fraunces({
-  subsets: ["latin"],
-  variable: "--font-fraunces",
-  axes: ["SOFT", "WONK", "opsz"],
-});
 
 const instrumentSans = Instrument_Sans({
   subsets: ["latin"],
@@ -23,12 +18,13 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   // `data-brand` is the runtime-theming seam: the settings GUI / per-tenant resolution
   // sets it server-side, and the [data-brand] CSS-variable scope swaps the brand with no rebuild.
   return (
-    <html
-      lang="en"
-      data-brand="aureva"
-      className={`${fraunces.variable} ${instrumentSans.variable}`}
-    >
-      <body className="antialiased">{children}</body>
+    <html lang="en" data-brand="aureva" className={instrumentSans.variable}>
+      <body className="antialiased">
+        <div className="flex min-h-screen">
+          <Sidebar />
+          <main className="flex-1">{children}</main>
+        </div>
+      </body>
     </html>
   );
 }

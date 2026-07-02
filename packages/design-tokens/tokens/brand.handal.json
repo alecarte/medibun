@@ -8,14 +8,14 @@
     },
     "color": {
       "$type": "color",
-      "$description": "PLACEHOLDER brand values (Thermae panel): surgical register — cooler ink/paper, palm accent, tighter radius.",
+      "$description": "PLACEHOLDER brand values: surgical register on the same sleek-neutral system — deep palm accent, cooler near-white, tighter radius.",
       "primary": { "$value": "#2E4B3F" },
-      "primary-contrast": { "$value": "#FFFEFB" },
-      "background": { "$value": "#F9F8F4" },
-      "foreground": { "$value": "#23211C" },
-      "muted": { "$value": "{color.stone.600}" },
+      "primary-contrast": { "$value": "#FFFFFF" },
+      "background": { "$value": "#FAFAFA" },
+      "foreground": { "$value": "#1B1C1A" },
+      "muted": { "$value": "{color.neutral.600}" },
       "wash": { "$value": "#E4EAE3" },
-      "glow": { "$value": "#F0F2EC" }
+      "glow": { "$value": "#EFF2EE" }
     },
     "radius": {
       "$type": "dimension",
@@ -23,7 +23,7 @@
     },
     "font": {
       "$type": "string",
-      "display-settings": { "$value": "'SOFT' 0, 'WONK' 0" }
+      "display-settings": { "$value": "normal" }
     }
   }
 }
