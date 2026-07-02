@@ -168,3 +168,16 @@ explicit human approval.
   is **required before any real staff account exists**. The "staff invites always set
   `mfaRequired: true`" rule stands for real accounts; this is a scoped, recorded exception for
   synthetic dev identities only.
+- **2026-07-02 — S2 portal patient auth shipped** (v0 proposal S2). Portal login/logout UI +
+  `/account` on the same-origin `/api` proxy (Next rewrite → BFF; HttpOnly cookie stays
+  first-party). The **`API_DEV_UNAUTHENTICATED` dev route and portal `/dev/patient` page are
+  REMOVED** (the decided replace-not-extend item — done); a regression test pins `/patients/:id`
+  to 404. First AccessPolicy landed: **`patient-self-v1`** (read-only own-compartment template,
+  `%patient` criteria verified against the v5.1.9 server source incl. read-by-id enforcement),
+  upserted + membership-bound by `setup-dev.sh` with a fail-loud binding check (the server
+  silently drops malformed criteria — hence the check). CAVEAT: the cloud sandbox cannot pull
+  Medplum images (registry blocked), so policy binding was source-verified + script-self-checked
+  but NOT yet live-exercised against a running Medplum — first `setup-dev.sh` run on a normal
+  dev machine completes that; the end-to-end login flow itself was live-verified in a browser
+  against the real BFF/session store with only Medplum's four endpoints faked
+  (`apps/api/scripts/e2e-harness.ts`, synthetic data).

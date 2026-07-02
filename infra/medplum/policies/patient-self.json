@@ -1,0 +1,22 @@
+{
+  "resourceType": "AccessPolicy",
+  "name": "patient-self-v1",
+  "resource": [
+    { "resourceType": "Patient", "criteria": "Patient?_id=%patient.id", "readonly": true },
+    { "resourceType": "Appointment", "criteria": "Appointment?patient=%patient", "readonly": true },
+    { "resourceType": "Encounter", "criteria": "Encounter?subject=%patient", "readonly": true },
+    { "resourceType": "Procedure", "criteria": "Procedure?subject=%patient", "readonly": true },
+    {
+      "resourceType": "MedicationAdministration",
+      "criteria": "MedicationAdministration?subject=%patient",
+      "readonly": true
+    },
+    { "resourceType": "Media", "criteria": "Media?subject=%patient", "readonly": true },
+    { "resourceType": "Consent", "criteria": "Consent?patient=%patient", "readonly": true },
+    {
+      "resourceType": "QuestionnaireResponse",
+      "criteria": "QuestionnaireResponse?subject=%patient",
+      "readonly": true
+    }
+  ]
+}

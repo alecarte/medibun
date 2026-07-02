@@ -115,13 +115,52 @@ BID="$(printf '%s' "$BOT" | jq -r '.id')"
 [ -n "$BID" ] && [ "$BID" != "null" ] || { echo "✗ bot create failed: $BOT"; exit 1; }
 echo "  ✓ bot: $BID"
 
+# Upsert the patient-compartment AccessPolicy template (docs/DATA_MODEL.md matrix; approved
+# via docs/V0_PROPOSAL.md A3). Policies land via reviewed code only — never the admin UI.
+echo "→ upserting AccessPolicy 'patient-self-v1'…"
+POLICY_SRC="$(cat "$HERE/policies/patient-self.json")"
+EXISTING_POLICY_ID="$(curl -s "$BASE/fhir/R4/AccessPolicy?name=patient-self-v1" \
+  -H "Authorization: Bearer $ACCESS" | jq -r '.entry[0].resource.id // empty')"
+if [ -n "$EXISTING_POLICY_ID" ]; then
+  POLICY_ID="$EXISTING_POLICY_ID"
+  curl -s -X PUT "$BASE/fhir/R4/AccessPolicy/$POLICY_ID" -H "Authorization: Bearer $ACCESS" \
+    -H 'Content-Type: application/fhir+json' \
+    -d "$(printf '%s' "$POLICY_SRC" | jq --arg id "$POLICY_ID" '. + {id: $id}')" \
+    | jq -e '.id' >/dev/null || { echo "✗ policy update failed"; exit 1; }
+else
+  POLICY_ID="$(curl -s -X POST "$BASE/fhir/R4/AccessPolicy" -H "Authorization: Bearer $ACCESS" \
+    -H 'Content-Type: application/fhir+json' -d "$POLICY_SRC" | jq -r '.id')"
+  [ -n "$POLICY_ID" ] && [ "$POLICY_ID" != "null" ] || { echo "✗ policy create failed"; exit 1; }
+fi
+echo "  ✓ policy: $POLICY_ID"
+
+# Trust-but-verify part 1 (security-reviewer 2026-07-02): read the policy BACK and assert
+# all 8 resource entries survived with non-empty criteria — the server silently drops
+# malformed criteria, which would fail open. Fail here, not in prod.
+POLICY_BACK="$(curl -s "$BASE/fhir/R4/AccessPolicy/$POLICY_ID" -H "Authorization: Bearer $ACCESS")"
+ENTRY_COUNT="$(printf '%s' "$POLICY_BACK" | jq '[.resource[]? | select((.criteria // "") != "")] | length')"
+[ "$ENTRY_COUNT" = "8" ] \
+  && echo "  ✓ policy read-back: 8 resource entries, all with criteria" \
+  || { echo "  ✗ policy read-back has $ENTRY_COUNT criteria-bearing entries (want 8) — criteria dropped?"; exit 1; }
+
 # Invite a SYNTHETIC patient user so the brokered-login flow is exercisable out of the box.
-# Synthetic, non-PHI; LOCAL DEV ONLY. Ignored if the email already exists (idempotent re-runs).
-echo "→ inviting synthetic patient 'synthia.login@example.test'…"
-curl -s -X POST "$BASE/admin/projects/$PID/invite" -H "Authorization: Bearer $ACCESS" \
+# Synthetic, non-PHI; LOCAL DEV ONLY. Idempotent: re-invites upsert the ProjectMembership,
+# which also (re)binds the access policy on existing dev setups.
+echo "→ inviting synthetic patient 'synthia.login@example.test' (policy-bound)…"
+INVITE_RES="$(curl -s -X POST "$BASE/admin/projects/$PID/invite" -H "Authorization: Bearer $ACCESS" \
   -H 'Content-Type: application/json' \
-  -d '{"resourceType":"Patient","firstName":"Synthia","lastName":"Loginsmith","email":"synthia.login@example.test","password":"synth-pw-12345","sendEmail":false}' \
-  >/dev/null && echo "  ✓ synthetic patient ready (synthia.login@example.test / synth-pw-12345)"
+  -d "$(jq -n --arg pid "$POLICY_ID" '{resourceType:"Patient",firstName:"Synthia",lastName:"Loginsmith",email:"synthia.login@example.test",password:"synth-pw-12345",sendEmail:false,membership:{accessPolicy:{reference:("AccessPolicy/"+$pid)}}}')")"
+MEMBERSHIP_ID="$(printf '%s' "$INVITE_RES" | jq -r '.id // empty')"
+[ -n "$MEMBERSHIP_ID" ] || { echo "✗ invite failed: $INVITE_RES"; exit 1; }
+echo "  ✓ synthetic patient ready (synthia.login@example.test / synth-pw-12345)"
+
+# Trust-but-verify part 2: THIS user's membership (not just any membership) must reference
+# the policy — a policy-less membership has full project access.
+MEMBERSHIP_POLICY="$(curl -s "$BASE/fhir/R4/ProjectMembership/$MEMBERSHIP_ID" \
+  -H "Authorization: Bearer $ACCESS" | jq -r '.accessPolicy.reference // empty')"
+[ "$MEMBERSHIP_POLICY" = "AccessPolicy/$POLICY_ID" ] \
+  && echo "  ✓ membership $MEMBERSHIP_ID bound to $MEMBERSHIP_POLICY" \
+  || { echo "  ✗ membership $MEMBERSHIP_ID is NOT policy-bound (got: '$MEMBERSHIP_POLICY')"; exit 1; }
 
 cat > "$HERE/.env" <<EOF
 MEDPLUM_BASE_URL=$BASE/

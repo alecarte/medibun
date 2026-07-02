@@ -3,27 +3,18 @@ import { describe, expect, it } from "vitest";
 import { readApiConfigFromEnv } from "./config.js";
 
 describe("readApiConfigFromEnv", () => {
-  it("defaults to port 3001 with dev routes off", () => {
-    expect(readApiConfigFromEnv({})).toEqual({ port: 3001, devUnauthenticatedRoutes: false });
+  it("defaults to port 3001", () => {
+    expect(readApiConfigFromEnv({})).toEqual({ port: 3001 });
   });
 
   it("parses PORT from the environment", () => {
     expect(readApiConfigFromEnv({ PORT: "8080" }).port).toBe(8080);
   });
 
-  it("refuses to start with dev unauthenticated routes in production", () => {
-    expect(() =>
-      readApiConfigFromEnv({ API_DEV_UNAUTHENTICATED: "1", NODE_ENV: "production" }),
-    ).toThrow(/API_DEV_UNAUTHENTICATED/);
-  });
-
-  it("enables dev unauthenticated routes only on the exact opt-in value", () => {
-    expect(readApiConfigFromEnv({ API_DEV_UNAUTHENTICATED: "1" }).devUnauthenticatedRoutes).toBe(
-      true,
-    );
-    expect(readApiConfigFromEnv({ API_DEV_UNAUTHENTICATED: "true" }).devUnauthenticatedRoutes).toBe(
-      false,
-    );
+  it("ignores the removed dev-route flag (unauthenticated reads are gone for good)", () => {
+    // API_DEV_UNAUTHENTICATED was deleted with the portal-login slice (docs/AUTH.md:
+    // replace, not extend). A stale .env must not resurrect anything.
+    expect(readApiConfigFromEnv({ API_DEV_UNAUTHENTICATED: "1" })).toEqual({ port: 3001 });
   });
 
   it("throws on a non-numeric PORT", () => {

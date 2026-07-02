@@ -269,10 +269,11 @@ the demo is grounded and cited (no smoke-and-mirrors); all writes audited and at
 
 ## 9. Slice status log
 
-| Slice  | Status            | Notes                                                                                                                                                                                      |
-| ------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| S1     | Built — in review | Sleek-neutral tokens rev. 2 (olive accent, 2 brands, WCAG contract tests), sidebar shells for portal + staff, runtime brand swap live-verified (screenshots), dev login-rate-limit raised. |
-| S2–S12 | Not started       | S2 (portal patient auth) is next.                                                                                                                                                          |
+| Slice  | Status            | Notes                                                                                                                                                                                                                                                           |
+| ------ | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| S1     | Built — in review | Sleek-neutral tokens rev. 2 (olive accent, 2 brands, WCAG contract tests), sidebar shells for portal + staff, runtime brand swap live-verified (screenshots), dev login-rate-limit raised.                                                                      |
+| S2     | Built — in review | Patient login/logout/account live in the portal (same-origin proxy); patient-self-v1 AccessPolicy template + fail-loud binding in setup-dev.sh; dev route + /dev/patient deleted. Live-Medplum policy check pending a Docker-capable machine (see AUTH.md log). |
+| S3–S12 | Not started       | S3 (booking groundwork) is next.                                                                                                                                                                                                                                |
 
 ## 10. Review log
 

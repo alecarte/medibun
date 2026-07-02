@@ -11,7 +11,7 @@ import {
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 
-import { createApp, type AppDeps, type AuthDeps } from "./app.js";
+import { createApp, type AuthDeps } from "./app.js";
 import { createTokenCipher } from "./auth/crypto.js";
 import { createSessionStore } from "./auth/sessions.js";
 import { readApiConfigFromEnv } from "./config.js";
@@ -122,31 +122,13 @@ function buildAuthDeps(): { auth: AuthDeps; pool: pg.Pool } | undefined {
   return { auth, pool };
 }
 
-/**
- * Dev-only, synthetic data only: unauthenticated patient reads exist solely behind
- * API_DEV_UNAUTHENTICATED=1 until the portal login UI lands (next auth PR), then this
- * guard is REMOVED per docs/AUTH.md. Fresh login per call — dev-only caveat as in medplum.ts.
- */
-const getPatientProfile: AppDeps["getPatientProfile"] = config.devUnauthenticatedRoutes
-  ? async (id) => {
-      const client = await authenticatedMedplumClient(readConfigFromEnv());
-      const patient = await readPatientById(client, id);
-      return patient && toPatientProfile(patient);
-    }
-  : undefined;
-
 const authWiring = buildAuthDeps();
 
 const app = createApp({
   log: (entry) => console.log(JSON.stringify(entry)),
   checkMedplum: checkMedplumConnection,
   auth: authWiring?.auth,
-  getPatientProfile,
 });
-
-if (config.devUnauthenticatedRoutes) {
-  console.log(JSON.stringify({ msg: "DEV MODE: unauthenticated routes mounted" }));
-}
 
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(JSON.stringify({ msg: "api listening", port: info.port }));

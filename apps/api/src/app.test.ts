@@ -7,13 +7,12 @@ import {
 } from "@medibun/medplum-backend";
 import { describe, expect, it } from "vitest";
 
-import { createApp, type AppDeps, type AuthDeps, type LogEntry } from "./app.js";
+import { createApp, type AuthDeps, type LogEntry } from "./app.js";
 
 /** Build an app with a captured log sink and a stubbed Medplum check. */
 function makeApp(
   opts: {
     checkMedplum?: () => Promise<boolean>;
-    getPatientProfile?: AppDeps["getPatientProfile"];
     auth?: Partial<AuthDeps>;
   } = {},
 ) {
@@ -31,7 +30,6 @@ function makeApp(
   const app = createApp({
     log: (entry) => logs.push(entry),
     checkMedplum: opts.checkMedplum ?? (() => Promise.resolve(true)),
-    getPatientProfile: opts.getPatientProfile,
     auth,
   });
   return { app, logs };
@@ -111,25 +109,10 @@ describe("error handling (PHI-safe)", () => {
   });
 });
 
-describe("GET /patients/:id (mounted only when a reader is wired — dev guard)", () => {
-  const profile: PatientProfile = { id: "synth-1", name: "Synth Example" };
-
-  it("is NOT mounted when no patient reader is provided (default, prod-safe)", async () => {
+describe("GET /patients/:id (removed with the portal-login slice — regression guard)", () => {
+  it("is never mounted: unauthenticated patient reads are gone for good", async () => {
     const { app } = makeApp();
     const res = await app.request("/patients/synth-1");
-    expect(res.status).toBe(404);
-  });
-
-  it("returns the profile DTO when wired and found", async () => {
-    const { app } = makeApp({ getPatientProfile: () => Promise.resolve(profile) });
-    const res = await app.request("/patients/synth-1");
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual(profile);
-  });
-
-  it("returns the generic 404 body when the patient does not exist", async () => {
-    const { app } = makeApp({ getPatientProfile: () => Promise.resolve(undefined) });
-    const res = await app.request("/patients/missing");
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("not_found");

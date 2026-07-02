@@ -61,21 +61,6 @@ export type AppDeps = {
   readonly checkMedplum: () => Promise<boolean>;
   /** Auth routes mount only when provided (docs/AUTH.md). */
   readonly auth?: AuthDeps;
-  /**
-   * Patient profile reader. OPTIONAL ON PURPOSE: until real auth lands
-   * (approval-gated, see the sprint's auth design doc), /patients/:id is only
-   * mounted when the entrypoint wires this — which it does exclusively behind
-   * the API_DEV_UNAUTHENTICATED=1 flag (refused in production) with synthetic
-   * local data.
-   *
-   * BEFORE REAL PHI (security-reviewer, 2026-06-10): (a) AuditEvent emission — DONE
-   * for dev (logAuditEvents enabled + end-user attribution verified 2026-06-12);
-   * Medplum Cloud log streaming remains on the BAA/onboarding checklist. (b) End-
-   * principal attribution — DONE for the session routes (/patients/me reads run as
-   * the end user); this dev route still reads as the service account and is removed
-   * with the portal login PR (docs/AUTH.md).
-   */
-  readonly getPatientProfile?: (id: string) => Promise<PatientProfile | undefined>;
 };
 
 type Env = { Variables: { requestId: string } };
@@ -233,16 +218,9 @@ export function createApp(deps: AppDeps): Hono<Env> {
     });
   }
 
-  const getPatientProfile = deps.getPatientProfile;
-  if (getPatientProfile) {
-    app.get("/patients/:id", async (c) => {
-      const profile = await getPatientProfile(c.req.param("id"));
-      if (!profile) {
-        return fail(c, "not_found", 404);
-      }
-      return c.json(profile);
-    });
-  }
+  // NOTE: the former dev-only unauthenticated GET /patients/:id was removed with the
+  // portal-login slice (docs/AUTH.md: replace, not extend). Patient reads happen only
+  // through the session-scoped /patients/me above, as the end user's own principal.
 
   app.get("/health/medplum", async (c) => {
     try {
