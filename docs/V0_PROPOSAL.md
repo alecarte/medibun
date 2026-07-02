@@ -1,6 +1,7 @@
 # v0 Proposal — the Aureva launch cut
 
-**Status: PROPOSED — awaiting Alec's approval. Nothing below is being built until sign-off.**
+**Status: APPROVED (Alec, 2026-07-02, with amendments recorded in the review log) — in
+execution. §9 tracks slice status; auth/AccessPolicy PRs still merge only with Alec's sign-off.**
 
 Author: Fable session, 2026-07-02. Inputs: whole-repo exploration (docs, all four apps, packages,
 infra, CI), an adversarial skeptic pass on this cut (findings folded in below, several verified
