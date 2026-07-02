@@ -13,12 +13,29 @@ env:
   TURBO_TELEMETRY_DISABLED: "1"
   NEXT_TELEMETRY_DISABLED: "1"
   EXPO_NO_TELEMETRY: "1"
+  # Synthetic CI-only credentials for the experience-postgres service below (no PHI, no secrets).
+  EXPERIENCE_DATABASE_URL: postgres://medibun:medibun@localhost:5433/medibun_experience
 
 jobs:
   ci:
     name: typecheck · lint · test · build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      # Real Postgres so the session-store concurrency suite (FOR UPDATE semantics) runs in CI.
+      experience-postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: medibun
+          POSTGRES_PASSWORD: medibun
+          POSTGRES_DB: medibun_experience
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U medibun -d medibun_experience"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -38,6 +55,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Migrate experience db (test schema)
+        run: pnpm --filter @medibun/api db:migrate
 
       - name: Prettier
         run: pnpm format:check

@@ -1,8 +1,8 @@
-import { OperationOutcomeError, notFound } from "@medplum/core";
+import { OperationOutcomeError, forbidden, notFound, unauthorized } from "@medplum/core";
 import type { Patient } from "@medplum/fhirtypes";
 import { describe, expect, it } from "vitest";
 
-import { readPatientById, type PatientReader } from "./patients.js";
+import { readPatientById, SessionExpiredError, type PatientReader } from "./patients.js";
 
 const synthPatient: Patient = {
   resourceType: "Patient",
@@ -30,5 +30,19 @@ describe("readPatientById", () => {
       readResource: () => Promise.reject(new Error("connection refused")),
     };
     await expect(readPatientById(client, "synth-1")).rejects.toThrow("connection refused");
+  });
+
+  it("throws SessionExpiredError when Medplum rejects the token (401)", async () => {
+    const client: PatientReader = {
+      readResource: () => Promise.reject(new OperationOutcomeError(unauthorized)),
+    };
+    await expect(readPatientById(client, "synth-1")).rejects.toBeInstanceOf(SessionExpiredError);
+  });
+
+  it("throws SessionExpiredError on a forbidden (403) read", async () => {
+    const client: PatientReader = {
+      readResource: () => Promise.reject(new OperationOutcomeError(forbidden)),
+    };
+    await expect(readPatientById(client, "synth-1")).rejects.toBeInstanceOf(SessionExpiredError);
   });
 });

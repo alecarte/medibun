@@ -86,6 +86,19 @@ not the browser-redirect OAuth authorization-code flow; PKCE materials are serve
 - **External IdP (Auth0/Clerk/Cognito):** new PHI-adjacent vendor, BAA + approval gate, and an
   identity-mapping layer between IdP subject and Medplum profile. Revisit only if we need social
   login or enterprise SSO.
+- **On-Behalf-Of impersonation (`X-Medplum-On-Behalf-Of`) for end-user reads:** considered as a
+  way to avoid storing per-user refresh tokens. **Rejected.** OBO is authorization-only — it does
+  not authenticate the end user, so the brokered direct-login flow (password/MFA) is required
+  regardless; OBO would only remove token storage/refresh. The cost is disqualifying: it requires
+  the BFF ClientApplication to hold **Project-Admin** (Medplum docs: "The only requirement … is
+  that it has Project Admin rights"), which (a) violates the binding least-privilege rule and the
+  "service principal is not admin" constraint, (b) creates a standing credential that structurally
+  spans the Handal + Aureva tenant boundary (against ADR-0003's policy-enforced isolation), and
+  (c) turns per-request tenant scoping into a fail-open "was the header sent" property. Brokered
+  per-user tokens keep the blast radius bounded to active sessions, each confined by the user's own
+  AccessPolicy, with clean end-user audit attribution. Verified against `@medplum/core` 5.1.9 (OBO
+  is header-only in this version; impersonated requests also lose SDK request caching). Revisit
+  only for a future internal admin/clinical-ops impersonation surface — not the patient/staff path.
 
 ## Flows (v1)
 
@@ -95,8 +108,17 @@ not the browser-redirect OAuth authorization-code flow; PKCE materials are serve
   surface: rate-limited + bot-protected (CAPTCHA or equivalent) from day one.
 - **Login:** app → BFF `/auth/login` → Medplum direct-login + code exchange server-side → fresh
   BFF session issued.
-- **Logout/revocation:** BFF kills the session and revokes the Medplum `Login` (revocation takes
-  effect on the next request — Medplum checks `login.revoked` per request, not just at refresh).
+- **Logout/revocation:** BFF kills the session **locally and authoritatively** (revokes the
+  session row, clears its stored tokens) and **best-effort**-revokes the Medplum `Login` by id.
+  The Medplum-side revoke currently 403s — the service ClientApplication has no AccessPolicy on
+  the `Login` resource — so it's logged, not fatal; the cleared access token is unreachable and
+  expires within the hour. **Approval-gated follow-up:** grant the service client `Login`
+  read/write (a scoped AccessPolicy) and make upstream revocation authoritative. Revocation, once
+  it lands, takes effect on Medplum's next request check (`login.revoked` is checked per request).
+  Note (verified against Medplum 5.1.9): `POST /auth/revoke` is **not** an option for the backend
+  — its handler is self-scoped (rejects any login whose user ≠ the caller's, returning notFound),
+  so a service account cannot revoke a patient's login through it. The `Login.revoked` update is
+  the only backend-driven path, hence the AccessPolicy grant is the real unblock.
 - **Staff onboarding:** admin-invited only (`mfaRequired: true`); MFA enrollment mandatory before
   first PHI access. **Offboarding (decided): Alec, same business day, written checklist — revoke
   ALL active Logins for the user (admin query), deactivate the membership.**
@@ -129,3 +151,14 @@ explicit human approval.
   refresh-race serialization; durable rate limiting + Medplum upstream login-cap as an onboarding
   item; AuditEvent emission made an explicit per-environment verification; MFA enforcement
   mechanics + brokered-UX cost; signup abuse controls; offboarding revokes all Logins.
+- **2026-07-01 — hardening after multi-agent code review** (approved by Alec). Undecryptable
+  stored tokens (key rotation/corruption) now invalidate the session (revoke + 401) instead of
+  500ing; sessions are revoked **only** on a definitive refresh rejection
+  (`RefreshRejectedError`, Medplum 400/401) — transient failures keep the session; the refresh
+  fetch is bounded (15s) below `statement_timeout` (30s) and `idle_in_transaction` (60s) so a
+  succeeding grant is never killed mid-rotation; migrations wired into setup-dev/CI plus a boot
+  fail-fast; the FOR UPDATE concurrency suite now runs in CI against a real Postgres; graceful
+  shutdown drains the server and closes the pool. Verified against Medplum v5.1.9 source:
+  `/auth/login` returns `code` XOR `memberships`, so the single-membership guard cannot
+  false-positive. Deferred consciously: centralized domain-error→HTTP mapping (when the third
+  auth route lands) and env-tunable auth constants.

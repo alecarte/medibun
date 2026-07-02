@@ -1,20 +1,38 @@
 import type { PatientProfile } from "@medibun/api-client";
+import {
+  InvalidCredentialsError,
+  MfaRequiredError,
+  MultipleMembershipsError,
+  SessionExpiredError,
+} from "@medibun/medplum-backend";
 import { describe, expect, it } from "vitest";
 
-import { createApp, type AppDeps, type LogEntry } from "./app.js";
+import { createApp, type AppDeps, type AuthDeps, type LogEntry } from "./app.js";
 
 /** Build an app with a captured log sink and a stubbed Medplum check. */
 function makeApp(
   opts: {
     checkMedplum?: () => Promise<boolean>;
     getPatientProfile?: AppDeps["getPatientProfile"];
+    auth?: Partial<AuthDeps>;
   } = {},
 ) {
   const logs: LogEntry[] = [];
+  const auth: AuthDeps | undefined = opts.auth
+    ? {
+        login: () => Promise.resolve({ sessionId: "11111111-1111-4111-8111-111111111111" }),
+        logout: () => Promise.resolve(),
+        getUser: () => Promise.resolve(null),
+        getMyProfile: () => Promise.resolve(undefined),
+        recordAndCheckRateLimit: () => Promise.resolve(false),
+        ...opts.auth,
+      }
+    : undefined;
   const app = createApp({
     log: (entry) => logs.push(entry),
     checkMedplum: opts.checkMedplum ?? (() => Promise.resolve(true)),
     getPatientProfile: opts.getPatientProfile,
+    auth,
   });
   return { app, logs };
 }
@@ -115,6 +133,271 @@ describe("GET /patients/:id (mounted only when a reader is wired — dev guard)"
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("not_found");
+  });
+});
+
+describe("auth routes", () => {
+  const user = { profileReference: "Patient/p-1", accessToken: "at-1" };
+  const profile: PatientProfile = { id: "p-1", name: "Synth Example" };
+
+  it("are not mounted when auth deps are absent", async () => {
+    const { app } = makeApp();
+    expect((await app.request("/auth/login", { method: "POST" })).status).toBe(404);
+    expect((await app.request("/patients/me")).status).toBe(404);
+  });
+
+  it("login issues a Secure HttpOnly session cookie and token by default", async () => {
+    const { app } = makeApp({ auth: {} });
+    const res = await app.request("/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "synth@example.test", password: "pw" }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ sessionToken: "11111111-1111-4111-8111-111111111111" });
+    const cookie = res.headers.get("set-cookie") ?? "";
+    expect(cookie).toContain("medibun_session=11111111-1111-4111-8111-111111111111");
+    expect(cookie).toContain("HttpOnly");
+    expect(cookie).toContain("Secure");
+  });
+
+  it("omits Secure only on explicit dev opt-out", async () => {
+    const { app } = makeApp({ auth: { cookieSecure: false } });
+    const res = await app.request("/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "synth@example.test", password: "pw" }),
+    });
+    expect(res.headers.get("set-cookie") ?? "").not.toContain("Secure");
+  });
+
+  it("rejects browser origins that are not allowlisted (CSRF defense)", async () => {
+    const { app } = makeApp({ auth: { allowedOrigins: ["https://portal.example.test"] } });
+    const evil = await app.request("/auth/login", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        Origin: "https://evil.example.test",
+      },
+      body: JSON.stringify({ email: "synth@example.test", password: "pw" }),
+    });
+    expect(evil.status).toBe(403);
+    const allowed = await app.request("/auth/login", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        Origin: "https://portal.example.test",
+      },
+      body: JSON.stringify({ email: "synth@example.test", password: "pw" }),
+    });
+    expect(allowed.status).toBe(200);
+  });
+
+  it("ignores a spoofed x-forwarded-for unless a trusted clientIp resolver is wired", async () => {
+    const buckets: string[] = [];
+    const { app } = makeApp({
+      auth: {
+        recordAndCheckRateLimit: (ip) => {
+          buckets.push(ip);
+          return Promise.resolve(false);
+        },
+      },
+    });
+    await app.request("/auth/login", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-forwarded-for": "6.6.6.6",
+      },
+      body: JSON.stringify({ email: "synth@example.test", password: "pw" }),
+    });
+    expect(buckets).toEqual(["direct"]);
+  });
+
+  it("uses the wired clientIp resolver for rate-limit buckets", async () => {
+    const buckets: string[] = [];
+    const { app } = makeApp({
+      auth: {
+        clientIp: (req) => req.header("x-real-ip") ?? "direct",
+        recordAndCheckRateLimit: (ip) => {
+          buckets.push(ip);
+          return Promise.resolve(false);
+        },
+      },
+    });
+    await app.request("/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-real-ip": "10.1.1.1" },
+      body: JSON.stringify({ email: "synth@example.test", password: "pw" }),
+    });
+    expect(buckets).toEqual(["10.1.1.1"]);
+  });
+
+  it("login rejects invalid credentials with a generic 401 that never echoes the email", async () => {
+    const { app } = makeApp({
+      auth: { login: () => Promise.reject(new InvalidCredentialsError()) },
+    });
+    const res = await app.request("/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "synth@example.test", password: "wrong" }),
+    });
+    expect(res.status).toBe(401);
+    const text = await res.text();
+    expect(text).toContain("invalid_credentials");
+    expect(text).not.toContain("synth@example.test");
+  });
+
+  it("login is rate-limited before credentials are tried", async () => {
+    let loginCalls = 0;
+    const { app } = makeApp({
+      auth: {
+        recordAndCheckRateLimit: () => Promise.resolve(true),
+        login: () => {
+          loginCalls += 1;
+          return Promise.resolve({ sessionId: "x" });
+        },
+      },
+    });
+    const res = await app.request("/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "synth@example.test", password: "pw" }),
+    });
+    expect(res.status).toBe(429);
+    expect(loginCalls).toBe(0);
+  });
+
+  it("maps an MFA-required login to a clean 501, not a 500", async () => {
+    const { app } = makeApp({ auth: { login: () => Promise.reject(new MfaRequiredError()) } });
+    const res = await app.request("/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "staff@example.test", password: "pw" }),
+    });
+    expect(res.status).toBe(501);
+    expect((await res.json()).error).toBe("mfa_not_supported");
+  });
+
+  it("maps an unresolved-membership login to a clean 501", async () => {
+    const { app } = makeApp({
+      auth: { login: () => Promise.reject(new MultipleMembershipsError()) },
+    });
+    const res = await app.request("/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "multi@example.test", password: "pw" }),
+    });
+    expect(res.status).toBe(501);
+    expect((await res.json()).error).toBe("membership_selection_not_supported");
+  });
+
+  it("login rejects a body without credentials", async () => {
+    const { app } = makeApp({ auth: {} });
+    const res = await app.request("/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("GET /patients/me requires a session", async () => {
+    const { app } = makeApp({ auth: {} });
+    expect((await app.request("/patients/me")).status).toBe(401);
+  });
+
+  it("GET /patients/me resolves the session user via bearer header", async () => {
+    const { app } = makeApp({
+      auth: {
+        getUser: (id) =>
+          Promise.resolve(id === "22222222-2222-4222-8222-222222222222" ? user : null),
+        getMyProfile: (u) =>
+          Promise.resolve(u.profileReference === "Patient/p-1" ? profile : undefined),
+      },
+    });
+    const res = await app.request("/patients/me", {
+      headers: { Authorization: "Bearer 22222222-2222-4222-8222-222222222222" },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(profile);
+  });
+
+  it("falls back to the cookie when the Bearer header is present but empty", async () => {
+    const { app } = makeApp({
+      auth: {
+        getUser: (id) =>
+          Promise.resolve(id === "22222222-2222-4222-8222-222222222222" ? user : null),
+        getMyProfile: () => Promise.resolve(profile),
+      },
+    });
+    // An empty "Bearer " must not shadow a valid cookie.
+    const res = await app.request("/patients/me", {
+      headers: {
+        Authorization: "Bearer ",
+        Cookie: "medibun_session=22222222-2222-4222-8222-222222222222",
+      },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("GET /patients/me resolves the session user via cookie", async () => {
+    const { app } = makeApp({
+      auth: {
+        getUser: (id) =>
+          Promise.resolve(id === "22222222-2222-4222-8222-222222222222" ? user : null),
+        getMyProfile: () => Promise.resolve(profile),
+      },
+    });
+    const res = await app.request("/patients/me", {
+      headers: { Cookie: "medibun_session=22222222-2222-4222-8222-222222222222" },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("returns 401 (not 500) when the AS-user read is rejected upstream (token-expiry race)", async () => {
+    const { app } = makeApp({
+      auth: {
+        getUser: () => Promise.resolve(user),
+        getMyProfile: () => Promise.reject(new SessionExpiredError()),
+      },
+    });
+    const res = await app.request("/patients/me", {
+      headers: { Authorization: "Bearer 22222222-2222-4222-8222-222222222222" },
+    });
+    expect(res.status).toBe(401);
+    expect((await res.json()).error).toBe("unauthorized");
+  });
+
+  it("logout still succeeds (200, cookie cleared) when upstream revocation fails", async () => {
+    const { app } = makeApp({
+      auth: { logout: () => Promise.reject(new Error("Forbidden")) },
+    });
+    const res = await app.request("/auth/logout", {
+      method: "POST",
+      headers: { Cookie: "medibun_session=44444444-4444-4444-8444-444444444444" },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("set-cookie") ?? "").toContain("medibun_session=;");
+  });
+
+  it("logout revokes the session and clears the cookie", async () => {
+    const revoked: string[] = [];
+    const { app } = makeApp({
+      auth: {
+        logout: (id) => {
+          revoked.push(id);
+          return Promise.resolve();
+        },
+      },
+    });
+    const res = await app.request("/auth/logout", {
+      method: "POST",
+      headers: { Cookie: "medibun_session=33333333-3333-4333-8333-333333333333" },
+    });
+    expect(res.status).toBe(200);
+    expect(revoked).toEqual(["33333333-3333-4333-8333-333333333333"]);
+    expect(res.headers.get("set-cookie") ?? "").toContain("medibun_session=;");
   });
 });
 

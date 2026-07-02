@@ -1,0 +1,18 @@
+CREATE TABLE "login_attempts" (
+	"id" integer PRIMARY KEY GENERATED ALWAYS AS IDENTITY (sequence name "login_attempts_id_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 2147483647 START WITH 1 CACHE 1),
+	"ip" text NOT NULL,
+	"attempted_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "sessions" (
+	"id" uuid PRIMARY KEY NOT NULL,
+	"profile_reference" text NOT NULL,
+	"medplum_login_id" text NOT NULL,
+	"access_token_enc" text NOT NULL,
+	"refresh_token_enc" text,
+	"access_expires_at" timestamp with time zone NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"revoked_at" timestamp with time zone
+);
+--> statement-breakpoint
+CREATE INDEX "login_attempts_ip_time_idx" ON "login_attempts" USING btree ("ip","attempted_at");
