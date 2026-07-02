@@ -27,6 +27,15 @@ QR check-in, geofence reminders, loyalty/packages, lifecycle automation on Bots,
 polish. The "Starbucks for MedSpa" mechanics (loyalty, proactive recommendations) land here. No
 external gate — pure build.
 
+Added 2026-07-02 (competitive scan, approved by Alec — see `COMPETITIVE_NOTES.md`):
+
+- **Before/after photos** (Media + the clinical-vs-marketing Consent split already modeled in
+  `DATA_MODEL.md`) — first post-spine slice candidate; universal aesthetics table stake.
+- **GFE / medical-director oversight** — good-faith-exam review + chart sign-off workflow for
+  non-physician injectors (cf. Aesthetic Record "MD Rooms"). Compliance-adjacent: data-model
+  amendment + approval gate when scheduled; **required before real (non-synthetic) operations**,
+  wherever that lands relative to phases.
+
 ## Phase 3 — Handal migration (months 6–10)
 
 Surgical charting in the staff app, DoseSpot EPCS live, migrate history off 4D, retire it. EPCS is
