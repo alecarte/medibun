@@ -4,10 +4,10 @@ Commissioned by Alec 2026-07-02 ("consider what else we'll need to pull from lea
 aesthetics software that we may be missing"). Method: parallel web-research agents over Epic
 (Cadence/Snapboard), ModMed EMA (derm/plastics), Tebra, DrChrono, healthcare kiosk/privacy
 practice, plus an aesthetics-vendor sweep (Boulevard, Mangomint, Zenoti, Jane, Aesthetic Record,
-PatientNow, Symplast, RepeatMD). **Provenance note:** several research branches were lost to API
-rate limiting; findings below marked (cited) came back with sources; items marked (model
-knowledge) come from the assistant's domain knowledge of these products and should be
-spot-verified before being treated as load-bearing. This doc is an inventory + gap analysis, not
+PatientNow, Symplast, RepeatMD). **Provenance note:** all sections are now backed by cited
+research (an initial fan-out lost branches to API rate limiting; a flat retry completed the
+aesthetics sweep). Vendor pages are largely bot-blocked, so citations rest on search-indexed
+excerpts of the named pages. This doc is an inventory + gap analysis, not
 a commitment; anything that changes v0 scope is Alec's call (proposal §5).
 
 ## 1. Scheduling — what the leaders do (cited)
@@ -50,12 +50,18 @@ a commitment; anything that changes v0 scope is Alec's call (proposal §5).
   narrow-viewing-angle screens, minimal-data prompts (Epic Welcome asks only last-2-digits of
   birth year). Relevant when we do lobby check-in (Phase 2 QR flow).
 
-## 3. Aesthetics-platform table stakes (model knowledge — spot-verify)
+## 3. Aesthetics-platform table stakes (cited — flat vendor sweep completed)
 
-Across Boulevard/Mangomint/Zenoti/Jane/Aesthetic Record/PatientNow/Symplast, the recurring set:
+Across Boulevard/Mangomint/Zenoti/Jane/Aesthetic Record/PatientNow/Symplast/RepeatMD, the
+recurring set (per-vendor citations in the research transcript):
 
-- **Charting**: face charts with drawable markup + photo annotation; consent capture on-device
-  before treatment; treatment templates.
+- **Charting**: on-image injection markup is the common pattern (Mangomint's Image Markup
+  annotates product, unit count, **lot/batch and expiration** per site; Aesthetic Record draws
+  injection points/dosages on photos with **auto inventory deduction**; Zenoti tracks
+  injectables + controlled substances). Notably, Boulevard users _complain_ about wanting more
+  detailed face-chart tools — our dedicated face-map is aimed exactly at the gap. Jane is
+  flagged by third parties as weak on injectable-specific charting — the generalist trap we
+  avoid. Consent capture on-device before treatment and treatment templates are universal.
 - **Before/after photos are universal (cited — all 14 vendors surveyed).** Capture in-workflow,
   side-by-side/overlay/slider comparison, chart-tied storage: Boulevard (Advanced Charting,
   markup + **supervisor sign-off** in its Medspa add-on — oversight built into charting), Zenoti
@@ -76,10 +82,17 @@ Across Boulevard/Mangomint/Zenoti/Jane/Aesthetic Record/PatientNow/Symplast, the
   programs, waitlists that backfill cancellations.
 - **Patient-facing**: booking + forms/intake ahead of visit, aftercare delivery, payment on
   file, photo access.
-- **GFE / medical-director oversight** (aesthetics-specific compliance): non-physician injectors
-  need a good-faith exam; platforms increasingly route async GFE review/sign-off to a supervising
-  provider. Nothing in our model yet — needs a data-model + workflow decision before real
+- **GFE / medical-director oversight** (aesthetics-specific compliance, now cited): Aesthetic
+  Record ships dedicated "MD & Provider Rooms" with a chart-audit workflow tracking every chart
+  from creation to Medical Director sign-off (timestamped, built for state chart-review rules);
+  PatientNow aligns e-prescribing to GFE clearance; Boulevard bundles supervisor sign-off into
+  charting. Nothing in our model yet — needs a data-model + workflow decision before real
   operations (not demo-blocking).
+- **Waitlists are smarter than expected**: Mangomint's "Intelligent Waitlist" auto-matches
+  cancellations to waitlisted clients; Boulevard requires a card to join (anti-spam). Good
+  Phase-2 growth-engine material (event-driven fits our Bots architecture).
+- Confirmed by the sweep: **no vendor documents any screen-privacy/PHI-masking feature** —
+  privacy glance mode stays a genuine differentiator.
 
 ## 4. Gap analysis → recommendations
 
