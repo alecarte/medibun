@@ -32,11 +32,13 @@ let db: ReturnType<typeof drizzle>;
 
 // One PGlite + one migration per file: booting and migrating per test blows vitest's
 // hook timeout on slow CI runners. Tests are isolated by wiping rows instead.
+// Even the single boot can exceed the default 10s hook timeout on a cold CI runner
+// (seen on PR #10 CI 2026-07-02) — give it an explicit generous budget.
 beforeAll(async () => {
   const client = new PGlite();
   db = drizzle(client, { schema });
   await migrate(db, { migrationsFolder });
-});
+}, 60_000);
 
 beforeEach(async () => {
   await db.delete(schema.sessions);
