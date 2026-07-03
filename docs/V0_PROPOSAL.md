@@ -235,8 +235,8 @@ actions, and screenshot review of every slice.
 
 **Personas (all synthetic):** Mia Tan (patient) · Noor (front desk) · Dr. Reyes (injector).
 
-**Setup (one documented command sequence, maintained from S3 onward):**
-`cd infra/medplum && docker compose up -d && ./setup-dev.sh && pnpm demo:seed && pnpm dev`
+**Setup (one documented command sequence, maintained from S3 onward — see README.md):**
+`cd infra/medplum && docker compose up -d && ./setup-dev.sh && cd ../.. && pnpm demo:seed && pnpm dev:apps`
 
 1. **Mia books.** Mia logs into the portal (no MFA — patient). She asks the concierge "what's the
    difference between Botox and Dysport here?" — it answers from the Aureva service menu, cited.

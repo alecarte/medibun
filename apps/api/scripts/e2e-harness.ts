@@ -126,7 +126,7 @@ const auth: AuthDeps = {
   },
   recordAndCheckRateLimit: (ip) => store.recordAndCheck(ip, 10, 15 * 60_000),
   cookieSecure: false,
-  allowedOrigins: ["http://localhost:3000"],
+  allowedOrigins: ["http://localhost:3100"],
 };
 
 const app = createApp({

@@ -11,10 +11,11 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
+    "dev:apps": "turbo run dev --filter=@medibun/api --filter=@medibun/portal --filter=@medibun/staff",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
-    "demo:seed": "pnpm --filter @medibun/api demo:seed",
+    "demo:seed": "turbo run demo:seed --filter=@medibun/api",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,css}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,css}\""
   },
