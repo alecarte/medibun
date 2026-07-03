@@ -106,6 +106,13 @@ services:
         condition: service_healthy
     ports:
       - "3000:3000"
+    environment:
+      # Dev only: the app image's docker-entrypoint.sh defaults RECAPTCHA_SITE_KEY to
+      # Medplum CLOUD's site key, which our server (no recaptcha configured) rejects on
+      # /auth/newuser with "Invalid recaptchaSiteKey". Empty key = recaptcha skipped on
+      # both sides (v5.1.9 NewUserForm.tsx + server auth/utils.ts validateRecaptcha).
+      # Local synthetic-data stack only; prod is Medplum Cloud with its own recaptcha.
+      RECAPTCHA_SITE_KEY: ""
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000"]
       interval: 10s
