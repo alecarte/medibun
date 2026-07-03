@@ -6,8 +6,13 @@ avoid the generic "AI slop / vibe-code" register and sit alongside the best prod
 
 ## Calibration
 
-- **Quiet tool, both sides.** Patient portal and staff app share the same restrained register;
-  personality comes from the signature objects and motion, never from decoration.
+- **Two registers (amended 2026-07-03, Alec).** The **staff app stays a quiet tool** (restrained,
+  keyboard-first, content-first). The **patient portal is a premium consumer product**, governed
+  by three tenets — **frictionless · premium + responsive feel · conversion above all** — with
+  every design choice research-backed (see `docs/BOOKING_DESIGN.md` for the evidence base and
+  the banned dark-pattern list: no countdowns, presence counters, panic badges, hidden prices,
+  or login walls before availability). Personality still comes from signature objects, motion,
+  and content — never decoration for its own sake.
 - **The bar:** Anthropic/Claude (ivory warmth, generous whitespace, editorial type confidence,
   quiet chrome) × Notion (soft approachability, content-first, friendly without being cute).
   Explicitly _not_ cold-dense; warm-neutral and calm.
