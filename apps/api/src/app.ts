@@ -160,11 +160,10 @@ export function createApp(deps: AppDeps): Hono<Env> {
       }
       await next();
     };
-    app.use("/auth/*", originGuard);
-    // Both forms so future subroutes (e.g. POST /appointments/:id/cancel) are
-    // covered fail-closed the day they mount, not remembered case-by-case.
-    app.use("/appointments", originGuard);
-    app.use("/appointments/*", originGuard);
+    // Registered globally, not per-path: every mutating route this app ever mounts is
+    // covered fail-closed the day it lands, instead of a hand-maintained path list.
+    // GETs and Origin-less requests (curl, mobile bearer, server-to-server) pass.
+    app.use(originGuard);
 
     const clientIp = (c: { req: { header: (name: string) => string | undefined } }) =>
       auth.clientIp ? auth.clientIp(c.req) : "direct";
@@ -186,7 +185,8 @@ export function createApp(deps: AppDeps): Hono<Env> {
     // NOTE (PHI safety): the request logger never logs bodies, so credentials in the
     // login payload stay out of logs by construction. Do not add body logging.
     app.post("/auth/login", async (c) => {
-      const body = (await c.req.json().catch(() => ({}))) as {
+      // ?? {} — a literal `null` body parses successfully, so the catch can't cover it.
+      const body = ((await c.req.json().catch(() => ({}))) ?? {}) as {
         email?: string;
         password?: string;
       };
@@ -294,7 +294,8 @@ export function createApp(deps: AppDeps): Hono<Env> {
         if (!user.profileReference.startsWith("Patient/")) {
           return fail(c, "forbidden", 403);
         }
-        const body = (await c.req.json().catch(() => ({}))) as {
+        // ?? {} — a literal `null` body parses successfully, so the catch can't cover it.
+        const body = ((await c.req.json().catch(() => ({}))) ?? {}) as {
           serviceCode?: unknown;
           scheduleId?: unknown;
           start?: unknown;

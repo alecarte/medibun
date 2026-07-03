@@ -61,8 +61,8 @@ type FhirPost = (url: string, body?: unknown, contentType?: string) => Promise<u
 
 function makeService(opts: { rows?: ServiceRow[]; get?: FhirGet; post?: FhirPost }) {
   const rows = opts.rows ?? [botox];
-  const get = vi.fn<FhirGet>(opts.get);
-  const post = vi.fn<FhirPost>(opts.post);
+  const get = opts.get ?? vi.fn<FhirGet>();
+  const post = opts.post ?? vi.fn<FhirPost>();
   const service = createBookingService({
     catalog: {
       listActive: () => Promise.resolve(rows.filter((r) => r.active)),
@@ -96,9 +96,7 @@ describe("getAvailability", () => {
       if (url.startsWith("fhir/R4/Schedule?")) {
         return Promise.resolve(scheduleBundle);
       }
-      return Promise.resolve(
-        freeSlot("2026-07-07T14:00:00.000Z", "2026-07-07T14:30:00.000Z"),
-      );
+      return Promise.resolve(freeSlot("2026-07-07T14:00:00.000Z", "2026-07-07T14:30:00.000Z"));
     });
     const { service } = makeService({ get });
     const availability = await service.getAvailability("svc-botox");
@@ -125,16 +123,12 @@ describe("getAvailability", () => {
 
   it("throws UnknownServiceError for a code that is not on the active menu", async () => {
     const { service } = makeService({ rows: [{ ...botox, active: false }] });
-    await expect(service.getAvailability("svc-botox")).rejects.toBeInstanceOf(
-      UnknownServiceError,
-    );
+    await expect(service.getAvailability("svc-botox")).rejects.toBeInstanceOf(UnknownServiceError);
   });
 
   it("throws UnknownServiceError when the catalog row has no FHIR counterpart yet", async () => {
     const { service } = makeService({ rows: [{ ...botox, healthcareServiceId: null }] });
-    await expect(service.getAvailability("svc-botox")).rejects.toBeInstanceOf(
-      UnknownServiceError,
-    );
+    await expect(service.getAvailability("svc-botox")).rejects.toBeInstanceOf(UnknownServiceError);
   });
 });
 
@@ -232,8 +226,10 @@ describe("book", () => {
     ).rejects.toBeInstanceOf(SlotTakenError);
   });
 
-  it("throws UnknownServiceError before touching FHIR for an unknown code", async () => {
-    const get = vi.fn<FhirGet>();
+  it("throws UnknownServiceError for an unknown code, even when the FHIR side also fails", async () => {
+    // Catalog + schedule search run in parallel; the service error must win
+    // deterministically so the route's 400/404 semantics never depend on timing.
+    const get = vi.fn<FhirGet>().mockRejectedValue(new Error("medplum down"));
     const { service } = makeService({ get });
     await expect(
       service.book("Patient/synth-1", {
@@ -242,6 +238,13 @@ describe("book", () => {
         start: "2026-07-07T14:00:00.000Z",
       }),
     ).rejects.toBeInstanceOf(UnknownServiceError);
-    expect(get).not.toHaveBeenCalled();
+  });
+
+  it("hides catalog rows without a FHIR counterpart from the menu (they cannot book)", async () => {
+    const { service } = makeService({
+      rows: [botox, { ...botox, id: "new-svc", code: "svc-new", healthcareServiceId: null }],
+    });
+    const services = await service.listServices();
+    expect(services.map((s) => s.code)).toEqual(["svc-botox"]);
   });
 });

@@ -19,11 +19,16 @@ export default async function ServiceBookingPage({
   readonly params: Promise<{ code: string }>;
 }) {
   const { code } = await params;
-  const profile = await getSessionProfile();
+  // All three are independent cookie-forwarded BFF reads — start them together;
+  // signed-out reads resolve to their benign sentinels and the redirect wins.
+  const [profile, services, availability] = await Promise.all([
+    getSessionProfile(),
+    getServices(),
+    getAvailability(code),
+  ]);
   if (!profile) {
     redirect("/login");
   }
-  const [services, availability] = await Promise.all([getServices(), getAvailability(code)]);
   if (availability === "not_found") {
     notFound();
   }

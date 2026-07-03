@@ -12,19 +12,36 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { formatDuration, formatPrice, formatSlotFull, formatSlotTime, groupSlotsByDay } from "../../lib/slots";
+import {
+  formatDuration,
+  formatPrice,
+  formatSlotFull,
+  formatSlotTime,
+  groupSlotsByDay,
+} from "../../lib/slots";
 
 /** Friendly, PHI-free copy per booking error (DESIGN.md voice: what happened, what next). */
 const ERROR_COPY = {
   slot_taken: "That time was just booked. Pick another.",
+  invalid_request: "That time is no longer offered. Pick a current one.",
   unknown: "Something went wrong on our side. Your visit wasn't booked — try again.",
 } as const;
 
 type Phase =
   | { readonly kind: "pick" }
-  // Optimistic: the confirmation renders the moment the patient books; `settled`
-  // flips when the BFF's 201 lands. A failure rolls back to the picker calmly.
-  | { readonly kind: "booked"; readonly slot: AvailabilitySlot; readonly settled: boolean };
+  // Optimistic: the confirmation renders the moment the patient books, with the
+  // practitioner captured at book time (independent of later availability refreshes);
+  // `settled` flips when the BFF's 201 lands. A failure rolls back to the picker.
+  | {
+      readonly kind: "booked";
+      readonly slot: AvailabilitySlot;
+      readonly practitionerName: string;
+      readonly timezone: string;
+      readonly settled: boolean;
+    };
+
+/** Dead-slot key: per schedule, so one practitioner's 409 never hides another's slot. */
+const slotKey = (scheduleId: string, start: string) => `${scheduleId}|${start}`;
 
 export function BookingFlow({
   service,
@@ -35,21 +52,36 @@ export function BookingFlow({
 }) {
   const router = useRouter();
   const practitioners = availability.practitioners;
-  const [practitionerId, setPractitionerId] = useState<string | undefined>(
-    (practitioners.find((p) => p.slots.length > 0) ?? practitioners[0])?.practitionerId,
+  // Everything is keyed by scheduleId (unique per entry) — a practitioner with two
+  // schedules for one service stays two independently bookable columns.
+  const [scheduleId, setScheduleId] = useState<string | undefined>(
+    (practitioners.find((p) => p.slots.length > 0) ?? practitioners[0])?.scheduleId,
   );
   const [selected, setSelected] = useState<AvailabilitySlot | undefined>();
-  // Slots the server said were taken since the page loaded — hidden locally until the
-  // next refresh so the patient never re-picks a known-dead time.
+  // Slots the server said were taken since this availability was fetched — hidden
+  // locally so the patient never re-picks a known-dead time. Reset whenever fresh
+  // availability arrives (render-time reset on prop change): server truth wins.
   const [taken, setTaken] = useState<readonly string[]>([]);
+  const [prevAvailability, setPrevAvailability] = useState(availability);
+  if (prevAvailability !== availability) {
+    setPrevAvailability(availability);
+    setTaken([]);
+    setSelected(undefined);
+  }
   const [phase, setPhase] = useState<Phase>({ kind: "pick" });
   const [error, setError] = useState<string | undefined>();
 
-  const practitioner = practitioners.find((p) => p.practitionerId === practitionerId);
+  const practitioner = practitioners.find((p) => p.scheduleId === scheduleId);
 
   async function book(slot: AvailabilitySlot, chosen: PractitionerAvailability) {
     setError(undefined);
-    setPhase({ kind: "booked", slot, settled: false });
+    setPhase({
+      kind: "booked",
+      slot,
+      practitionerName: chosen.practitionerName,
+      timezone: chosen.timezone,
+      settled: false,
+    });
     try {
       // Same-origin /api proxy → BFF; the HttpOnly session cookie rides along.
       await createApiClient({ baseUrl: "/api" }).book({
@@ -57,13 +89,18 @@ export function BookingFlow({
         scheduleId: chosen.scheduleId,
         start: slot.start,
       });
-      setPhase({ kind: "booked", slot, settled: true });
-      // The RSC layer refetches availability so a back-navigation shows fresh times.
-      router.refresh();
+      setPhase((current) => (current.kind === "booked" ? { ...current, settled: true } : current));
+      // No router.refresh() here: a transient refetch failure must never replace a
+      // successful confirmation with an error page. Navigating away refetches anyway.
     } catch (err) {
-      const code = err instanceof BookingError && err.code === "slot_taken" ? "slot_taken" : "unknown";
-      if (code === "slot_taken") {
-        setTaken((prev) => [...prev, slot.start]);
+      const code =
+        err instanceof BookingError && (err.code === "slot_taken" || err.code === "invalid_request")
+          ? err.code
+          : "unknown";
+      if (code !== "unknown") {
+        // The time is gone (taken or no longer offered): hide it, drop the selection,
+        // and pull fresh availability so the picker converges on server truth.
+        setTaken((prev) => [...prev, slotKey(chosen.scheduleId, slot.start)]);
         setSelected(undefined);
         router.refresh();
       }
@@ -73,18 +110,12 @@ export function BookingFlow({
   }
 
   if (phase.kind === "booked") {
-    return (
-      <ConfirmationCard
-        service={service}
-        practitionerName={practitioner?.practitionerName ?? ""}
-        timezone={practitioner?.timezone ?? "UTC"}
-        slot={phase.slot}
-        settled={phase.settled}
-      />
-    );
+    return <ConfirmationCard service={service} phase={phase} />;
   }
 
-  const visibleSlots = (practitioner?.slots ?? []).filter((s) => !taken.includes(s.start));
+  const visibleSlots = practitioner
+    ? practitioner.slots.filter((s) => !taken.includes(slotKey(practitioner.scheduleId, s.start)))
+    : [];
   const days = practitioner ? groupSlotsByDay(visibleSlots, practitioner.timezone) : [];
 
   return (
@@ -92,14 +123,14 @@ export function BookingFlow({
       {practitioners.length > 1 && (
         <div role="group" aria-label="Practitioner" className="flex flex-wrap gap-2">
           {practitioners.map((p) => {
-            const active = p.practitionerId === practitionerId;
+            const active = p.scheduleId === scheduleId;
             return (
               <button
-                key={p.practitionerId}
+                key={p.scheduleId}
                 type="button"
                 aria-pressed={active}
                 onClick={() => {
-                  setPractitionerId(p.practitionerId);
+                  setScheduleId(p.scheduleId);
                   setSelected(undefined);
                 }}
                 className={
@@ -180,31 +211,26 @@ export function BookingFlow({
 
 function ConfirmationCard({
   service,
-  practitionerName,
-  timezone,
-  slot,
-  settled,
+  phase,
 }: {
   readonly service: ServiceSummary;
-  readonly practitionerName: string;
-  readonly timezone: string;
-  readonly slot: AvailabilitySlot;
-  readonly settled: boolean;
+  readonly phase: Extract<Phase, { kind: "booked" }>;
 }) {
   return (
     <div className="animate-confirm max-w-lg rounded-lg border border-border-hairline bg-surface-card p-8 shadow-low">
       <p className="type-kicker">Your visit</p>
       <h2 className="type-display mt-3 text-2xl text-text-primary">
-        Booked for <span className="tabular-nums">{formatSlotFull(slot.start, timezone)}</span>
+        Booked for{" "}
+        <span className="tabular-nums">{formatSlotFull(phase.slot.start, phase.timezone)}</span>
       </h2>
       <p className="mt-4 text-sm text-text-secondary">
-        {service.name} with {practitionerName} ·{" "}
+        {service.name} with {phase.practitionerName} ·{" "}
         <span className="tabular-nums">
           {formatDuration(service.durationMinutes)} · {formatPrice(service.priceCents)}
         </span>
       </p>
       <p aria-live="polite" className="mt-2 text-sm text-text-secondary">
-        {settled ? "It's on the studio's schedule." : "Saving to your record…"}
+        {phase.settled ? "It's on the studio's schedule." : "Saving to your record…"}
       </p>
       <div className="mt-8">
         <Link

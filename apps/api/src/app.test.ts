@@ -539,6 +539,24 @@ describe("booking routes", () => {
     expect((await res.json()).error).toBe("invalid_request");
   });
 
+  it("POST /appointments rejects a literal null body as 400, not 500", async () => {
+    // JSON.parse("null") succeeds, so the parse fallback can't catch this shape.
+    const { app } = makeApp({ auth: withSession, booking: {} });
+    const res = await app.request("/appointments", postAppointment(asPatient, null));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("invalid_request");
+  });
+
+  it("login rejects a literal null body as 400, not 500", async () => {
+    const { app } = makeApp({ auth: {} });
+    const res = await app.request("/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "null",
+    });
+    expect(res.status).toBe(400);
+  });
+
   it("maps a taken slot to 409 slot_taken (client re-picks calmly)", async () => {
     const { app } = makeApp({
       auth: withSession,

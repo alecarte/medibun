@@ -27,5 +27,8 @@
     "@eslint/js": "catalog:",
     "typescript-eslint": "catalog:",
     "eslint-config-prettier": "catalog:"
+  },
+  "dependencies": {
+    "@medibun/design-tokens": "workspace:*"
   }
 }

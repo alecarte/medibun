@@ -1,3 +1,5 @@
+import type { CategoryColor } from "@medibun/design-tokens";
+
 /**
  * @medibun/api-client — the typed client for OUR backend (the BFF).
  *
@@ -17,11 +19,9 @@ export type PatientProfile = {
   readonly birthDate?: string;
 };
 
-/**
- * Categorical color token key (design-tokens `color.category.*`). Mirrors the
- * backend's `CategoryColor` union; the BFF contract test pins the two together.
- */
-export type ServiceColor = "sage" | "teal" | "indigo" | "plum" | "clay" | "slate";
+/** Categorical color token key — the design-tokens union itself (type-only import,
+ *  no runtime dependency), so a palette change breaks typecheck instead of drifting. */
+export type ServiceColor = CategoryColor;
 
 /** A bookable service from the practice's menu (experience data — no PHI). */
 export type ServiceSummary = {
@@ -116,7 +116,13 @@ export class LoginError extends Error {
 }
 
 /** Booking error codes (the BFF's stable, PHI-free error contract). */
-const BOOKING_CODES = ["slot_taken", "invalid_request", "unauthorized", "not_found"] as const;
+const BOOKING_CODES = [
+  "slot_taken",
+  "invalid_request",
+  "unauthorized",
+  "forbidden",
+  "not_found",
+] as const;
 
 export type BookingErrorCode = (typeof BOOKING_CODES)[number] | "unknown";
 
@@ -144,24 +150,34 @@ export type ApiClient = {
   readonly listServices: (auth?: SessionAuth) => Promise<ServiceSummary[]>;
   /** Open times per practitioner for one service over the booking window (next 7 days,
    *  BFF-owned). Throws BookingError — "not_found" for an unknown service code. */
-  readonly getAvailability: (serviceCode: string, auth?: SessionAuth) => Promise<ServiceAvailability>;
+  readonly getAvailability: (
+    serviceCode: string,
+    auth?: SessionAuth,
+  ) => Promise<ServiceAvailability>;
   /** Books a found slot for the signed-in patient. Throws BookingError — "slot_taken"
    *  when the window was booked between availability and confirm (safe to re-pick). */
   readonly book: (request: BookingRequest, auth?: SessionAuth) => Promise<BookedAppointment>;
 };
 
-/** Typed booking failure from the BFF's PHI-free error body (same shape as login). */
-async function bookingFailure(res: Response): Promise<BookingError> {
-  const code: BookingErrorCode = await res
+/** The BFF error envelope is `{error: code, requestId}`; parse the code against an
+ *  allowlist, degrading anything unrecognized (or unparseable) to "unknown". The one
+ *  place the envelope's wire shape is decoded — login and booking both go through it. */
+async function errorCodeFrom<Code extends string>(
+  res: Response,
+  codes: readonly Code[],
+): Promise<Code | "unknown"> {
+  return res
     .json()
     .then((body: unknown) => {
       const error = (body as { error?: string } | null)?.error ?? "";
-      return (BOOKING_CODES as readonly string[]).includes(error)
-        ? (error as BookingErrorCode)
-        : "unknown";
+      return (codes as readonly string[]).includes(error) ? (error as Code) : "unknown";
     })
     .catch(() => "unknown" as const);
-  return new BookingError(code, res.status);
+}
+
+/** Typed booking failure from the BFF's PHI-free error body. */
+async function bookingFailure(res: Response): Promise<BookingError> {
+  return new BookingError(await errorCodeFrom(res, BOOKING_CODES), res.status);
 }
 
 function authHeaders(auth?: SessionAuth): Record<string, string> {
@@ -189,16 +205,7 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
       });
       if (!res.ok) {
         // The BFF's error codes are PHI-free by contract; credentials never enter messages.
-        const code: LoginErrorCode = await res
-          .json()
-          .then((body: unknown) => {
-            const error = (body as { error?: string } | null)?.error ?? "";
-            return (LOGIN_CODES as readonly string[]).includes(error)
-              ? (error as LoginErrorCode)
-              : "unknown";
-          })
-          .catch(() => "unknown" as const);
-        throw new LoginError(code, res.status);
+        throw new LoginError(await errorCodeFrom(res, LOGIN_CODES), res.status);
       }
       return (await res.json()) as { sessionToken: string };
     },

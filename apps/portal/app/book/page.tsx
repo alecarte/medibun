@@ -12,11 +12,12 @@ export const metadata: Metadata = { title: "Book a visit" };
 // Booking step 1 (S4): discover services. RSC — the menu is server-fetched per request;
 // picking a service navigates to its availability page.
 export default async function BookPage() {
-  const profile = await getSessionProfile();
+  // Independent BFF reads — one round-trip time, not two; a signed-out visitor's
+  // menu read just resolves undefined and the redirect wins.
+  const [profile, services] = await Promise.all([getSessionProfile(), getServices()]);
   if (!profile) {
     redirect("/login");
   }
-  const services = await getServices();
 
   return (
     <div className="mx-auto max-w-4xl px-8 pb-16">
@@ -42,7 +43,10 @@ export default async function BookPage() {
                 className="block rounded-lg border border-border-hairline bg-surface-card p-6 shadow-low transition-shadow hover:shadow-mid focus-visible:ring-2 focus-visible:ring-action-primary focus-visible:outline-none"
               >
                 <div className="flex items-center gap-2.5">
-                  <span aria-hidden className={`h-2 w-2 rounded-full ${CATEGORY_DOT[service.categoryColor]}`} />
+                  <span
+                    aria-hidden
+                    className={`h-2 w-2 rounded-full ${CATEGORY_DOT[service.categoryColor]}`}
+                  />
                   <h2 className="text-base font-semibold text-text-primary">{service.name}</h2>
                 </div>
                 <p className="mt-2 text-sm text-text-secondary">{service.description}</p>

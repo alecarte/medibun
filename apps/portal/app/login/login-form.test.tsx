@@ -1,26 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { LoginForm } from "./login-form";
+import { stubFetch } from "../lib/stub-fetch";
 
 const push = vi.fn();
 const refresh = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push, refresh }),
 }));
-
-function stubFetch(status: number, body: unknown) {
-  const calls: { url: string; init?: RequestInit }[] = [];
-  vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
-    calls.push({ url: String(input), init });
-    return Promise.resolve(
-      new Response(JSON.stringify(body), {
-        status,
-        headers: { "content-type": "application/json" },
-      }),
-    );
-  });
-  return calls;
-}
 
 describe("login form", () => {
   beforeEach(() => {

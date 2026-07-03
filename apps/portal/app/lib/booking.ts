@@ -1,27 +1,13 @@
-import {
-  BookingError,
-  createApiClient,
-  SESSION_COOKIE_NAME,
-  type ServiceAvailability,
-  type ServiceSummary,
-} from "@medibun/api-client";
-import { cookies } from "next/headers";
+import { BookingError, type ServiceAvailability, type ServiceSummary } from "@medibun/api-client";
 import { cache } from "react";
 
+import { bffClient, sessionCookie } from "./bff";
+
 /**
- * Server-side booking reads (RSC-only, uses next/headers): forward the session cookie
- * to the BFF like lib/session.ts. Failures resolve to error sentinels rather than
- * throwing — the booking pages render designed error states (DESIGN.md tenet 5),
+ * Server-side booking reads (RSC-only). Failures resolve to error sentinels rather
+ * than throwing — the booking pages render designed error states (DESIGN.md tenet 5),
  * never a default crash page.
  */
-
-async function sessionCookie(): Promise<string | undefined> {
-  const session = (await cookies()).get(SESSION_COOKIE_NAME);
-  return session && `${SESSION_COOKIE_NAME}=${session.value}`;
-}
-
-const bffClient = () =>
-  createApiClient({ baseUrl: process.env.API_BASE_URL ?? "http://localhost:3001" });
 
 /** The bookable service menu, or undefined when the BFF read fails. Per-render cached. */
 export const getServices = cache(async (): Promise<ServiceSummary[] | undefined> => {

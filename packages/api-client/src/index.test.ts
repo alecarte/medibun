@@ -173,9 +173,9 @@ describe("booking", () => {
     it("GETs the service's availability with an encoded code", async () => {
       const { fetchImpl, calls } = stubFetch(200, availability);
       const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
-      await expect(
-        client.getAvailability("svc-botox", { sessionToken: "s-123" }),
-      ).resolves.toEqual(availability);
+      await expect(client.getAvailability("svc-botox", { sessionToken: "s-123" })).resolves.toEqual(
+        availability,
+      );
       expect(calls[0]!.url).toBe("https://api.example.test/services/svc-botox/availability");
       expect(new Headers(calls[0]!.init?.headers).get("authorization")).toBe("Bearer s-123");
     });

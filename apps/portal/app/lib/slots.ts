@@ -14,23 +14,37 @@ export type DayGroup = {
   readonly slots: readonly AvailabilitySlot[];
 };
 
-const dayKeyFormat = (timezone: string) =>
-  new Intl.DateTimeFormat("en-CA", { timeZone: timezone, dateStyle: "short" });
-const dayLabelFormat = (timezone: string) =>
-  new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-  });
-const timeFormat = (timezone: string) =>
-  new Intl.DateTimeFormat("en-US", { timeZone: timezone, hour: "numeric", minute: "2-digit" });
+// Intl.DateTimeFormat construction is expensive and the picker formats one label per
+// slot per render — cache per timezone (one practice timezone per page in practice).
+const memoized = (build: (timezone: string) => Intl.DateTimeFormat) => {
+  const byTz = new Map<string, Intl.DateTimeFormat>();
+  return (timezone: string): Intl.DateTimeFormat => {
+    let format = byTz.get(timezone);
+    if (!format) {
+      format = build(timezone);
+      byTz.set(timezone, format);
+    }
+    return format;
+  };
+};
+
+const dayKeyFormat = memoized(
+  (timeZone) => new Intl.DateTimeFormat("en-CA", { timeZone, dateStyle: "short" }),
+);
+const dayLabelFormat = memoized(
+  (timeZone) =>
+    new Intl.DateTimeFormat("en-US", { timeZone, weekday: "long", month: "long", day: "numeric" }),
+);
+const timeFormat = memoized(
+  (timeZone) => new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" }),
+);
+
+/** Some ICU builds put U+202F (narrow no-break space) before AM/PM — normalize so
+ *  output (and the tests pinning it) is byte-identical across Node/browser versions. */
+const plainSpaces = (s: string) => s.replace(/\u202f/g, " ");
 
 /** Slots bucketed per practice-timezone day, in chronological order. */
-export function groupSlotsByDay(
-  slots: readonly AvailabilitySlot[],
-  timezone: string,
-): DayGroup[] {
+export function groupSlotsByDay(slots: readonly AvailabilitySlot[], timezone: string): DayGroup[] {
   const keyOf = dayKeyFormat(timezone);
   const labelOf = dayLabelFormat(timezone);
   const groups = new Map<string, { dayLabel: string; slots: AvailabilitySlot[] }>();
@@ -46,13 +60,13 @@ export function groupSlotsByDay(
 
 /** "2:30 PM" in the practice timezone. */
 export function formatSlotTime(iso: string, timezone: string): string {
-  return timeFormat(timezone).format(new Date(iso));
+  return plainSpaces(timeFormat(timezone).format(new Date(iso)));
 }
 
 /** "Thursday, July 9 at 2:30 PM" — the confirmation's outcome statement. */
 export function formatSlotFull(iso: string, timezone: string): string {
   const date = new Date(iso);
-  return `${dayLabelFormat(timezone).format(date)} at ${timeFormat(timezone).format(date)}`;
+  return `${dayLabelFormat(timezone).format(date)} at ${plainSpaces(timeFormat(timezone).format(date))}`;
 }
 
 /** "$395" (whole dollars) or "$395.50". Price is catalog data — never enters FHIR. */

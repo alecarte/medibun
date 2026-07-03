@@ -15,6 +15,7 @@ import {
 } from "@medibun/medplum-backend";
 import type { Practitioner } from "@medibun/fhir-types";
 
+import { humanNameDisplay } from "./patients.js";
 import type { ServiceCatalog, ServiceRow } from "./services/catalog.js";
 
 /**
@@ -65,12 +66,8 @@ const toServiceSummary = (row: ServiceRow): ServiceSummary => ({
   categoryColor: row.categoryColor,
 });
 
-/** FHIR HumanName → display string (same shape discipline as toPatientProfile). */
-const practitionerName = (practitioner: Practitioner): string => {
-  const name = practitioner.name?.[0];
-  const display = [...(name?.given ?? []), name?.family].filter(Boolean).join(" ");
-  return display === "" ? "Unknown" : display;
-};
+const practitionerName = (practitioner: Practitioner): string =>
+  humanNameDisplay(practitioner.name?.[0]);
 
 /** Schedules we can actually offer: an id plus a resolvable Practitioner actor. */
 const offerable = (
@@ -111,20 +108,42 @@ export function createBookingService(deps: {
     return service;
   };
 
+  // Catalog (Postgres) and schedule lookup (FHIR) are independent — run them
+  // together. allSettled so an unknown service deterministically wins the error
+  // (404 semantics) over a concurrent FHIR failure.
+  const serviceAndSchedules = async (serviceCode: string) => {
+    const [serviceResult, schedulesResult] = await Promise.allSettled([
+      activeService(serviceCode),
+      deps
+        .getFhirClient()
+        .then((client) =>
+          listSchedulesForService(client, serviceCode).then(
+            (schedules) => [client, offerable(schedules)] as const,
+          ),
+        ),
+    ]);
+    if (serviceResult.status === "rejected") {
+      throw serviceResult.reason;
+    }
+    if (schedulesResult.status === "rejected") {
+      throw schedulesResult.reason;
+    }
+    const [client, schedules] = schedulesResult.value;
+    return { service: serviceResult.value, client, schedules };
+  };
+
   return {
     async listServices() {
       const rows = await deps.catalog.listActive();
-      return rows.map(toServiceSummary);
+      // Only services that can complete the flow: a row without its FHIR
+      // HealthcareService would 404 at the availability step (activeService).
+      return rows.filter((row) => row.healthcareServiceId).map(toServiceSummary);
     },
 
     async getAvailability(serviceCode) {
-      const service = await activeService(serviceCode);
-      const client = await deps.getFhirClient();
+      const { service, client, schedules } = await serviceAndSchedules(serviceCode);
       const windowStart = now();
-      const windowEnd = new Date(
-        windowStart.getTime() + BOOKING_WINDOW_DAYS * 24 * 60 * 60 * 1000,
-      );
-      const schedules = offerable(await listSchedulesForService(client, serviceCode));
+      const windowEnd = new Date(windowStart.getTime() + BOOKING_WINDOW_DAYS * 24 * 60 * 60 * 1000);
       const practitioners = await Promise.all(
         schedules.map(async ({ scheduleId, practitioner }): Promise<PractitionerAvailability> => {
           const slots = await findSlots(client, {
@@ -153,7 +172,6 @@ export function createBookingService(deps: {
     },
 
     async book(patientReference, request) {
-      const service = await activeService(request.serviceCode);
       const startMs = Date.parse(request.start);
       // One minute of grace so "book the slot starting now" never loses to clock skew.
       // Whether $book rejects an off-hours/off-grid start is Medplum's contract at
@@ -162,12 +180,10 @@ export function createBookingService(deps: {
       if (Number.isNaN(startMs) || startMs < now().getTime() - 60_000) {
         throw new InvalidSlotError();
       }
-      const client = await deps.getFhirClient();
+      const { service, client, schedules } = await serviceAndSchedules(request.serviceCode);
       // The scheduleId is client-supplied — re-derive it from the service so a crafted
       // request can't book a mislabeled service onto another schedule.
-      const match = offerable(await listSchedulesForService(client, request.serviceCode)).find(
-        (s) => s.scheduleId === request.scheduleId,
-      );
+      const match = schedules.find((s) => s.scheduleId === request.scheduleId);
       if (!match) {
         throw new UnknownScheduleError();
       }

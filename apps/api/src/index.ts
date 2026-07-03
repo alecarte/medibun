@@ -26,9 +26,7 @@ const LOGIN_MAX_ATTEMPTS = 10;
 const LOGIN_WINDOW_MS = 15 * 60_000;
 
 /** Real auth wiring per docs/AUTH.md. Requires the experience DB + encryption key. */
-function buildAuthDeps():
-  | { auth: AuthDeps; booking: BookingService; pool: pg.Pool }
-  | undefined {
+function buildAuthDeps(): { auth: AuthDeps; booking: BookingService; pool: pg.Pool } | undefined {
   const dbUrl = process.env.EXPERIENCE_DATABASE_URL;
   const key = process.env.SESSION_ENCRYPTION_KEY;
   const projectId = process.env.MEDPLUM_PROJECT_ID;
@@ -126,10 +124,21 @@ function buildAuthDeps():
 
   // Booking (S4): catalog reads from the experience DB; scheduling ops run under the
   // BFF's service client (DATA_MODEL.md "book via BFF" — rationale in src/booking.ts).
-  // Per-call client login mirrors the logout revocation path; cheap against local/Cloud.
+  // One cached client, not per-call login: startClientLogin stores the credentials and
+  // the SDK re-grants on token expiry (verified in the v5.1.9 source, refreshIfExpired
+  // → client-credentials refresh). A failed login clears the cache so the next request
+  // retries instead of pinning a rejection.
+  let serviceClient: ReturnType<typeof authenticatedMedplumClient> | undefined;
+  const getFhirClient = () => {
+    serviceClient ??= authenticatedMedplumClient(medplumConfig);
+    serviceClient.catch(() => {
+      serviceClient = undefined;
+    });
+    return serviceClient;
+  };
   const booking = createBookingService({
     catalog: createServiceCatalog(db),
-    getFhirClient: () => authenticatedMedplumClient(medplumConfig),
+    getFhirClient,
   });
 
   return { auth, booking, pool };

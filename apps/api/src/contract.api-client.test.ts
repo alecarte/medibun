@@ -216,10 +216,7 @@ describe("api-client ⇄ BFF booking contract (real booking service, stubbed FHI
   it("books a slot end-to-end and round-trips the confirmed appointment", async () => {
     const client = makeClient();
     await expect(
-      client.book(
-        { serviceCode: "svc-botox", scheduleId: "sched-1", start: SLOT_START },
-        auth,
-      ),
+      client.book({ serviceCode: "svc-botox", scheduleId: "sched-1", start: SLOT_START }, auth),
     ).resolves.toEqual({
       id: "appt-1",
       serviceCode: "svc-botox",
@@ -232,7 +229,10 @@ describe("api-client ⇄ BFF booking contract (real booking service, stubbed FHI
 
   it("maps a taken window to a typed slot_taken BookingError", async () => {
     // SlotTakenError from the wire layer propagates through the real booking service.
-    const client = makeClient({}, makeBooking(() => Promise.reject(new SlotTakenError())));
+    const client = makeClient(
+      {},
+      makeBooking(() => Promise.reject(new SlotTakenError())),
+    );
     const err = await client
       .book({ serviceCode: "svc-botox", scheduleId: "sched-1", start: SLOT_START }, auth)
       .catch((e: unknown) => e);

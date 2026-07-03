@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import type { ServiceAvailability, ServiceSummary } from "@medibun/api-client";
 import { BookingFlow } from "./booking-flow";
+import { stubFetch } from "../../lib/stub-fetch";
 
 const refresh = vi.fn();
 vi.mock("next/navigation", () => ({
@@ -36,7 +37,11 @@ const availability: ServiceAvailability = {
       practitionerId: "prac-maya",
       practitionerName: "Maya Chen",
       timezone: "America/New_York",
-      slots: [{ start: "2026-07-10T14:00:00.000Z", end: "2026-07-10T14:30:00.000Z" }],
+      // First slot is the SAME instant as Riley's first — the aligned-grid norm.
+      slots: [
+        { start: "2026-07-09T14:00:00.000Z", end: "2026-07-09T14:30:00.000Z" },
+        { start: "2026-07-10T14:00:00.000Z", end: "2026-07-10T14:30:00.000Z" },
+      ],
     },
   ],
 };
@@ -49,20 +54,6 @@ const booked = {
   start: "2026-07-09T14:00:00.000Z",
   end: "2026-07-09T14:30:00.000Z",
 };
-
-function stubFetch(status: number, body: unknown) {
-  const calls: { url: string; init?: RequestInit }[] = [];
-  vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
-    calls.push({ url: String(input), init });
-    return Promise.resolve(
-      new Response(JSON.stringify(body), {
-        status,
-        headers: { "content-type": "application/json" },
-      }),
-    );
-  });
-  return calls;
-}
 
 describe("booking flow", () => {
   beforeEach(() => {
@@ -104,7 +95,9 @@ describe("booking flow", () => {
       scheduleId: "sched-riley",
       start: "2026-07-09T14:00:00.000Z",
     });
-    expect(refresh).toHaveBeenCalled();
+    // No refresh on success: a transient refetch failure must never replace the
+    // confirmation with the page's error state.
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it("rolls back calmly when the slot was just taken, and hides the dead time", async () => {
@@ -117,6 +110,31 @@ describe("booking flow", () => {
     // Back on the picker, with the taken slot hidden and others still offered.
     expect(screen.queryByRole("button", { name: "10:00 AM" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "11:00 AM" })).toBeInTheDocument();
+    // Fresh availability is pulled so the picker converges on server truth.
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("hides a taken time only for its own practitioner (same-instant slots elsewhere stay)", async () => {
+    stubFetch(409, { error: "slot_taken", requestId: "r" });
+    render(<BookingFlow service={service} availability={availability} />);
+    fireEvent.click(screen.getByRole("button", { name: "10:00 AM" }));
+    fireEvent.click(screen.getByRole("button", { name: "Book 10:00 AM" }));
+    await screen.findByRole("alert");
+    // Riley's Thursday 10:00 AM is dead — Maya's Thursday 10:00 AM must survive.
+    fireEvent.click(screen.getByRole("button", { name: "Maya Chen" }));
+    expect(screen.getByRole("heading", { name: "Thursday, July 9" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "10:00 AM" })).toHaveLength(2);
+  });
+
+  it("treats a no-longer-offered time as gone: specific copy, hidden slot, refresh", async () => {
+    stubFetch(400, { error: "invalid_request", requestId: "r" });
+    render(<BookingFlow service={service} availability={availability} />);
+    fireEvent.click(screen.getByRole("button", { name: "10:00 AM" }));
+    fireEvent.click(screen.getByRole("button", { name: "Book 10:00 AM" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("That time is no longer offered. Pick a current one.");
+    expect(screen.queryByRole("button", { name: "10:00 AM" })).not.toBeInTheDocument();
+    expect(refresh).toHaveBeenCalled();
   });
 
   it("keeps the failure copy calm and unblaming on unknown errors", async () => {

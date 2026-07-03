@@ -181,7 +181,9 @@ export async function listSchedulesForService(
   const params = new URLSearchParams({
     "service-type": `${SERVICES_CODE_SYSTEM}|${serviceCode}`,
     _include: "Schedule:actor",
-    _count: "50",
+    // Medplum's max page size; no pagination here, so a schedule beyond this cap
+    // would be silently unofferable AND unbookable (book() re-derives from this list).
+    _count: "1000",
   });
   const bundle = (await client.get(`fhir/R4/Schedule?${params.toString()}`)) as Bundle;
   const resources = (bundle.entry ?? []).flatMap((e) => (e.resource ? [e.resource] : []));

@@ -7,9 +7,7 @@ export default function NotFound() {
     <div className="mx-auto max-w-2xl px-8">
       <section className="pt-12 pb-8">
         <p className="type-kicker">Not found</p>
-        <h1 className="type-display mt-3 text-3xl text-text-primary">
-          That page isn't here.
-        </h1>
+        <h1 className="type-display mt-3 text-3xl text-text-primary">That page isn't here.</h1>
         <p className="mt-4 max-w-md text-sm text-text-secondary">
           The link may be old, or the page may not exist yet.
         </p>
