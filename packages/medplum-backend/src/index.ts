@@ -24,6 +24,7 @@ export {
   buildSchedule,
   findSlots,
   SCHEDULING_PARAMETERS_URL,
+  SERVICE_TYPE_REFERENCE_URL,
   SERVICES_CODE_SYSTEM,
   SlotTakenError,
   TIMEZONE_EXTENSION_URL,

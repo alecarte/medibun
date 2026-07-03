@@ -158,6 +158,14 @@ must be verified per environment — see `docs/AUTH.md` (attribution section).
   Builders + typed wrappers live in `@medibun/medplum-backend` (`scheduling.ts`) with
   shape-pinning unit tests; the demo seed (`pnpm demo:seed`) creates org/location/practitioners/
   services/schedules and self-checks `$find` returns slots.
+- **2026-07-02 — booking live-verification fix** (against real Medplum 5.1.9 via `demo:seed`):
+  `$find` has a _second_ gate beyond SchedulingParameters — `find.ts:120` requires a top-level
+  **`Schedule.serviceType[]`** concept carrying Medplum's `https://medplum.com/fhir/service-type-reference`
+  extension whose `valueReference` equals the requested HealthcareService (verified in v5.1.9
+  `util/servicetype.ts`). Without it the live server returns "Schedule is not scheduleable for
+  requested service type" even when `SchedulingParameters.service` matches. `buildSchedule` now
+  emits it; the unit test regression-pins it. (Mocked tests can't reach this gate — this is why
+  the live seed self-check exists.)
 - **2026-06-11 — accepted** (Alec) after adversarial validation against hl7.org/fhir/R4 and
   medplum.com docs. Corrections applied: CarePlan activity/outcomeReference split; Consent
   sourceReference → DocumentReference only + required fields; Medplum `$book` scheduling +

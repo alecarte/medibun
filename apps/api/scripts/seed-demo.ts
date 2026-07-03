@@ -119,6 +119,7 @@ async function main(): Promise<void> {
         buildSchedule({
           practitionerReference: `Practitioner/${practitioner.id}`,
           healthcareServiceReference: `HealthcareService/${serviceIds.get(code)}`,
+          serviceCode: code,
           durationMinutes: service.durationMinutes,
           availability: {
             daysOfWeek: ["mon", "tue", "wed", "thu", "fri"],

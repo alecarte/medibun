@@ -18,6 +18,9 @@ export const SCHEDULING_PARAMETERS_URL =
   "https://medplum.com/fhir/StructureDefinition/SchedulingParameters";
 export const TIMEZONE_EXTENSION_URL = "http://hl7.org/fhir/StructureDefinition/timezone";
 export const SERVICES_CODE_SYSTEM = "https://medibun.com/fhir/CodeSystem/services";
+/** Medplum's own extension on Schedule.serviceType[] that $find's "scheduleable" gate
+ *  matches against (v5.1.9 servicetype.ts) — distinct from SCHEDULING_PARAMETERS_URL. */
+export const SERVICE_TYPE_REFERENCE_URL = "https://medplum.com/fhir/service-type-reference";
 
 type MinutesDuration = {
   value: number;
@@ -84,12 +87,30 @@ export function buildHealthcareService(opts: {
 export function buildSchedule(opts: {
   readonly practitionerReference: string;
   readonly healthcareServiceReference: string;
+  readonly serviceCode: string;
   readonly durationMinutes: number;
   readonly availability: WeeklyAvailability;
 }): Schedule {
   return {
     resourceType: "Schedule",
     actor: [{ reference: opts.practitionerReference }],
+    // $find's "scheduleable" gate (v5.1.9 find.ts:120 → isCodeableReferenceLikeTo) checks
+    // Schedule.serviceType[] for a concept carrying the service-type-reference extension whose
+    // valueReference equals the requested HealthcareService — SEPARATE from the
+    // SchedulingParameters `service` field below (which only selects which param set applies).
+    // Verified live: without this, $find returns "Schedule is not scheduleable for requested
+    // service type" even though SchedulingParameters.service matches.
+    serviceType: [
+      {
+        coding: [{ system: SERVICES_CODE_SYSTEM, code: opts.serviceCode }],
+        extension: [
+          {
+            url: SERVICE_TYPE_REFERENCE_URL,
+            valueReference: { reference: opts.healthcareServiceReference },
+          },
+        ],
+      },
+    ],
     extension: [
       {
         url: SCHEDULING_PARAMETERS_URL,

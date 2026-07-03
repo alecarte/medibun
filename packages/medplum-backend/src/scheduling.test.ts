@@ -8,6 +8,7 @@ import {
   buildSchedule,
   findSlots,
   SCHEDULING_PARAMETERS_URL,
+  SERVICE_TYPE_REFERENCE_URL,
   SERVICES_CODE_SYSTEM,
   SlotTakenError,
   TIMEZONE_EXTENSION_URL,
@@ -34,10 +35,22 @@ describe("resource builders (shapes per the v5.1.9 wire contract)", () => {
     const s = buildSchedule({
       practitionerReference: "Practitioner/p1",
       healthcareServiceReference: "HealthcareService/hs1",
+      serviceCode: "svc-botox",
       durationMinutes: 30,
       availability: { daysOfWeek: ["mon", "tue"], startTime: "09:00:00", endTime: "17:00:00" },
     });
     expect(s.actor).toHaveLength(1);
+    // The $find "scheduleable" gate (v5.1.9): Schedule.serviceType must carry the
+    // service-type-reference extension pointing at the HealthcareService. Without this the
+    // live server rejects $find — regression-pin it.
+    const serviceRef = s.serviceType?.[0]?.extension?.find(
+      (e) => e.url === SERVICE_TYPE_REFERENCE_URL,
+    );
+    expect(serviceRef?.valueReference?.reference).toBe("HealthcareService/hs1");
+    expect(s.serviceType?.[0]?.coding?.[0]).toEqual({
+      system: SERVICES_CODE_SYSTEM,
+      code: "svc-botox",
+    });
     const params = s.extension?.find((e) => e.url === SCHEDULING_PARAMETERS_URL);
     expect(params?.extension?.find((e) => e.url === "service")?.valueReference?.reference).toBe(
       "HealthcareService/hs1",
