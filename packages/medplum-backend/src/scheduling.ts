@@ -35,6 +35,10 @@ const minutes = (value: number): MinutesDuration => ({
   code: "min",
 });
 
+/** The one place our services CodeSystem coding shape is defined (used on
+ *  HealthcareService.type, Schedule.serviceType, and proposed Slot.serviceType). */
+const serviceCoding = (code: string) => ({ system: SERVICES_CODE_SYSTEM, code });
+
 export type WeeklyAvailability = {
   readonly daysOfWeek: ("mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun")[];
   /** "09:00:00" local to the actor's timezone. */
@@ -65,7 +69,7 @@ export function buildHealthcareService(opts: {
   return {
     resourceType: "HealthcareService",
     name: opts.name,
-    type: [{ coding: [{ system: SERVICES_CODE_SYSTEM, code: opts.code }] }],
+    type: [{ coding: [serviceCoding(opts.code)] }],
     extension: [
       {
         url: SCHEDULING_PARAMETERS_URL,
@@ -102,7 +106,7 @@ export function buildSchedule(opts: {
     // service type" even though SchedulingParameters.service matches.
     serviceType: [
       {
-        coding: [{ system: SERVICES_CODE_SYSTEM, code: opts.serviceCode }],
+        coding: [serviceCoding(opts.serviceCode)],
         extension: [
           {
             url: SERVICE_TYPE_REFERENCE_URL,
@@ -197,7 +201,7 @@ export async function bookAppointment(
     start: opts.slot.start,
     end: opts.slot.end,
     status: "free",
-    serviceType: [{ coding: [{ system: SERVICES_CODE_SYSTEM, code: opts.serviceCode }] }],
+    serviceType: [{ coding: [serviceCoding(opts.serviceCode)] }],
   };
   let bundle: Bundle;
   try {
