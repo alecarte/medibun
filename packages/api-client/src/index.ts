@@ -17,6 +17,62 @@ export type PatientProfile = {
   readonly birthDate?: string;
 };
 
+/**
+ * Categorical color token key (design-tokens `color.category.*`). Mirrors the
+ * backend's `CategoryColor` union; the BFF contract test pins the two together.
+ */
+export type ServiceColor = "sage" | "teal" | "indigo" | "plum" | "clay" | "slate";
+
+/** A bookable service from the practice's menu (experience data — no PHI). */
+export type ServiceSummary = {
+  readonly code: string;
+  readonly name: string;
+  readonly description: string;
+  readonly durationMinutes: number;
+  readonly priceCents: number;
+  readonly categoryColor: ServiceColor;
+};
+
+/** One offered appointment window. ISO instants. */
+export type AvailabilitySlot = {
+  readonly start: string;
+  readonly end: string;
+};
+
+/** A practitioner's open times for one service. */
+export type PractitionerAvailability = {
+  readonly scheduleId: string;
+  readonly practitionerId: string;
+  /** Display name, already formatted by the backend. */
+  readonly practitionerName: string;
+  /** IANA timezone the practitioner schedules in — format slot times in it. */
+  readonly timezone: string;
+  readonly slots: readonly AvailabilitySlot[];
+};
+
+export type ServiceAvailability = {
+  readonly serviceCode: string;
+  readonly practitioners: readonly PractitionerAvailability[];
+};
+
+/** What the client sends to book: a slot exactly as returned by getAvailability. */
+export type BookingRequest = {
+  readonly serviceCode: string;
+  readonly scheduleId: string;
+  /** ISO instant — the `start` of a slot from getAvailability. */
+  readonly start: string;
+};
+
+/** The patient's own confirmed booking (their data, returned to them). */
+export type BookedAppointment = {
+  readonly id: string;
+  readonly serviceCode: string;
+  readonly serviceName: string;
+  readonly practitionerName: string;
+  readonly start: string;
+  readonly end: string;
+};
+
 export type ApiClientConfig = {
   /** Base URL of our backend (the BFF). Never a Medplum/EMR URL. */
   readonly baseUrl: string;
@@ -59,6 +115,21 @@ export class LoginError extends Error {
   }
 }
 
+/** Booking error codes (the BFF's stable, PHI-free error contract). */
+const BOOKING_CODES = ["slot_taken", "invalid_request", "unauthorized", "not_found"] as const;
+
+export type BookingErrorCode = (typeof BOOKING_CODES)[number] | "unknown";
+
+/** Booking failure with the backend's error code. Never carries PHI. */
+export class BookingError extends Error {
+  readonly code: BookingErrorCode;
+  constructor(code: BookingErrorCode, status: number) {
+    super(`api-client: booking request failed (${code}, status ${status})`);
+    this.name = "BookingError";
+    this.code = code;
+  }
+}
+
 export type ApiClient = {
   readonly baseUrl: string;
   /** Brokered login. Resolves the opaque session token (web also gets an HttpOnly cookie). */
@@ -69,7 +140,29 @@ export type ApiClient = {
    *  or when the session is valid but no patient profile resolves (404) — both are
    *  benign signed-out-equivalent states for a UI, never crashes. */
   readonly getMyProfile: (auth?: SessionAuth) => Promise<PatientProfile | undefined>;
+  /** The practice's bookable service menu. Requires a session. Throws BookingError. */
+  readonly listServices: (auth?: SessionAuth) => Promise<ServiceSummary[]>;
+  /** Open times per practitioner for one service over the booking window (next 7 days,
+   *  BFF-owned). Throws BookingError — "not_found" for an unknown service code. */
+  readonly getAvailability: (serviceCode: string, auth?: SessionAuth) => Promise<ServiceAvailability>;
+  /** Books a found slot for the signed-in patient. Throws BookingError — "slot_taken"
+   *  when the window was booked between availability and confirm (safe to re-pick). */
+  readonly book: (request: BookingRequest, auth?: SessionAuth) => Promise<BookedAppointment>;
 };
+
+/** Typed booking failure from the BFF's PHI-free error body (same shape as login). */
+async function bookingFailure(res: Response): Promise<BookingError> {
+  const code: BookingErrorCode = await res
+    .json()
+    .then((body: unknown) => {
+      const error = (body as { error?: string } | null)?.error ?? "";
+      return (BOOKING_CODES as readonly string[]).includes(error)
+        ? (error as BookingErrorCode)
+        : "unknown";
+    })
+    .catch(() => "unknown" as const);
+  return new BookingError(code, res.status);
+}
 
 function authHeaders(auth?: SessionAuth): Record<string, string> {
   if (auth?.sessionToken) {
@@ -118,6 +211,38 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
       if (!res.ok) {
         throw new Error(`api-client: POST /auth/logout failed with status ${res.status}`);
       }
+    },
+
+    async listServices(auth) {
+      const res = await fetchImpl(`${baseUrl}/services`, { headers: authHeaders(auth) });
+      if (!res.ok) {
+        throw await bookingFailure(res);
+      }
+      const body = (await res.json()) as { services: ServiceSummary[] };
+      return body.services;
+    },
+
+    async getAvailability(serviceCode, auth) {
+      const res = await fetchImpl(
+        `${baseUrl}/services/${encodeURIComponent(serviceCode)}/availability`,
+        { headers: authHeaders(auth) },
+      );
+      if (!res.ok) {
+        throw await bookingFailure(res);
+      }
+      return (await res.json()) as ServiceAvailability;
+    },
+
+    async book(request, auth) {
+      const res = await fetchImpl(`${baseUrl}/appointments`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...authHeaders(auth) },
+        body: JSON.stringify(request),
+      });
+      if (!res.ok) {
+        throw await bookingFailure(res);
+      }
+      return (await res.json()) as BookedAppointment;
     },
 
     async getMyProfile(auth) {

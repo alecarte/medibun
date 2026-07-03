@@ -16,4 +16,9 @@ describe("portal home", () => {
       expect(screen.getByRole("heading", { name: title })).toBeInTheDocument();
     }
   });
+
+  it("links the booking card into the live flow (graduated with S4)", () => {
+    render(<Home />);
+    expect(screen.getByRole("link", { name: /Book a visit/ })).toHaveAttribute("href", "/book");
+  });
 });

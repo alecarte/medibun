@@ -21,7 +21,13 @@ describe("portal sidebar", () => {
 
   it("marks not-yet-built destinations as Soon (honest shell)", () => {
     render(<Sidebar />);
-    expect(screen.getAllByText("Soon")).toHaveLength(3);
+    // History (S9) and Ask (S10) remain; booking graduated to a real link with S4.
+    expect(screen.getAllByText("Soon")).toHaveLength(2);
+  });
+
+  it("links Book a visit to the booking flow (graduated with S4)", () => {
+    render(<Sidebar />);
+    expect(screen.getByRole("link", { name: "Book a visit" })).toHaveAttribute("href", "/book");
   });
 });
 

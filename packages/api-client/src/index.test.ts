@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { createApiClient, LoginError, type PatientProfile } from "./index.js";
+import {
+  BookingError,
+  createApiClient,
+  LoginError,
+  type BookedAppointment,
+  type PatientProfile,
+  type ServiceAvailability,
+  type ServiceSummary,
+} from "./index.js";
 
 /** Stub fetch returning a canned response; records the requests it received. */
 function stubFetch(status: number, body: unknown) {
@@ -107,6 +115,108 @@ describe("api-client", () => {
       const { fetchImpl } = stubFetch(500, { error: "internal_error", requestId: "r" });
       const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
       await expect(client.logout()).rejects.toThrow(/500/);
+    });
+  });
+});
+
+describe("booking", () => {
+  const service: ServiceSummary = {
+    code: "svc-botox",
+    name: "Botox",
+    description: "Smooths dynamic lines.",
+    durationMinutes: 30,
+    priceCents: 39_500,
+    categoryColor: "sage",
+  };
+  const availability: ServiceAvailability = {
+    serviceCode: "svc-botox",
+    practitioners: [
+      {
+        scheduleId: "sched-1",
+        practitionerId: "p1",
+        practitionerName: "Riley Reyes",
+        timezone: "America/New_York",
+        slots: [{ start: "2026-07-06T14:00:00.000Z", end: "2026-07-06T14:30:00.000Z" }],
+      },
+    ],
+  };
+  const booked: BookedAppointment = {
+    id: "appt-1",
+    serviceCode: "svc-botox",
+    serviceName: "Botox",
+    practitionerName: "Riley Reyes",
+    start: "2026-07-06T14:00:00.000Z",
+    end: "2026-07-06T14:30:00.000Z",
+  };
+
+  describe("listServices", () => {
+    it("GETs /services with session auth and unwraps the list", async () => {
+      const { fetchImpl, calls } = stubFetch(200, { services: [service] });
+      const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+      await expect(client.listServices({ cookie: "medibun_session=abc" })).resolves.toEqual([
+        service,
+      ]);
+      expect(calls[0]!.url).toBe("https://api.example.test/services");
+      expect(new Headers(calls[0]!.init?.headers).get("cookie")).toBe("medibun_session=abc");
+    });
+
+    it("throws a typed BookingError with unauthorized on 401", async () => {
+      const { fetchImpl } = stubFetch(401, { error: "unauthorized", requestId: "r" });
+      const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+      const err = await client.listServices().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BookingError);
+      expect((err as BookingError).code).toBe("unauthorized");
+    });
+  });
+
+  describe("getAvailability", () => {
+    it("GETs the service's availability with an encoded code", async () => {
+      const { fetchImpl, calls } = stubFetch(200, availability);
+      const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+      await expect(
+        client.getAvailability("svc-botox", { sessionToken: "s-123" }),
+      ).resolves.toEqual(availability);
+      expect(calls[0]!.url).toBe("https://api.example.test/services/svc-botox/availability");
+      expect(new Headers(calls[0]!.init?.headers).get("authorization")).toBe("Bearer s-123");
+    });
+
+    it("maps an unknown service to a not_found BookingError", async () => {
+      const { fetchImpl } = stubFetch(404, { error: "not_found", requestId: "r" });
+      const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+      const err = await client.getAvailability("svc-nope").catch((e: unknown) => e);
+      expect((err as BookingError).code).toBe("not_found");
+    });
+  });
+
+  describe("book", () => {
+    const request = { serviceCode: "svc-botox", scheduleId: "sched-1", start: booked.start };
+
+    it("POSTs the booking request and resolves the confirmed appointment", async () => {
+      const { fetchImpl, calls } = stubFetch(201, booked);
+      const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+      await expect(client.book(request, { cookie: "medibun_session=abc" })).resolves.toEqual(
+        booked,
+      );
+      expect(calls[0]!.url).toBe("https://api.example.test/appointments");
+      expect(calls[0]!.init?.method).toBe("POST");
+      expect(JSON.parse(String(calls[0]!.init?.body))).toEqual(request);
+      expect(new Headers(calls[0]!.init?.headers).get("cookie")).toBe("medibun_session=abc");
+    });
+
+    it("maps a 409 to slot_taken so the UI can re-pick calmly", async () => {
+      const { fetchImpl } = stubFetch(409, { error: "slot_taken", requestId: "r" });
+      const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+      const err = await client.book(request).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BookingError);
+      expect((err as BookingError).code).toBe("slot_taken");
+    });
+
+    it("maps unrecognized error bodies to unknown without leaking them", async () => {
+      const { fetchImpl } = stubFetch(500, { error: "SENSITIVE-DETAIL", requestId: "r" });
+      const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+      const err = await client.book(request).catch((e: unknown) => e);
+      expect((err as BookingError).code).toBe("unknown");
+      expect(String((err as Error).message)).not.toContain("SENSITIVE-DETAIL");
     });
   });
 });

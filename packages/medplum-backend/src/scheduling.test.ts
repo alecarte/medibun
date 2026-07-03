@@ -7,6 +7,8 @@ import {
   buildPractitioner,
   buildSchedule,
   findSlots,
+  listSchedulesForService,
+  practitionerTimezone,
   SCHEDULING_PARAMETERS_URL,
   SERVICE_TYPE_REFERENCE_URL,
   SERVICES_CODE_SYSTEM,
@@ -86,6 +88,78 @@ describe("findSlots", () => {
     expect(url).toContain("fhir/R4/Schedule/sched-1/$find?");
     expect(url).toContain("service-type-reference=HealthcareService%2Fhs1");
     expect(url).toContain("start=2026-07-06");
+  });
+});
+
+describe("listSchedulesForService", () => {
+  const bundle = {
+    resourceType: "Bundle",
+    type: "searchset",
+    entry: [
+      {
+        search: { mode: "match" },
+        resource: {
+          resourceType: "Schedule",
+          id: "sched-1",
+          actor: [{ reference: "Practitioner/p1" }],
+        },
+      },
+      {
+        search: { mode: "match" },
+        resource: {
+          resourceType: "Schedule",
+          id: "sched-2",
+          actor: [{ reference: "Practitioner/p-missing" }],
+        },
+      },
+      {
+        search: { mode: "include" },
+        resource: {
+          resourceType: "Practitioner",
+          id: "p1",
+          name: [{ given: ["Riley"], family: "Reyes" }],
+          extension: [{ url: TIMEZONE_EXTENSION_URL, valueCode: "America/New_York" }],
+        },
+      },
+    ],
+  };
+
+  it("searches Schedule by our CodeSystem token and includes the actor", async () => {
+    const get = vi.fn().mockResolvedValue(bundle);
+    await listSchedulesForService({ get, post: vi.fn() }, "svc-botox");
+    const url = String(get.mock.calls[0]![0]);
+    expect(url).toContain("fhir/R4/Schedule?");
+    expect(url).toContain(
+      `service-type=${encodeURIComponent(`${SERVICES_CODE_SYSTEM}|svc-botox`)}`,
+    );
+    expect(url).toContain(`_include=${encodeURIComponent("Schedule:actor")}`);
+  });
+
+  it("pairs each schedule with its included Practitioner actor", async () => {
+    const get = vi.fn().mockResolvedValue(bundle);
+    const result = await listSchedulesForService({ get, post: vi.fn() }, "svc-botox");
+    expect(result).toHaveLength(2);
+    expect(result[0]!.schedule.id).toBe("sched-1");
+    expect(result[0]!.practitioner?.id).toBe("p1");
+    // A schedule whose actor wasn't resolvable still comes back — the caller decides.
+    expect(result[1]!.schedule.id).toBe("sched-2");
+    expect(result[1]!.practitioner).toBeUndefined();
+  });
+
+  it("returns [] for an empty searchset", async () => {
+    const get = vi.fn().mockResolvedValue({ resourceType: "Bundle", type: "searchset" });
+    expect(await listSchedulesForService({ get, post: vi.fn() }, "svc-nope")).toEqual([]);
+  });
+});
+
+describe("practitionerTimezone", () => {
+  it("reads the IANA timezone extension off the actor", () => {
+    const p = buildPractitioner({ given: "Riley", family: "Reyes", timezone: "America/New_York" });
+    expect(practitionerTimezone(p)).toBe("America/New_York");
+  });
+
+  it("is undefined when the extension is absent", () => {
+    expect(practitionerTimezone({ resourceType: "Practitioner" })).toBeUndefined();
   });
 });
 

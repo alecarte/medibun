@@ -1,14 +1,23 @@
 import { SESSION_COOKIE_NAME } from "@medibun/api-client";
-import type { PatientProfile } from "@medibun/api-client";
+import type {
+  BookedAppointment,
+  BookingRequest,
+  PatientProfile,
+  ServiceAvailability,
+  ServiceSummary,
+} from "@medibun/api-client";
 import {
   InvalidCredentialsError,
   MfaRequiredError,
   MultipleMembershipsError,
   SessionExpiredError,
+  SlotTakenError,
 } from "@medibun/medplum-backend";
 import { type Context, Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
+
+import { InvalidSlotError, UnknownScheduleError, UnknownServiceError } from "./booking.js";
 
 /**
  * @medibun/api — the BFF (ADR-0001). The only consumer of @medibun/medplum-backend;
@@ -58,12 +67,24 @@ export type AuthDeps = {
   readonly cookieSecure?: boolean;
 };
 
+export type BookingDeps = {
+  /** The active service menu (catalog data — no PHI). */
+  readonly listServices: () => Promise<ServiceSummary[]>;
+  /** Availability per practitioner. Throws UnknownServiceError for unknown codes. */
+  readonly getAvailability: (serviceCode: string) => Promise<ServiceAvailability>;
+  /** Books for the session patient. Throws SlotTakenError / UnknownServiceError /
+   *  UnknownScheduleError / InvalidSlotError. */
+  readonly book: (patientReference: string, request: BookingRequest) => Promise<BookedAppointment>;
+};
+
 export type AppDeps = {
   readonly log: (entry: LogEntry) => void;
   /** Resolves true when Medplum is reachable and credentials are valid. */
   readonly checkMedplum: () => Promise<boolean>;
   /** Auth routes mount only when provided (docs/AUTH.md). */
   readonly auth?: AuthDeps;
+  /** Booking routes mount only when provided ALONG WITH auth (sessions gate them). */
+  readonly booking?: BookingDeps;
 };
 
 type Env = { Variables: { requestId: string; logDetail?: string } };
@@ -83,7 +104,9 @@ type ErrorCode =
   | "mfa_not_supported"
   | "membership_selection_not_supported"
   | "forbidden_origin"
-  | "unauthorized";
+  | "unauthorized"
+  | "forbidden"
+  | "slot_taken";
 
 export function createApp(deps: AppDeps): Hono<Env> {
   const app = new Hono<Env>();
@@ -124,10 +147,10 @@ export function createApp(deps: AppDeps): Hono<Env> {
     } as const;
 
     // CSRF defense that doesn't depend on SameSite (docs/AUTH.md): browser-sent
-    // Origins must be allowlisted on mutating auth routes. No Origin (curl, mobile,
-    // server-to-server) passes — the cookie isn't attached in those cases anyway.
+    // Origins must be allowlisted on mutating cookie-authenticated routes. No Origin
+    // (curl, mobile, server-to-server) passes — the cookie isn't attached there anyway.
     const allowedOrigins = new Set(auth.allowedOrigins ?? []);
-    app.use("/auth/*", async (c, next) => {
+    const originGuard = async (c: Context<Env>, next: () => Promise<void>) => {
       const origin = c.req.header("Origin");
       if (c.req.method !== "GET" && origin && !allowedOrigins.has(origin)) {
         // Origins are browser/config values, never PHI — log the mismatch so a
@@ -136,7 +159,9 @@ export function createApp(deps: AppDeps): Hono<Env> {
         return fail(c, "forbidden_origin", 403);
       }
       await next();
-    });
+    };
+    app.use("/auth/*", originGuard);
+    app.use("/appointments", originGuard);
 
     const clientIp = (c: { req: { header: (name: string) => string | undefined } }) =>
       auth.clientIp ? auth.clientIp(c.req) : "direct";
@@ -200,9 +225,14 @@ export function createApp(deps: AppDeps): Hono<Env> {
       return c.json({ ok: true });
     });
 
-    app.get("/patients/me", async (c) => {
+    /** The session's authenticated user, or null (routes answer 401 themselves). */
+    const sessionUser = async (c: Context<Env>) => {
       const sessionId = resolveSessionId(c);
-      const user = sessionId ? await auth.getUser(sessionId) : null;
+      return sessionId ? await auth.getUser(sessionId) : null;
+    };
+
+    app.get("/patients/me", async (c) => {
+      const user = await sessionUser(c);
       if (!user) {
         return fail(c, "unauthorized", 401);
       }
@@ -222,6 +252,84 @@ export function createApp(deps: AppDeps): Hono<Env> {
       }
       return c.json(profile);
     });
+
+    // Booking (S4). Sessions gate every route; the scheduling calls run under the BFF's
+    // service client per DATA_MODEL.md ("book via BFF") — see src/booking.ts for the
+    // principal rationale. Nothing here logs or returns another patient's data: the
+    // service menu and availability are PHI-free, and $book is bound to the session's
+    // own patient reference server-side.
+    const booking = deps.booking;
+    if (booking) {
+      app.get("/services", async (c) => {
+        if (!(await sessionUser(c))) {
+          return fail(c, "unauthorized", 401);
+        }
+        return c.json({ services: await booking.listServices() });
+      });
+
+      app.get("/services/:code/availability", async (c) => {
+        if (!(await sessionUser(c))) {
+          return fail(c, "unauthorized", 401);
+        }
+        try {
+          return c.json(await booking.getAvailability(c.req.param("code")));
+        } catch (err) {
+          if (err instanceof UnknownServiceError) {
+            return fail(c, "not_found", 404);
+          }
+          throw err;
+        }
+      });
+
+      app.post("/appointments", async (c) => {
+        const user = await sessionUser(c);
+        if (!user) {
+          return fail(c, "unauthorized", 401);
+        }
+        // Patients book for themselves only. A non-patient principal has no
+        // self-booking semantics — staff booking arrives with the staff app (S11).
+        if (!user.profileReference.startsWith("Patient/")) {
+          return fail(c, "forbidden", 403);
+        }
+        const body = (await c.req.json().catch(() => ({}))) as {
+          serviceCode?: unknown;
+          scheduleId?: unknown;
+          start?: unknown;
+        };
+        const { serviceCode, scheduleId, start } = body;
+        if (
+          typeof serviceCode !== "string" ||
+          !serviceCode ||
+          typeof scheduleId !== "string" ||
+          !scheduleId ||
+          typeof start !== "string" ||
+          !start
+        ) {
+          return fail(c, "invalid_request", 400);
+        }
+        try {
+          const appointment = await booking.book(user.profileReference, {
+            serviceCode,
+            scheduleId,
+            start,
+          });
+          return c.json(appointment, 201);
+        } catch (err) {
+          // The found window was booked in the meantime — the client re-picks calmly.
+          if (err instanceof SlotTakenError) {
+            return fail(c, "slot_taken", 409);
+          }
+          if (
+            err instanceof UnknownServiceError ||
+            err instanceof UnknownScheduleError ||
+            err instanceof InvalidSlotError
+          ) {
+            return fail(c, "invalid_request", 400);
+          }
+          throw err;
+        }
+      });
+    }
   }
 
   // NOTE: the former dev-only unauthenticated GET /patients/:id was removed with the

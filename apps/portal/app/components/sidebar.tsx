@@ -4,15 +4,15 @@ import { tokens } from "@medibun/design-tokens";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-const COMING_SOON = ["Book a visit", "Your history", "Ask"] as const;
+const COMING_SOON = ["Your history", "Ask"] as const;
 
 const itemClass = (active: boolean) =>
   active
     ? "flex items-center justify-between rounded-md bg-brand-wash px-3 py-2 text-sm font-medium text-brand-primary"
     : "flex items-center justify-between rounded-md px-3 py-2 text-sm text-text-secondary";
 
-// The persistent app shell navigation. Items beyond Home/Account activate as their
-// slices land (booking S4, history S9, concierge S10) — shown as "Soon" until then.
+// The persistent app shell navigation. Items activate as their slices land (booking
+// landed with S4; history S9, concierge S10) — shown as "Soon" until then.
 export function Sidebar({ profileName }: { profileName?: string }) {
   const pathname = usePathname();
   return (
@@ -28,6 +28,13 @@ export function Sidebar({ profileName }: { profileName?: string }) {
           className={itemClass(pathname === "/")}
         >
           Home
+        </Link>
+        <Link
+          href="/book"
+          aria-current={pathname.startsWith("/book") ? "page" : undefined}
+          className={itemClass(pathname.startsWith("/book"))}
+        >
+          Book a visit
         </Link>
         {profileName && (
           <Link

@@ -14,9 +14,11 @@ import pg from "pg";
 import { createApp, type AuthDeps } from "./app.js";
 import { createTokenCipher } from "./auth/crypto.js";
 import { createSessionStore } from "./auth/sessions.js";
+import { createBookingService, type BookingService } from "./booking.js";
 import { readApiConfigFromEnv } from "./config.js";
 import { checkMedplumConnection } from "./medplum.js";
 import { toPatientProfile } from "./patients.js";
+import { createServiceCatalog } from "./services/catalog.js";
 
 const config = readApiConfigFromEnv();
 
@@ -24,7 +26,9 @@ const LOGIN_MAX_ATTEMPTS = 10;
 const LOGIN_WINDOW_MS = 15 * 60_000;
 
 /** Real auth wiring per docs/AUTH.md. Requires the experience DB + encryption key. */
-function buildAuthDeps(): { auth: AuthDeps; pool: pg.Pool } | undefined {
+function buildAuthDeps():
+  | { auth: AuthDeps; booking: BookingService; pool: pg.Pool }
+  | undefined {
   const dbUrl = process.env.EXPERIENCE_DATABASE_URL;
   const key = process.env.SESSION_ENCRYPTION_KEY;
   const projectId = process.env.MEDPLUM_PROJECT_ID;
@@ -119,7 +123,16 @@ function buildAuthDeps(): { auth: AuthDeps; pool: pg.Pool } | undefined {
         ? (req) => req.header("x-real-ip") ?? "direct"
         : undefined,
   };
-  return { auth, pool };
+
+  // Booking (S4): catalog reads from the experience DB; scheduling ops run under the
+  // BFF's service client (DATA_MODEL.md "book via BFF" — rationale in src/booking.ts).
+  // Per-call client login mirrors the logout revocation path; cheap against local/Cloud.
+  const booking = createBookingService({
+    catalog: createServiceCatalog(db),
+    getFhirClient: () => authenticatedMedplumClient(medplumConfig),
+  });
+
+  return { auth, booking, pool };
 }
 
 const authWiring = buildAuthDeps();
@@ -128,6 +141,7 @@ const app = createApp({
   log: (entry) => console.log(JSON.stringify(entry)),
   checkMedplum: checkMedplumConnection,
   auth: authWiring?.auth,
+  booking: authWiring?.booking,
 });
 
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
