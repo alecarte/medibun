@@ -12,6 +12,15 @@
 # Usage: cd infra/medplum && ./setup-dev.sh
 set -euo pipefail
 
+# Preflight: fail fast with the fix instead of "command not found" mid-provisioning.
+for cmd in jq curl openssl docker; do
+  command -v "$cmd" >/dev/null 2>&1 || {
+    echo "✗ missing dependency: $cmd"
+    [ "$cmd" = "jq" ] && echo "  fix: sudo apt-get install -y jq (or brew install jq)"
+    exit 1
+  }
+done
+
 BASE="${MEDPLUM_BASE_URL:-http://localhost:8103}"
 BASE="${BASE%/}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
