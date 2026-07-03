@@ -175,9 +175,10 @@ explicit human approval.
   to 404. First AccessPolicy landed: **`patient-self-v1`** (read-only own-compartment template,
   `%patient` criteria verified against the v5.1.9 server source incl. read-by-id enforcement),
   upserted + membership-bound by `setup-dev.sh` with a fail-loud binding check (the server
-  silently drops malformed criteria — hence the check). CAVEAT: the cloud sandbox cannot pull
-  Medplum images (registry blocked), so policy binding was source-verified + script-self-checked
-  but NOT yet live-exercised against a running Medplum — first `setup-dev.sh` run on a normal
-  dev machine completes that; the end-to-end login flow itself was live-verified in a browser
-  against the real BFF/session store with only Medplum's four endpoints faked
-  (`apps/api/scripts/e2e-harness.ts`, synthetic data).
+  silently drops malformed criteria — hence the check). The end-to-end login flow was
+  live-verified in a browser against the real BFF/session store with only Medplum's four
+  endpoints faked (`apps/api/scripts/e2e-harness.ts`, synthetic data).
+- 2026-07-03 — Live-Medplum caveat CLOSED: `setup-dev.sh` ran clean on Alec's WSL2 stack
+  against a real Medplum — policy read-back 8/8 resource entries, membership-pinned
+  `patient-self-v1` binding confirmed by the fail-loud check. The policy path is now
+  live-exercised end-to-end.
