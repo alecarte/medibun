@@ -75,8 +75,11 @@ async function main(): Promise<void> {
     );
   }
   const client = await authenticatedMedplumClient(readConfigFromEnv());
+  // TRUE upsert (conditional update): re-runs must reconcile shape changes onto existing
+  // resources — createResourceIfNoneExist would return the old resource unchanged, so fixes
+  // to builders (e.g. Schedule.serviceType for $find) would never reach an existing stack.
   const upsert = async <T extends Resource>(resource: T, key: string): Promise<T> =>
-    client.createResourceIfNoneExist<T>(
+    client.upsertResource<T>(
       { ...resource, identifier: identify(key) } as T,
       `identifier=${encodeURIComponent(`${IDENTIFIER_SYSTEM}|${key}`)}`,
     );
