@@ -3,9 +3,13 @@ import { render, screen } from "@testing-library/react";
 import Home from "./page.js";
 
 describe("staff home", () => {
-  it("renders the heading and the brand token value", () => {
+  it("renders the Today heading", () => {
     render(<Home />);
-    expect(screen.getByRole("heading", { name: "Aureva Staff" })).toBeInTheDocument();
-    expect(screen.getByText(/#6941c6/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Today" })).toBeInTheDocument();
+  });
+
+  it("shows the empty day sheet with its explanation", () => {
+    render(<Home />);
+    expect(screen.getByText(/No appointments yet/)).toBeInTheDocument();
   });
 });

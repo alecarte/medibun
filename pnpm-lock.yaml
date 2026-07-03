@@ -137,6 +137,9 @@ importers:
       '@medibun/api-client':
         specifier: workspace:*
         version: link:../../packages/api-client
+      '@medibun/design-tokens':
+        specifier: workspace:*
+        version: link:../../packages/design-tokens
       '@medibun/fhir-types':
         specifier: workspace:*
         version: link:../../packages/fhir-types

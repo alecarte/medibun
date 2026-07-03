@@ -9,7 +9,9 @@
       "import": "./dist/index.js"
     },
     "./theme.css": "./dist/theme.css",
-    "./tailwind.css": "./dist/tailwind.css"
+    "./tailwind.css": "./dist/tailwind.css",
+    "./brand.aureva.css": "./dist/brand.aureva.css",
+    "./brand.handal.css": "./dist/brand.handal.css"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -17,7 +19,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "style-dictionary build --config style-dictionary.config.js && tsc -p tsconfig.build.json",
+    "build": "node build-tokens.mjs && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run"

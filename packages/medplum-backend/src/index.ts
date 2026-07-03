@@ -17,3 +17,18 @@ export {
   type RefreshedTokens,
 } from "./user-login.js";
 export { revokeLoginById, type LoginRevoker } from "./revoke-login.js";
+export {
+  bookAppointment,
+  buildHealthcareService,
+  buildPractitioner,
+  buildSchedule,
+  findSlots,
+  SCHEDULING_PARAMETERS_URL,
+  SERVICE_TYPE_REFERENCE_URL,
+  SERVICES_CODE_SYSTEM,
+  SlotTakenError,
+  TIMEZONE_EXTENSION_URL,
+  type FhirOpsClient,
+  type SlotWindow,
+  type WeeklyAvailability,
+} from "./scheduling.js";

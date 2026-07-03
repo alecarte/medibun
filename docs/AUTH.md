@@ -162,3 +162,23 @@ explicit human approval.
   `/auth/login` returns `code` XOR `memberships`, so the single-membership guard cannot
   false-positive. Deferred consciously: centralized domain-error→HTTP mapping (when the third
   auth route lands) and env-tunable auth constants.
+- **2026-07-02 — v0 staff-MFA decision** (Alec, via the v0 proposal's A4 ask — see
+  `docs/V0_PROPOSAL.md` §5): for the synthetic-data-only v0, dev staff accounts are invited
+  **without** `mfaRequired`; the brokered TOTP enroll/verify flow is an early post-v0 slice and
+  is **required before any real staff account exists**. The "staff invites always set
+  `mfaRequired: true`" rule stands for real accounts; this is a scoped, recorded exception for
+  synthetic dev identities only.
+- **2026-07-02 — S2 portal patient auth shipped** (v0 proposal S2). Portal login/logout UI +
+  `/account` on the same-origin `/api` proxy (Next rewrite → BFF; HttpOnly cookie stays
+  first-party). The **`API_DEV_UNAUTHENTICATED` dev route and portal `/dev/patient` page are
+  REMOVED** (the decided replace-not-extend item — done); a regression test pins `/patients/:id`
+  to 404. First AccessPolicy landed: **`patient-self-v1`** (read-only own-compartment template,
+  `%patient` criteria verified against the v5.1.9 server source incl. read-by-id enforcement),
+  upserted + membership-bound by `setup-dev.sh` with a fail-loud binding check (the server
+  silently drops malformed criteria — hence the check). The end-to-end login flow was
+  live-verified in a browser against the real BFF/session store with only Medplum's four
+  endpoints faked (`apps/api/scripts/e2e-harness.ts`, synthetic data).
+- 2026-07-03 — Live-Medplum caveat CLOSED: `setup-dev.sh` ran clean on Alec's WSL2 stack
+  against a real Medplum — policy read-back 8/8 resource entries, membership-pinned
+  `patient-self-v1` binding confirmed by the fail-loud check. The policy path is now
+  live-exercised end-to-end.

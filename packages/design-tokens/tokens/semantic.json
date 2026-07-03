@@ -1,0 +1,22 @@
+{
+  "color": {
+    "$type": "color",
+    "surface": {
+      "canvas": { "$value": "{brand.color.background}" },
+      "card": { "$value": "{color.paper}" },
+      "well": { "$value": "{color.neutral.100}" }
+    },
+    "text": {
+      "primary": { "$value": "{brand.color.foreground}" },
+      "secondary": { "$value": "{brand.color.muted}" },
+      "on-accent": { "$value": "{brand.color.primary-contrast}" }
+    },
+    "border": {
+      "hairline": { "$value": "{color.neutral.200}" },
+      "interactive": { "$value": "{color.neutral.500}" }
+    },
+    "action": {
+      "primary": { "$value": "{brand.color.primary}" }
+    }
+  }
+}

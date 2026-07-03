@@ -1,15 +1,35 @@
-import { tokens } from "@medibun/design-tokens";
-
-// Server Component (RSC). Proves cross-package wiring: imports a token value from the
-// shared package and applies brand-token-driven Tailwind utilities that resolve through
-// the runtime CSS variables.
+// Server Component (RSC) — the v0 home content for the patient portal. Static and honest:
+// booking, history, and the concierge arrive in their own slices; this page establishes
+// the design language (tokens only — no hardcoded brand values, per CLAUDE.md).
 export default function Home() {
   return (
-    <main className="min-h-screen bg-brand-background text-brand-foreground p-8">
-      <h1 className="text-2xl font-semibold text-brand-primary">Aureva Portal</h1>
-      <p className="mt-2 text-brand-muted">
-        Scaffold online. Brand primary token: <code>{tokens["brand-color-primary"]}</code>
-      </p>
-    </main>
+    <div className="mx-auto max-w-4xl px-8 pb-16">
+      <section className="pt-12 pb-10">
+        <p className="type-kicker">Welcome</p>
+        <h1 className="type-display mt-3 max-w-2xl text-4xl text-text-primary">
+          Care that feels like a ritual, not a queue.
+        </h1>
+        <p className="mt-4 max-w-xl text-text-secondary">
+          Book a visit, revisit your treatment history, and get answers grounded in your own record
+          — all in one calm place.
+        </p>
+      </section>
+
+      <section aria-label="What you can do here" className="grid gap-4 sm:grid-cols-3">
+        {[
+          { title: "Book a visit", body: "Find a time that fits — no phone tag." },
+          { title: "Your history", body: "Every treatment, on your own timeline." },
+          { title: "Ask anything", body: "Answers grounded in your record, cited." },
+        ].map((card) => (
+          <article
+            key={card.title}
+            className="rounded-lg border border-border-hairline bg-surface-card p-6 shadow-low"
+          >
+            <h2 className="text-base font-semibold text-text-primary">{card.title}</h2>
+            <p className="mt-2 text-sm text-text-secondary">{card.body}</p>
+          </article>
+        ))}
+      </section>
+    </div>
   );
 }

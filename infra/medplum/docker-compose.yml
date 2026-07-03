@@ -82,6 +82,15 @@ services:
       MEDPLUM_LOG_AUDIT_EVENTS: "true"
       MEDPLUM_INTROSPECTION_ENABLED: "true"
       MEDPLUM_SHUTDOWN_TIMEOUT_MILLISECONDS: 30000
+      # Dev only: the 5.1.9 default is 5 logins/min/IP (ratelimit.ts `defaultLoginRateLimit`),
+      # which the seed + demo (patient, front desk, clinician in quick succession) would trip.
+      # Prod (Medplum Cloud) instead needs the project `loginRateLimit` raised — AUTH.md checklist.
+      MEDPLUM_DEFAULT_LOGIN_RATE_LIMIT: 1000
+      # Dev only: Google's PUBLIC documented always-pass reCAPTCHA test keypair (not secrets —
+      # published by Google for automated testing), matched with the app container below so
+      # /auth/newuser registration works locally. Prod is Medplum Cloud with real keys.
+      MEDPLUM_RECAPTCHA_SITE_KEY: "6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI"
+      MEDPLUM_RECAPTCHA_SECRET_KEY: "6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe"
     healthcheck:
       test:
         [
@@ -102,6 +111,14 @@ services:
         condition: service_healthy
     ports:
       - "3000:3000"
+    environment:
+      # Dev only: the app image's docker-entrypoint.sh defaults RECAPTCHA_SITE_KEY to
+      # Medplum CLOUD's site key (`:=` substitutes on unset AND empty — an empty value
+      # here is a no-op), which our server rejects on /auth/newuser with "Invalid
+      # recaptchaSiteKey". Fix: Google's public always-pass TEST site key, matching the
+      # server's MEDPLUM_RECAPTCHA_* pair above, so local registration works with the
+      # captcha still exercised. Local synthetic-data stack only.
+      RECAPTCHA_SITE_KEY: "6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000"]
       interval: 10s

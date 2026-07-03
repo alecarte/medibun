@@ -139,6 +139,33 @@ must be verified per environment — see `docs/AUTH.md` (attribution section).
 
 ### Review log
 
+- **2026-07-02 — booking amendment (A2, approved in principle via docs/V0_PROPOSAL.md §5;
+  landed with S3)**, all verified against the Medplum **v5.1.9 server source** (find.ts,
+  book.ts, scheduling-parameters.ts): (i) at our pin the scheduling ops are **`$find` + `$book`
+  only** — `$hold`/`$confirm`/`$cancel` do not exist (adopting them later is a Medplum-pin
+  question); `$find` is GET-only, instance-level per Schedule, and REQUIRES
+  `service-type-reference` with a ≤31-day window. (ii) Every bookable service is therefore also
+  a **`HealthcareService`** carrying the `https://medplum.com/fhir/StructureDefinition/SchedulingParameters`
+  extension (`duration` required; buffers/alignment optional), reconciled with the
+  experience-DB catalog row by our CodeSystem `code` + stored `healthcareServiceId`. (iii)
+  Precision on the earlier one-actor note: the IANA **timezone extension
+  (`http://hl7.org/fhir/StructureDefinition/timezone`, valueCode) lives on the Schedule's single
+  ACTOR resource**, not the Schedule; Schedule-level SchedulingParameters additionally REQUIRE
+  `service` (HealthcareService reference) and `availability` sub-extensions. (iv) `$book` takes
+  a Parameters body with 1+ proposed free Slots (+ optional `patient-reference`), runs in a
+  serializable transaction, returns 201 with the booked Appointment + busy Slot, and 409s a
+  taken window; the booked duration must exactly equal the SchedulingParameters duration.
+  Builders + typed wrappers live in `@medibun/medplum-backend` (`scheduling.ts`) with
+  shape-pinning unit tests; the demo seed (`pnpm demo:seed`) creates org/location/practitioners/
+  services/schedules and self-checks `$find` returns slots.
+- **2026-07-02 — booking live-verification fix** (against real Medplum 5.1.9 via `demo:seed`):
+  `$find` has a _second_ gate beyond SchedulingParameters — `find.ts:120` requires a top-level
+  **`Schedule.serviceType[]`** concept carrying Medplum's `https://medplum.com/fhir/service-type-reference`
+  extension whose `valueReference` equals the requested HealthcareService (verified in v5.1.9
+  `util/servicetype.ts`). Without it the live server returns "Schedule is not scheduleable for
+  requested service type" even when `SchedulingParameters.service` matches. `buildSchedule` now
+  emits it; the unit test regression-pins it. (Mocked tests can't reach this gate — this is why
+  the live seed self-check exists.)
 - **2026-06-11 — accepted** (Alec) after adversarial validation against hl7.org/fhir/R4 and
   medplum.com docs. Corrections applied: CarePlan activity/outcomeReference split; Consent
   sourceReference → DocumentReference only + required fields; Medplum `$book` scheduling +

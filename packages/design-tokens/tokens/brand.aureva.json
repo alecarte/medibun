@@ -1,0 +1,29 @@
+{
+  "brand": {
+    "name": { "$type": "string", "$value": "Aureva" },
+    "logo": {
+      "$type": "string",
+      "$description": "Asset reference (URL or bundle key) resolved per platform, not hardcoded.",
+      "$value": "/brand/aureva-logo.svg"
+    },
+    "color": {
+      "$type": "color",
+      "$description": "PLACEHOLDER brand values (sleek-neutral direction, Alec 2026-07-02: lighter tones, bright olive accent). Real Aureva branding is in progress externally; swapping it in is a change to this file only (docs/V0_PROPOSAL.md §6).",
+      "primary": { "$value": "#4F6B0F" },
+      "primary-contrast": { "$value": "#FFFFFF" },
+      "background": { "$value": "{color.neutral.0}" },
+      "foreground": { "$value": "{color.neutral.900}" },
+      "muted": { "$value": "{color.neutral.600}" },
+      "wash": { "$value": "#ECF2D7" },
+      "glow": { "$value": "#F4F8E6" }
+    },
+    "radius": {
+      "$type": "dimension",
+      "control": { "$value": "{radius.md}" }
+    },
+    "font": {
+      "$type": "string",
+      "display-settings": { "$value": "normal" }
+    }
+  }
+}

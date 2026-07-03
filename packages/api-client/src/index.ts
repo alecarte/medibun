@@ -24,11 +24,62 @@ export type ApiClientConfig = {
   readonly fetch?: typeof fetch;
 };
 
+/**
+ * How a call proves its session. Web (portal/staff) forwards the HttpOnly cookie —
+ * browsers attach it automatically on same-origin calls, and RSC server-side calls pass
+ * it explicitly; mobile sends the opaque session token as a bearer header (AUTH.md).
+ */
+export type SessionAuth = {
+  readonly cookie?: string;
+  readonly sessionToken?: string;
+};
+
+/** The BFF's session cookie name — the one shared constant between the BFF (which sets
+ *  it) and web apps (which forward it server-side). Change it here, nowhere else. */
+export const SESSION_COOKIE_NAME = "medibun_session";
+
+/** Backend login error codes (the BFF's stable, PHI-free error contract).
+ *  Single source of truth: the type derives from this array. */
+const LOGIN_CODES = [
+  "invalid_credentials",
+  "rate_limited",
+  "mfa_not_supported",
+  "membership_selection_not_supported",
+] as const;
+
+export type LoginErrorCode = (typeof LOGIN_CODES)[number] | "unknown";
+
+/** Login failure with the backend's error code. Never carries credentials or PHI. */
+export class LoginError extends Error {
+  readonly code: LoginErrorCode;
+  constructor(code: LoginErrorCode, status: number) {
+    super(`api-client: login failed (${code}, status ${status})`);
+    this.name = "LoginError";
+    this.code = code;
+  }
+}
+
 export type ApiClient = {
   readonly baseUrl: string;
-  /** Resolves undefined when the backend reports the patient does not exist. */
-  readonly getPatientProfile: (id: string) => Promise<PatientProfile | undefined>;
+  /** Brokered login. Resolves the opaque session token (web also gets an HttpOnly cookie). */
+  readonly login: (email: string, password: string) => Promise<{ sessionToken: string }>;
+  /** Ends the session. Resolves even when upstream revocation is best-effort (BFF contract). */
+  readonly logout: (auth?: SessionAuth) => Promise<void>;
+  /** The signed-in patient's own profile. Resolves undefined when not signed in (401)
+   *  or when the session is valid but no patient profile resolves (404) — both are
+   *  benign signed-out-equivalent states for a UI, never crashes. */
+  readonly getMyProfile: (auth?: SessionAuth) => Promise<PatientProfile | undefined>;
 };
+
+function authHeaders(auth?: SessionAuth): Record<string, string> {
+  if (auth?.sessionToken) {
+    return { authorization: `Bearer ${auth.sessionToken}` };
+  }
+  if (auth?.cookie) {
+    return { cookie: auth.cookie };
+  }
+  return {};
+}
 
 export function createApiClient(config: ApiClientConfig): ApiClient {
   const fetchImpl = config.fetch ?? fetch;
@@ -36,14 +87,51 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
 
   return {
     baseUrl: config.baseUrl,
-    async getPatientProfile(id) {
-      const res = await fetchImpl(`${baseUrl}/patients/${encodeURIComponent(id)}`);
-      if (res.status === 404) {
+
+    async login(email, password) {
+      const res = await fetchImpl(`${baseUrl}/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      if (!res.ok) {
+        // The BFF's error codes are PHI-free by contract; credentials never enter messages.
+        const code: LoginErrorCode = await res
+          .json()
+          .then((body: unknown) => {
+            const error = (body as { error?: string } | null)?.error ?? "";
+            return (LOGIN_CODES as readonly string[]).includes(error)
+              ? (error as LoginErrorCode)
+              : "unknown";
+          })
+          .catch(() => "unknown" as const);
+        throw new LoginError(code, res.status);
+      }
+      return (await res.json()) as { sessionToken: string };
+    },
+
+    async logout(auth) {
+      const res = await fetchImpl(`${baseUrl}/auth/logout`, {
+        method: "POST",
+        headers: authHeaders(auth),
+      });
+      if (!res.ok) {
+        throw new Error(`api-client: POST /auth/logout failed with status ${res.status}`);
+      }
+    },
+
+    async getMyProfile(auth) {
+      const res = await fetchImpl(`${baseUrl}/patients/me`, { headers: authHeaders(auth) });
+      // 401 = no/expired session; 404 = valid session but no resolvable patient profile
+      // (the BFF's benign "no profile for this principal" response, e.g. a deleted
+      // Patient or a future staff session). Both read as "no profile" to callers —
+      // review finding 2026-07-02: throwing on the 404 crashed every portal RSC render.
+      if (res.status === 401 || res.status === 404) {
         return undefined;
       }
       if (!res.ok) {
         // Generic by design: response bodies never make it into thrown messages.
-        throw new Error(`api-client: GET /patients failed with status ${res.status}`);
+        throw new Error(`api-client: GET /patients/me failed with status ${res.status}`);
       }
       return (await res.json()) as PatientProfile;
     },

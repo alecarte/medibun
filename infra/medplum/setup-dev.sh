@@ -12,12 +12,25 @@
 # Usage: cd infra/medplum && ./setup-dev.sh
 set -euo pipefail
 
+# Preflight: fail fast with the fix instead of "command not found" mid-provisioning.
+for cmd in jq curl openssl docker; do
+  command -v "$cmd" >/dev/null 2>&1 || {
+    echo "✗ missing dependency: $cmd"
+    [ "$cmd" = "jq" ] && echo "  fix: sudo apt-get install -y jq (or brew install jq)"
+    exit 1
+  }
+done
+
 BASE="${MEDPLUM_BASE_URL:-http://localhost:8103}"
 BASE="${BASE%/}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_NAME="Medibun Dev"
 
-# Helper: PKCE login for a given body, echo "<loginId> <code>" (code may be empty).
+# Helper: PKCE login for a given body; echoes "<verifier> <loginId> <code> <superAdminMembershipId>"
+# with '-' for absent fields (empty fields would shift under word-splitting `read`).
+# The 4th field exists because a bare login for a user with MULTIPLE memberships returns
+# `{login, memberships}` and NO code (v5.1.9 sendLoginResult) — the caller must then select
+# a profile via /auth/profile to get the code.
 pkce_login() {
   local body_extra="$1"
   local v ch
@@ -26,7 +39,10 @@ pkce_login() {
   local resp
   resp="$(curl -s -X POST "$BASE/auth/login" -H 'Content-Type: application/json' \
     -d "{\"email\":\"admin@example.com\",\"password\":\"medplum_admin\",\"codeChallenge\":\"$ch\",\"codeChallengeMethod\":\"S256\"$body_extra}")"
-  echo "$v $(printf '%s' "$resp" | jq -r '.login // empty') $(printf '%s' "$resp" | jq -r '.code // empty')"
+  echo "$v" \
+    "$(printf '%s' "$resp" | jq -r '.login // "-"')" \
+    "$(printf '%s' "$resp" | jq -r '.code // "-"')" \
+    "$(printf '%s' "$resp" | jq -r '[.memberships[]? | select(.project.display == "Super Admin")][0].id // "-"')"
 }
 
 # Exchange a PKCE code for an access token.
@@ -48,7 +64,17 @@ exchange() { # <verifier> <code>
 # project and $deploy fails "Not found". /auth/newproject makes the creator the project OWNER, so
 # admin endpoints (and the owner access token below) operate inside the new project correctly.
 echo "→ logging in as seeded admin to look for an existing '$PROJECT_NAME'…"
-read -r SAV _SAL SAC < <(pkce_login "")
+read -r SAV SALOGIN SAC SAMID < <(pkce_login "")
+if [ "$SAC" = "-" ] && [ "$SALOGIN" != "-" ]; then
+  # Re-run path: this script's project is OWNED by the same seeded admin, so after the first
+  # run the admin has 2+ memberships and the bare login returns no code — select the
+  # Super Admin profile explicitly (the canonical /auth/profile step the app UI performs).
+  [ "$SAMID" != "-" ] || { echo "✗ admin has multiple memberships but none in 'Super Admin'"; exit 1; }
+  echo "  (admin has multiple memberships — selecting the Super Admin profile)"
+  SAC="$(curl -s -X POST "$BASE/auth/profile" -H 'Content-Type: application/json' \
+    -d "{\"login\":\"$SALOGIN\",\"profile\":\"$SAMID\"}" | jq -r '.code // "-"')"
+fi
+[ "$SAC" != "-" ] && [ -n "$SAC" ] || { echo "✗ admin login failed"; exit 1; }
 SADMIN="$(exchange "$SAV" "$SAC")"
 [ -n "$SADMIN" ] && [ "$SADMIN" != "null" ] || { echo "✗ admin login failed"; exit 1; }
 
@@ -58,16 +84,18 @@ PID="$(curl -s "$BASE/fhir/R4/Project?name=Medibun%20Dev" \
 if [ -z "$PID" ]; then
   echo "→ creating regular project '$PROJECT_NAME' via /auth/newproject…"
   # A login scoped to projectId:"new" is membership-less, which /auth/newproject requires.
-  read -r NV NLOGIN _NC < <(pkce_login ",\"projectId\":\"new\",\"scope\":\"openid\"")
-  [ -n "$NLOGIN" ] && [ "$NLOGIN" != "null" ] || { echo "✗ could not get a membership-less login"; exit 1; }
+  read -r NV NLOGIN _NC _NM < <(pkce_login ",\"projectId\":\"new\",\"scope\":\"openid\"")
+  [ "$NLOGIN" != "-" ] || { echo "✗ could not get a membership-less login"; exit 1; }
   NPCODE="$(curl -s -X POST "$BASE/auth/newproject" -H 'Content-Type: application/json' \
     -d "{\"login\":\"$NLOGIN\",\"projectName\":\"$PROJECT_NAME\"}" | jq -r '.code')"
   [ -n "$NPCODE" ] && [ "$NPCODE" != "null" ] || { echo "✗ newproject failed"; exit 1; }
   ACCESS="$(exchange "$NV" "$NPCODE")"
 else
   # Existing project: log back in scoped to it to get an owner token for admin calls.
+  # (Scoped logins have a single candidate membership, so a code always comes back.)
   echo "→ reusing project; logging in scoped to it…"
-  read -r RV _RL RC < <(pkce_login ",\"projectId\":\"$PID\",\"scope\":\"openid\"")
+  read -r RV _RL RC _RM < <(pkce_login ",\"projectId\":\"$PID\",\"scope\":\"openid\"")
+  [ "$RC" != "-" ] || { echo "✗ project-scoped login returned no code"; exit 1; }
   ACCESS="$(exchange "$RV" "$RC")"
 fi
 [ -n "$ACCESS" ] && [ "$ACCESS" != "null" ] || { echo "✗ owner login for project failed"; exit 1; }
@@ -115,13 +143,53 @@ BID="$(printf '%s' "$BOT" | jq -r '.id')"
 [ -n "$BID" ] && [ "$BID" != "null" ] || { echo "✗ bot create failed: $BOT"; exit 1; }
 echo "  ✓ bot: $BID"
 
+# Upsert the patient-compartment AccessPolicy template (docs/DATA_MODEL.md matrix; approved
+# via docs/V0_PROPOSAL.md A3). Policies land via reviewed code only — never the admin UI.
+echo "→ upserting AccessPolicy 'patient-self-v1'…"
+POLICY_SRC="$(cat "$HERE/policies/patient-self.json")"
+EXISTING_POLICY_ID="$(curl -s "$BASE/fhir/R4/AccessPolicy?name=patient-self-v1" \
+  -H "Authorization: Bearer $ACCESS" | jq -r '.entry[0].resource.id // empty')"
+if [ -n "$EXISTING_POLICY_ID" ]; then
+  POLICY_ID="$EXISTING_POLICY_ID"
+  curl -s -X PUT "$BASE/fhir/R4/AccessPolicy/$POLICY_ID" -H "Authorization: Bearer $ACCESS" \
+    -H 'Content-Type: application/fhir+json' \
+    -d "$(printf '%s' "$POLICY_SRC" | jq --arg id "$POLICY_ID" '. + {id: $id}')" \
+    | jq -e '.id' >/dev/null || { echo "✗ policy update failed"; exit 1; }
+else
+  POLICY_ID="$(curl -s -X POST "$BASE/fhir/R4/AccessPolicy" -H "Authorization: Bearer $ACCESS" \
+    -H 'Content-Type: application/fhir+json' -d "$POLICY_SRC" | jq -r '.id')"
+  [ -n "$POLICY_ID" ] && [ "$POLICY_ID" != "null" ] || { echo "✗ policy create failed"; exit 1; }
+fi
+echo "  ✓ policy: $POLICY_ID"
+
+# Trust-but-verify part 1 (security-reviewer 2026-07-02): read the policy BACK and assert
+# all 8 resource entries survived with non-empty criteria — the server silently drops
+# malformed criteria, which would fail open. Fail here, not in prod.
+POLICY_BACK="$(curl -s "$BASE/fhir/R4/AccessPolicy/$POLICY_ID" -H "Authorization: Bearer $ACCESS")"
+ENTRY_COUNT="$(printf '%s' "$POLICY_BACK" | jq '[.resource[]? | select((.criteria // "") != "")] | length')"
+WANT_COUNT="$(printf '%s' "$POLICY_SRC" | jq '[.resource[]?] | length')"
+[ "$ENTRY_COUNT" = "$WANT_COUNT" ] \
+  && echo "  ✓ policy read-back: $ENTRY_COUNT/$WANT_COUNT resource entries, all with criteria" \
+  || { echo "  ✗ policy read-back has $ENTRY_COUNT criteria-bearing entries (want $WANT_COUNT) — criteria dropped?"; exit 1; }
+
 # Invite a SYNTHETIC patient user so the brokered-login flow is exercisable out of the box.
-# Synthetic, non-PHI; LOCAL DEV ONLY. Ignored if the email already exists (idempotent re-runs).
-echo "→ inviting synthetic patient 'synthia.login@example.test'…"
-curl -s -X POST "$BASE/admin/projects/$PID/invite" -H "Authorization: Bearer $ACCESS" \
+# Synthetic, non-PHI; LOCAL DEV ONLY. Idempotent: re-invites upsert the ProjectMembership,
+# which also (re)binds the access policy on existing dev setups.
+echo "→ inviting synthetic patient 'synthia.login@example.test' (policy-bound)…"
+INVITE_RES="$(curl -s -X POST "$BASE/admin/projects/$PID/invite" -H "Authorization: Bearer $ACCESS" \
   -H 'Content-Type: application/json' \
-  -d '{"resourceType":"Patient","firstName":"Synthia","lastName":"Loginsmith","email":"synthia.login@example.test","password":"synth-pw-12345","sendEmail":false}' \
-  >/dev/null && echo "  ✓ synthetic patient ready (synthia.login@example.test / synth-pw-12345)"
+  -d "$(jq -n --arg pid "$POLICY_ID" '{resourceType:"Patient",firstName:"Synthia",lastName:"Loginsmith",email:"synthia.login@example.test",password:"synth-pw-12345",sendEmail:false,membership:{accessPolicy:{reference:("AccessPolicy/"+$pid)}}}')")"
+MEMBERSHIP_ID="$(printf '%s' "$INVITE_RES" | jq -r '.id // empty')"
+[ -n "$MEMBERSHIP_ID" ] || { echo "✗ invite failed: $INVITE_RES"; exit 1; }
+echo "  ✓ synthetic patient ready (synthia.login@example.test / synth-pw-12345)"
+
+# Trust-but-verify part 2: THIS user's membership (not just any membership) must reference
+# the policy — a policy-less membership has full project access.
+MEMBERSHIP_POLICY="$(curl -s "$BASE/fhir/R4/ProjectMembership/$MEMBERSHIP_ID" \
+  -H "Authorization: Bearer $ACCESS" | jq -r '.accessPolicy.reference // empty')"
+[ "$MEMBERSHIP_POLICY" = "AccessPolicy/$POLICY_ID" ] \
+  && echo "  ✓ membership $MEMBERSHIP_ID bound to $MEMBERSHIP_POLICY" \
+  || { echo "  ✗ membership $MEMBERSHIP_ID is NOT policy-bound (got: '$MEMBERSHIP_POLICY')"; exit 1; }
 
 cat > "$HERE/.env" <<EOF
 MEDPLUM_BASE_URL=$BASE/
@@ -134,6 +202,7 @@ MEDPLUM_PROJECT_ID=$PID
 EXPERIENCE_DATABASE_URL=postgres://medibun:medibun@localhost:5433/medibun_experience
 SESSION_ENCRYPTION_KEY=$(openssl rand -base64 32)
 API_COOKIE_INSECURE_DEV=1
+API_ALLOWED_ORIGINS=http://localhost:3100,http://localhost:3200,http://127.0.0.1:3100,http://127.0.0.1:3200
 EOF
 echo "✓ wrote $HERE/.env (gitignored). Client: $CID  Bot: $BID  Project: $PID"
 

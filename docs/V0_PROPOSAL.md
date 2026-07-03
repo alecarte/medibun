@@ -1,0 +1,318 @@
+# v0 Proposal — the Aureva launch cut
+
+**Status: APPROVED (Alec, 2026-07-02, with amendments recorded in the review log) — in
+execution. §9 tracks slice status; auth/AccessPolicy PRs still merge only with Alec's sign-off.**
+
+Author: Fable session, 2026-07-02. Inputs: whole-repo exploration (docs, all four apps, packages,
+infra, CI), an adversarial skeptic pass on this cut (findings folded in below, several verified
+against the Medplum **v5.1.9 source tag**, not docs), and a 4-concept / 3-judge design panel for
+the design language. Step zero is done: PR #9 (auth sessions) is merged to `main` (`e46f825`,
+merged by Alec 2026-07-02), CI green.
+
+This document is the living record of v0: as slices land, their status is updated here so any
+fresh session can resume from the repo alone.
+
+---
+
+## 1. The one thing v0 must prove
+
+**Medical software doesn't have to feel like medical software.** One spine journey, taken to
+production polish on synthetic data:
+
+> A patient books an injectable visit online in a beautiful, fast portal → front desk checks her
+> in with one tap → the clinician charts the treatment by speaking/typing shorthand, which AI
+> drafts onto an interactive face-map for human confirmation → structured FHIR is written,
+> audited, with AI-assistance provenance → the patient sees her treatment history on her own
+> face-map and gets grounded answers from a concierge that cites her record.
+
+This cut showcases both halves of the thesis: the "Starbucks" consumer feel (booking, history,
+concierge) and the "unburdened" clinical side (ambient capture that feels like magic, not forms).
+AI is the headline in both directions — capture in, concierge out.
+
+**Focus confirmed (Alec, 2026-07-02): v0 is aesthetics-first.** The "spine journey" above is
+simply the single end-to-end user journey we polish — and it is entirely the Aureva
+MedSpa/aesthetics use case (injectable booking, face-map capture, treatment history). Handal
+(cosmetic/plastic surgery) is the later tenant on the same core, a theme + config per ADR-0003;
+nothing in v0 builds for other verticals.
+
+**A stated bet:** with Stripe deferred (§5), v0 demos **zero** commerce/membership/loyalty
+mechanics. v0 proves the thesis on beauty, speed, and AI alone; the commerce loop is the first
+post-v0 work. And v0's patient surface is web — it proves "beautiful, fast, AI-native," not yet
+the app-in-your-pocket loop (mobile rationale in §2).
+
+## 2. Surfaces: built to polish vs. stubbed
+
+| Surface                      | v0 treatment                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/portal` (patient web)  | **Polish.** Login, booking, treatment-history face-map timeline, concierge chat.                                                                                                                                                                                                                                                                                                                                                        |
+| `apps/staff`                 | **Polish, two screens.** Today/check-in view (front desk) and encounter capture with the interactive face-map + ambient AI (clinician). Staff login.                                                                                                                                                                                                                                                                                    |
+| `apps/api` (BFF)             | **Grows the spine.** Booking, capture, history, and AI endpoints; experience-DB service catalog; the AI choke-point module.                                                                                                                                                                                                                                                                                                             |
+| `apps/patient-mobile` (Expo) | **Stubbed** (stays scaffold). Deferred, not dropped: one polished patient surface beats two half-done; App Store review + the still-missing Apple Developer account make mobile unshippable in v0 regardless. Honest caveat: tokens/restyle theming carry over, but Expo auth (secure-store sessions), navigation, and the jest-expo rig are real work deferred with it. The Apple Developer paperwork clock still starts **now** (§7). |
+
+Signup is also trimmed: the spine starts at "books," with the demo patient pre-provisioned by
+seed. Patient self-signup (CAPTCHA, rate limits, email verification) is deferred post-v0 — and
+with it, **phone OTP**: AUTH.md decided "phone OTP when online booking launches," so deferring it
+for the synthetic-only v0 is a re-deferral of an accepted decision that needs Alec's explicit OK
+(§5, ask A1). QR check-in, geofencing, loyalty: Phase 2, out.
+
+## 3. AI features (the headline) — what's real vs. synthetic-demo
+
+All three v0 AI features make **real LLM calls** (latest Claude models via the Anthropic SDK)
+behind one BAA-gated choke-point module — on **synthetic data only** until the Anthropic BAA is
+signed. Nothing in the demo path is smoke-and-mirrors; if a feature can't be grounded, it doesn't
+demo.
+
+1. **Ambient clinical capture** (clinician-facing — the flagship). Shorthand or dictation → Claude
+   parses to a structured draft (products, doses in units, SNOMED sites, lots, face-map
+   coordinates) rendered on the interactive face-map → the clinician reviews, adjusts, and
+   **confirms before anything is written**. Writes are `MedicationAdministration` per
+   product-per-site with the `injection-point` extension per the accepted data model, plus
+   `AuditEvent` and a `Provenance` resource marking AI assistance on every confirmed write.
+   Regulatory lane: scribing/documentation with mandatory human confirmation — not a
+   recommendation engine. The draft always shows its source text (its basis) for independent
+   review.
+2. **Patient concierge** (portal chat). **Administrative/informational scope only**: booking help
+   ("book my usual"→ proposes a slot, human confirms), service-menu questions, and
+   treatment-history recall grounded in the patient's own record with citations that link to the
+   history UI. Skeptic-verified regulatory correction: the FDA non-device CDS criteria apply only
+   to **HCP-facing** software, so the concierge cannot ride that lane — it stays administrative.
+   Concretely: **aftercare content shown to patients is practice-authored (canned), surfaced by
+   the concierge — never LLM-generated care advice.** This line is drawn in ADR-0004.
+3. **Staff assistant** (agentic chat in the staff app — Alec's 2026-07-02 amendment, expanding
+   the original visit-summary copilot). A command-K palette + chat panel: contextual AI search
+   that resolves patients, appointments, and schedules, answers questions about a patient
+   grounded in their record (citations open the real chart), answers general clinical questions
+   with its basis shown (HCP-facing — this one **can** ride the FDA non-device CDS lane, unlike
+   the patient concierge), and **takes scheduling actions**: find openings, book, reschedule,
+   cancel, block time. Implementation: a server-side Claude tool-use loop inside the BFF's AI
+   module whose tools are internal BFF functions executed **under the staff member's own
+   session** — the assistant can never see or do more than the logged-in user (AccessPolicy
+   enforcement and audit attribution are inherited by construction, not re-implemented). Every
+   mutation is draft-only: the model returns an action card, the human confirms, the confirmed
+   action executes through the normal endpoints with `AuditEvent` + AI-assist `Provenance`. The
+   visit-summary draft becomes one capability of this assistant rather than a separate feature.
+
+Deferred AI (Phase 2, the growth engine on Bots/Subscriptions where it belongs): no-show risk,
+smart scheduling, proactive rebooking nudges. **On pulling the growth engine into v0 (Alec's
+open challenge): recommend no.** The engine's compounding value is real, but its levers are
+commerce (memberships/packages — deferred with Stripe), outbound messaging (SMS/push — vendor +
+BAA paperwork), and event volume; a synthetic single-patient demo of it would be exactly the
+smoke-and-mirrors this proposal bans. v0 already demos the engine's _taste_ honestly — the
+concierge's grounded "when should I come back?" rebooking proposal — and S6's AI boundary plus
+the Bots/Subscriptions rails are the engine's foundation. First post-v0 work alongside Stripe.
+
+**The AI boundary is part of the work:** one module (`packages/ai` or `apps/api/src/ai`) is the
+only place the Anthropic SDK is imported — provider/model swappable, PHI gate shut by
+construction (synthetic-only until BAA, then approval-gated exactly like Medplum), prompts and
+completions under the same no-PHI-in-logs discipline. ADR-0004 (provider, model tier, boundary
+module, prompt-logging + provider data-retention rules, the patient-facing content line) is
+written and approved **before** the first LLM call, and adding the SDK is treated as the
+dependency-approval gate it is (§5, ask A5).
+
+## 4. Slice sequence — vertically-sliced, independently-shippable PRs
+
+Every slice: TDD, small diff, security-reviewer where PHI/auth/AccessPolicy is touched,
+runs end-to-end on synthetic seed data before merge. **The seed script and the one-command demo
+grow with every slice from S3 onward** — the demo never regresses to magic incantations. CI stays
+green on `main`.
+
+| #    | Slice                               | Contents                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Verify step                                                                                                                                                                                                                                                                |
+| ---- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| S1   | Design-system foundation            | Token expansion (type scale, elevation, motion, semantic layer), `brand.aureva.json`, portal + staff app shells in the new design language; raise dev Medplum `defaultLoginRateLimit` in docker-compose (demo logs in 3 principals fast).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Shells render both brands via `[data-brand]`; contrast checks pass; typecheck/lint/test green.                                                                                                                                                                             |
+| S2   | Portal patient auth                 | **Patient AccessPolicy template lands here** (not later — real sessions must never run in a policy-less project; includes rebinding the seeded patient membership). Login/logout UI, session handling, `/patients/me` profile page. **Removes `API_DEV_UNAUTHENTICATED` + `/dev/patient`** (the decided replace-not-extend item).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Live login → profile → logout on local stack; security-reviewer PASS; Alec merges (auth).                                                                                                                                                                                  |
+| S3   | Booking groundwork (FHIR + seed)    | **Data-model amendment (approval-gated, §5 A2):** `HealthcareService` per bookable service carrying Medplum `SchedulingParameters`, reconciled with the experience-DB catalog row; booking uses **`$find` + `$book` only** — skeptic verified against the v5.1.9 source that `$hold/$confirm/$cancel` don't exist at our pin (DATA_MODEL.md gets a review-log correction; no checkout step needs a hold with Stripe deferred; `$find` is instance-level per Schedule, so the BFF fans out). Seed grows: org-aureva, Location, Practitioners, Schedules (timezone ext + SchedulingParameters), services. Experience-DB `services` migration (approval-gated schema change). Per-service **categorical calendar-color tokens** (competitive-scan delta, approved 2026-07-02).                                                                                                                                                                                                                                                                                                                                                                                | Seeded services/slots queryable via BFF `$find` fan-out; migration reviewed; demo command documented.                                                                                                                                                                      |
+| S4   | Booking backend + portal booking UI | BFF booking endpoints + api-client methods; portal flow: discover services → pick practitioner/time → book, optimistic UI.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Live: book a slot end-to-end as the seeded patient; double-booking rejected (Medplum owns it).                                                                                                                                                                             |
+| S5   | Staff foundation                    | Staff seed path (Practitioner, PractitionerRole, org membership — seed identities constrained so nobody holds two memberships, avoiding the multi-membership 501). **Front-desk + clinician org-parameterized AccessPolicy templates + `$set-accounts` grant (approval-gated, §5 A3)**. Staff login. **MFA decision (§5 A4) is made before this slice starts.** Today view = a **day calendar with one column per practitioner**, all appointments visible at once (Alec, 2026-07-02), with check-in from the calendar and the **full FHIR appointment-status workflow** (scheduled/arrived/roomed/completed/no-show) shown as status chips (scan delta, approved 2026-07-02). **Privacy glance mode**: a one-tap/keyboard toggle that instantly masks patient names + details on screen (initials only) for walk-behind moments, **auto-engaging after idle** (maps to the HIPAA addressable auto-logoff safeguard) — incidental-disclosure mitigation as a first-class affordance. **Check-in Bot creates the Encounter** (front desk has no Encounter write per the accepted policy table; clinical event logic belongs in Bots — boundary discipline). | Front desk logs in, sees today's bookings on the practitioner-column calendar, checks patient in → Bot-created Encounter visible; **calendar reflects another session's changes live (no manual refresh)**; privacy mask verified (manual + idle); security-reviewer PASS. |
+| S5.5 | Drag-to-reschedule                  | Drag an appointment to a new time/practitioner column on the calendar; executes immediately with a ~10s undo (DESIGN.md undo-over-confirm); double-booking still enforced by Medplum. Approved as its own slice 2026-07-02.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Live: drag Mia's appointment to a new slot → undo restores the original; conflicting drop rejected cleanly.                                                                                                                                                                |
+| S6   | AI ADR + boundary module            | ADR-0004 approved (§5 A5), then the choke-point module with the BAA gate shut, provider swappable, prompt-logging rules enforced in code. No feature yet — the gate itself.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Unit tests: PHI gate blocks by default; no SDK import outside the module (lint rule).                                                                                                                                                                                      |
+| S7   | Face-map manual capture             | Interactive face-map canvas in staff encounter view; manual capture → `MedicationAdministration` per site + `injection-point` extension (its final shape is set here, with the canvas — closing the data-model deferred item), `Medication` per product+lot, `Procedure` as `partOf` anchor, AuditEvent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Live: capture 3 sites manually → resources verifiable in Medplum; security-reviewer PASS.                                                                                                                                                                                  |
+| S8   | Ambient AI capture                  | Shorthand/dictation → Claude draft on the face-map → human confirm → same write path as S7 plus `Provenance` marking AI assistance.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Live: dictate the demo script's treatment → confirm → FHIR + AuditEvent + Provenance verified.                                                                                                                                                                             |
+| S9   | Treatment history timeline          | Portal read path: history endpoints + the patient-facing face-map timeline (built **before** the concierge so the concierge grounds over real endpoints and its citations link to real UI).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Live: today's captured visit renders on the patient's timeline.                                                                                                                                                                                                            |
+| S10  | Patient concierge                   | Grounded chat over history endpoints + service menu; booking proposals human-confirmed; practice-authored aftercare content; citations open the history UI.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Live: "what did I get last visit?" answers with citation; "book my usual" proposes a real slot.                                                                                                                                                                            |
+| S11  | Staff assistant (agentic chat)      | Command-K palette + chat in the staff app; BFF tool-use loop bound to the staff session (read tools: patient/appointment/schedule/history search; action tools: draft-only booking/reschedule/cancel/block cards → human confirm → normal endpoints + AuditEvent + AI Provenance); grounded patient Q&A with citations; visit-summary capability.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Live: "what did Mia have last visit?" cites the chart; "find an opening tomorrow" → confirmed card books a real slot.                                                                                                                                                      |
+| S12  | Demo polish                         | Perf budget pass (below); `design:accessibility-review` on all built surfaces; demo rehearsal against the §8 script.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | The §8 demo runs start-to-finish from the one-command setup, budgets met.                                                                                                                                                                                                  |
+
+Reordering within this sequence to unblock a dependency is mine; changing the cut's scope or
+dropping a slice is a re-cut → Alec.
+
+**Performance budgets (held, not vibes):** p75 LCP < 2.0s and INP < 200ms on every spine screen;
+sub-100ms perceived interactions via optimistic UI. Accessibility: WCAG 2.1 AA on everything
+built.
+
+## 5. Approval-gated items this cut touches — batched as one ask
+
+**Decision status (2026-07-02):** A2–A7 are **approved in principle** by Alec — each still lands
+via reviewed PR + security-reviewer, and Alec personally merges anything touching
+auth/AccessPolicy. A4 is **decided: option (b)**. A1 is amended per Alec's feedback (aesthetics
+focus confirmed §1, staff assistant added §3/S11, growth engine kept out §3) — awaiting final
+confirmation of the amended cut.
+
+- **A1 — The cut itself** (this doc), including: mobile stubbed, Stripe memberships deferred out
+  of v0 (an explicit Phase-1 re-scope), signup trimmed, and the **re-deferral of the accepted
+  "phone OTP when booking launches" decision** (AUTH.md) to post-v0/real-data — needs your OK in
+  writing, recorded in AUTH.md's review log.
+- **A2 — Data-model amendments** (DATA_MODEL.md review log): (i) `HealthcareService` +
+  `SchedulingParameters` per bookable service (required by `$find` at v5.1.9 — verified in
+  source); (ii) booking ops corrected to `$find`/`$book` only at our pin ($hold/$confirm/$cancel
+  don't exist in 5.1.9; adopting them later is a Medplum-pin question, and the 5.1.x lockstep is
+  locked stack); (iii) `injection-point` extension final shape lands with S7's canvas.
+- **A3 — AccessPolicy creation** (the big one; all least-privilege/default-deny, landed via
+  reviewed code + security-reviewer): patient-compartment template (S2), front-desk + clinician
+  org-parameterized templates (S5), binding policies to the seeded memberships **and the BFF
+  ClientApplication** (today a policy-less membership = full project access — the current dev
+  setup contradicts AUTH.md's own least-privilege table), the `$set-accounts` grant for org
+  tagging, and (optional, makes logout revocation authoritative — the standing deferred item) the
+  scoped `Login` grant for the service client.
+- **A4 — Staff MFA for v0 — DECIDED (Alec, 2026-07-02): option (b).** Non-MFA **synthetic dev
+  staff only** for v0; brokered TOTP enroll/verify (Medplum 5.1.9 has the `/auth/mfa` router) is
+  an early post-v0 slice and is **required before any real staff account exists**. Recorded in
+  AUTH.md's review log. (Rejected for v0: (a) building brokered TOTP now — AUTH.md flags the
+  brokered UX as a real budget item.)
+- **A5 — Anthropic SDK + ADR-0004** (new dependency; PHI-touching once the BAA gate opens).
+- **A6 — Experience-DB schema migrations**: `services` catalog (S3); any later additions flagged
+  per-slice.
+- **A7 — Check-in Bot** (new Bot + Subscription; stated here so Encounter creation ownership is
+  explicit — the Bot creates it, not the BFF, per the policy table + boundary discipline).
+
+## 6. Design language direction — sleek neutral, olive accent (rev. 2)
+
+**Rev. 2 (Alec, 2026-07-02, approved direction):** neutral and modern — the look and feel of
+leading technology products (Anthropic's product surfaces are the named reference), with lighter
+tones and **bright olive green accents** as the initial accent voice, and a **persistent sidebar
+for navigation** on both web apps. This supersedes rev. 1's warm "Thermae" palette (a 4-concept /
+3-judge panel pick — its token architecture, contrast discipline, status-chip rules, and motion
+system all carry forward unchanged; only the aesthetic register moved from warm-spa to
+sleek-neutral).
+
+### Branding is deferred by construction
+
+Alec's real branding is being developed externally, so all brand values are **placeholders**
+behind the token layer: brand identity lives in one file per practice (`brand.<name>.json` —
+accent, washes, radius, type voice, logo) applied at runtime (web `[data-brand]`, mobile restyle
+`ThemeProvider`). Ingesting the real branding is a one-file token swap + font files in a small
+PR; CI contrast tests re-verify WCAG AA against whatever values arrive.
+
+### How we stay distinctive (binding tenets)
+
+`docs/DESIGN.md` (added 2026-07-02 after calibration with Alec) is the binding companion to this
+section: quiet-tool register on both apps, Anthropic/Claude × Notion as the bar, craft budget
+concentrated on the signature domain objects (refined-schematic face-map, treatment-card dose
+anatomy, day sheet, timeline), a written product voice, undo-over-confirm for reversible staff
+actions, and screenshot review of every slice.
+
+### The system (rev. 2 values)
+
+- **Neutrals, light:** canvas `#FAFAF7`, cards pure white, wells `#F2F2EC`, hairlines `#E6E5DD`,
+  interactive borders `#85857A` (3.7:1), secondary text `#5D5D52` (6.6:1), ink `#1B1B16`.
+- **Aureva placeholder accent — olive:** primary `#4F6B0F` (5.8:1 as text on canvas; white on it
+  6.1:1 — AA with no exceptions), bright olive washes `#ECF2D7` / glow `#F4F8E6` carry the
+  "bright" register on active nav, chips, and highlights. Handal placeholder: deep palm
+  `#2E4B3F` on cooler near-white — same system, one token file apart.
+- **Type: single sans.** Instrument Sans for display and text (display = semibold + tight
+  tracking, the tech-brand register); Fragment Mono for data/codes when tables land. The
+  `brand-font-display-settings` token remains the per-brand type-voice seam.
+- **Shape/depth:** compact radii (controls 8px Aureva / 6px Handal, cards 12px), barely-there
+  ink-tinted shadows, hairlines over borders.
+- **Sidebar navigation** on portal and staff: wordmark, nav (active item = olive wash + olive
+  text; unbuilt destinations honestly chipped "Soon"), sign-in anchored at the bottom.
+- **Unchanged from rev. 1:** DTCG token layers (base → semantic → brand), WCAG 2.1 AA enforced
+  by CI contrast tests on both brands, status chips always color+dot+label, motion tokens
+  (120/200/320/600ms, one easing family), optimistic-UI discipline, staff compact register.
+
+## 7. External asks of Alec — start the clocks now
+
+| Ask                                                                                                     | Why                                                                                 | Lead time         |
+| ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ----------------- |
+| Medplum Cloud account + **BAA**; onboarding: raise project `loginRateLimit`, enable audit-log streaming | Prod clinical core; the login cap is launch-critical (shared Vercel egress IPs)     | Weeks — start now |
+| **Vercel Pro + HIPAA add-on**                                                                           | Hosting portal/staff/BFF with real PHI                                              | Days–weeks        |
+| **GitHub Pro** → branch protection on `main`                                                            | CI green on main stays enforced, not honor-system                                   | Minutes           |
+| **Renovate app install**                                                                                | `renovate.json` already in repo, app never installed                                | Minutes           |
+| **Apple Developer enrollment**                                                                          | Mobile is stubbed but the clock is slow; App Store review is a Phase-floor gate     | Days–weeks        |
+| **Anthropic BAA**                                                                                       | Blocks only real-PHI AI; synthetic-data AI proceeds now. Start the paperwork anyway | Weeks             |
+| (Standing, Phase 3 clocks, not v0-blocking): DoseSpot enrollment, 4D export sample                      | Roadmap Phase 0 outstanding items                                                   | Long              |
+
+## 8. The v0 acceptance demo script — the standard for "done"
+
+**Personas (all synthetic):** Mia Tan (patient) · Noor (front desk) · Dr. Reyes (injector).
+
+**Setup (one documented command sequence, maintained from S3 onward — see README.md):**
+`cd infra/medplum && docker compose up -d && ./setup-dev.sh && cd ../.. && pnpm demo:seed && pnpm dev:apps`
+
+1. **Mia books.** Mia logs into the portal (no MFA — patient). She asks the concierge "what's the
+   difference between Botox and Dysport here?" — it answers from the Aureva service menu, cited.
+   She books a Botox appointment for today with Dr. Reyes: discover → pick time → confirm, every
+   interaction under 100ms perceived, the whole flow feeling like a premium consumer product.
+2. **Noor checks her in.** Noor logs into the staff app, sees today's schedule with Mia's booking,
+   taps check-in. (Behind the scenes: Appointment → arrived; the check-in Bot creates the
+   Encounter.)
+3. **Dr. Reyes charts by voice.** She opens the encounter, dictates: "Botox 50 units total,
+   glabella five sites 4-4-4-4-4, lot C3421A, exp next March." The AI drafts five injection
+   points onto the face-map with doses, sites, and lot. She drags one point to adjust, confirms.
+   FHIR writes land: 5 × `MedicationAdministration` (+ injection-point extensions) → `Procedure`
+   → Encounter, `Medication` with lot C3421A, `AuditEvent` + `Provenance` (AI-assisted) on every
+   write — verifiable in Medplum.
+4. **The staff assistant works.** Dr. Reyes hits ⌘K: "what did Mia have last time she was in?"
+   — the assistant answers from the chart, citations open the actual records. "Draft the visit
+   summary" — she accepts it, editing one line (human always in the loop). Then Noor: "find Mia
+   an opening with Dr. Reyes in two weeks" — the assistant proposes a slot as an action card;
+   Noor confirms and the booking lands through the normal endpoints, audited, with AI-assist
+   Provenance.
+5. **Mia sees it.** Back in the portal, Mia's treatment history shows today's visit on her own
+   face-map. She asks the concierge "what should I avoid tonight?" — it surfaces Aureva's
+   practice-authored post-Botox aftercare (canned content, cited), and "when should I come back?"
+   proposes a rebooking slot she can confirm.
+
+**Pass bar:** the walkthrough runs end-to-end from the one-command setup with zero manual fixups;
+budgets met (p75 LCP < 2.0s, INP < 200ms, spine screens); a11y review passed; every AI answer in
+the demo is grounded and cited (no smoke-and-mirrors); all writes audited and attributable;
+**Alec's demo sign-off is the explicit bar for the subjective half.**
+
+## 9. Slice status log
+
+| Slice  | Status            | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------ | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| S1     | Built — in review | Sleek-neutral tokens rev. 2 (olive accent, 2 brands, WCAG contract tests), sidebar shells for portal + staff, runtime brand swap live-verified (screenshots), dev login-rate-limit raised.                                                                                                                                                                                                                                                                                                                                                                                       |
+| S2     | Built — in review | Patient login/logout/account live in the portal (same-origin proxy); patient-self-v1 AccessPolicy template + fail-loud binding in setup-dev.sh; dev route + /dev/patient deleted. **Live-verified 2026-07-03** on Alec's WSL2 stack: policy read-back 8/8, membership-pinned binding confirmed (AUTH.md log).                                                                                                                                                                                                                                                                    |
+| S3     | Built — in review | HealthcareService+SchedulingParameters builders + $find/$book wrappers (wire shapes source-verified, unit-tested); services catalog migration + repo; categorical color tokens (AA-tested); DATA_MODEL.md A2 amendment recorded. **Live-verified 2026-07-03** on Alec's WSL2 stack: `pnpm demo:seed` end-to-end incl. the $find self-check, after two live-only fixes — Schedule.serviceType needs Medplum's service-type-reference extension ($find scheduleable gate), and the seed now uses true `upsertResource` so re-runs reconcile builder fixes onto existing resources. |
+| S4–S12 | Not started       | S4 (booking backend + portal booking UI) is next.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+
+## 10. Review log
+
+- 2026-07-02 — Proposed (this document). Skeptic findings folded in: $hold/$confirm/$cancel
+  absent at Medplum v5.1.9 (verified in source) → $find/$book only; HealthcareService +
+  SchedulingParameters dependency surfaced; AccessPolicy moved up to S2/S5; concierge scoped
+  administrative (patient-facing ≠ HCP-CDS lane); phone-OTP re-deferral made explicit; history
+  timeline sequenced before concierge; seed/demo grown per-slice; Encounter creation assigned to
+  a check-in Bot; dev login-rate-limit raise added to S1.
+- 2026-07-02 — Amended per Alec's review: aesthetics-first focus confirmed (§1); staff copilot
+  expanded into the **agentic staff assistant** (contextual search + grounded patient Q&A +
+  confirm-gated scheduling actions) as its own slice S11, demo polish split to S12; growth
+  engine challenge answered — stays Phase 2 (recommendation accepted rationale in §3). Decisions
+  recorded: **A4 = option (b)** (non-MFA synthetic dev staff for v0; TOTP before any real staff
+  account); **A2–A7 approved in principle** (each still lands via reviewed PR + security-reviewer;
+  Alec merges auth/AccessPolicy PRs). A1 (the amended cut) awaiting final confirmation.
+- 2026-07-02 — **Branding deferred** (Alec): real branding is in progress externally; all Thermae
+  brand values are placeholders behind the token layer (§6 "Branding is deferred by
+  construction"). Every color/visual is tokenized and swappable in one place; per-practice
+  configurability confirmed as the existing `[data-brand]`/`ThemeProvider` design. With this
+  change folded in, **A1 (the cut) is approved — execution begins at S1.**
+- 2026-07-02 — **Design direction rev. 2** (Alec, at S1 review): restyle to a sleek, neutral,
+  modern tech-product register (Anthropic-referenced) with lighter tones, bright olive green
+  accents (initial), and sidebar navigation on both web apps. Token architecture, AA contrast
+  tests, and brand-swap mechanics unchanged; §6 rewritten; S1 revised in place and re-verified
+  (screenshots + live Handal swap).
+- 2026-07-02 — **Design tenets added** (`docs/DESIGN.md`, calibrated with Alec): quiet tool both
+  sides; Anthropic/Claude + Notion as the bar; face-map = refined custom schematic;
+  undo-over-confirm for reversible staff actions (clinical writes keep explicit confirm); voice
+  guide; anti-slop mechanics (real synthetic content, screenshot review, copy review).
+- 2026-07-02 — **S5 schedule spec** (Alec): staff schedule is a practitioner-column day calendar
+  (all appointments at once) with check-in inline, plus a one-tap privacy mode masking patient
+  names/details for walk-behind moments. Competitive scan of leading EMR + aesthetics software
+  commissioned; gap analysis to be recorded in `docs/COMPETITIVE_NOTES.md`.
+- 2026-07-02 — **Competitive-scan deltas approved** (Alec, "go with whatever's recommended"):
+  S5 gains the full FHIR status workflow + chips, idle auto-engage for the privacy mask, and a
+  live-update (no-refresh) verify step; S3 gains per-service categorical color tokens; new slice
+  **S5.5 drag-to-reschedule with undo**; ROADMAP.md gains before/after photos (first post-spine
+  candidate) and GFE/medical-director oversight (required before real operations). Alec's
+  standing note: structure for iteration — no spaghetti/tech debt; slices stay independently
+  replaceable.

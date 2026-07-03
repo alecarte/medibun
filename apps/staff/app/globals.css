@@ -1,4 +1,55 @@
 /* Runtime-theming contract: the brand CSS variables (overridable per [data-brand]). */
 @import "@medibun/design-tokens/theme.css";
+@import "@medibun/design-tokens/brand.aureva.css";
+@import "@medibun/design-tokens/brand.handal.css";
 /* Tailwind v4 + the generated @theme that maps color utilities to those variables. */
 @import "@medibun/design-tokens/tailwind.css";
+
+@layer base {
+  body {
+    background-color: var(--color-surface-canvas);
+    color: var(--color-text-primary);
+    font-family: var(--font-sans);
+    /* Staff surfaces run the compact register. */
+    line-height: var(--font-leading-compact);
+  }
+}
+
+@layer components {
+  /* Display type: same family as text (sleek single-sans system), distinguished by
+     weight + tight tracking. --brand-font-display-settings stays the brand-voice seam. */
+  .type-display {
+    font-family: var(--font-display);
+    font-variation-settings: var(--brand-font-display-settings);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: var(--font-tracking-display);
+    line-height: var(--font-leading-display);
+  }
+  .type-kicker {
+    font-size: var(--font-size-kicker);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: var(--font-tracking-kicker);
+    text-transform: uppercase;
+    color: var(--color-text-secondary);
+  }
+}
+
+@layer components {
+  /* Status chips: wash + text + solid dot + label — glanceable, never color-alone. */
+  .status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    border-radius: var(--radius-full);
+    padding: var(--space-1) var(--space-3);
+    font-size: var(--font-size-kicker);
+    font-weight: var(--font-weight-medium);
+  }
+  .status-chip::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-full);
+    background-color: currentColor;
+  }
+}

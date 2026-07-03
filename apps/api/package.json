@@ -7,18 +7,21 @@
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsx watch --env-file-if-exists=../../infra/medplum/.env src/index.ts",
     "db:generate": "drizzle-kit generate",
+    "e2e:harness": "tsx scripts/e2e-harness.ts",
+    "demo:seed": "tsx --env-file-if-exists=../../infra/medplum/.env scripts/seed-demo.ts",
     "db:migrate": "tsx --env-file-if-exists=../../infra/medplum/.env src/db/migrate.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run"
   },
   "dependencies": {
+    "@hono/node-server": "catalog:",
     "@medibun/api-client": "workspace:*",
+    "@medibun/design-tokens": "workspace:*",
     "@medibun/fhir-types": "workspace:*",
     "@medibun/medplum-backend": "workspace:*",
-    "hono": "catalog:",
-    "@hono/node-server": "catalog:",
     "drizzle-orm": "catalog:",
+    "hono": "catalog:",
     "pg": "catalog:"
   },
   "devDependencies": {

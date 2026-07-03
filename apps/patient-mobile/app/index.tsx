@@ -6,7 +6,7 @@ import { Box, Text } from "../theme/restyle";
 export default function Home() {
   return (
     <Box flex={1} backgroundColor="background" padding="xl" gap="m">
-      <Text variant="heading">Aureva</Text>
+      <Text variant="heading">{tokens["brand-name"]}</Text>
       <Text variant="body">
         Scaffold online. Brand primary token: {tokens["brand-color-primary"]}
       </Text>

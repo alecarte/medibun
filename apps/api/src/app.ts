@@ -1,3 +1,4 @@
+import { SESSION_COOKIE_NAME } from "@medibun/api-client";
 import type { PatientProfile } from "@medibun/api-client";
 import {
   InvalidCredentialsError,
@@ -26,6 +27,8 @@ export type LogEntry = {
   readonly path: string;
   readonly status: number;
   readonly durationMs: number;
+  /** Middleware-set diagnostic (e.g. the rejected Origin header). Never PHI. */
+  readonly detail?: string;
 };
 
 export type AuthDeps = {
@@ -61,24 +64,9 @@ export type AppDeps = {
   readonly checkMedplum: () => Promise<boolean>;
   /** Auth routes mount only when provided (docs/AUTH.md). */
   readonly auth?: AuthDeps;
-  /**
-   * Patient profile reader. OPTIONAL ON PURPOSE: until real auth lands
-   * (approval-gated, see the sprint's auth design doc), /patients/:id is only
-   * mounted when the entrypoint wires this — which it does exclusively behind
-   * the API_DEV_UNAUTHENTICATED=1 flag (refused in production) with synthetic
-   * local data.
-   *
-   * BEFORE REAL PHI (security-reviewer, 2026-06-10): (a) AuditEvent emission — DONE
-   * for dev (logAuditEvents enabled + end-user attribution verified 2026-06-12);
-   * Medplum Cloud log streaming remains on the BAA/onboarding checklist. (b) End-
-   * principal attribution — DONE for the session routes (/patients/me reads run as
-   * the end user); this dev route still reads as the service account and is removed
-   * with the portal login PR (docs/AUTH.md).
-   */
-  readonly getPatientProfile?: (id: string) => Promise<PatientProfile | undefined>;
 };
 
-type Env = { Variables: { requestId: string } };
+type Env = { Variables: { requestId: string; logDetail?: string } };
 
 /**
  * The BFF's public error-code contract. Every client-facing error body is exactly
@@ -116,6 +104,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
       path: c.req.path,
       status: c.res.status,
       durationMs: performance.now() - start,
+      detail: c.get("logDetail"),
     });
   });
 
@@ -127,7 +116,6 @@ export function createApp(deps: AppDeps): Hono<Env> {
 
   const auth = deps.auth;
   if (auth) {
-    const SESSION_COOKIE = "medibun_session";
     const cookieOpts = {
       httpOnly: true,
       sameSite: "Lax",
@@ -142,6 +130,9 @@ export function createApp(deps: AppDeps): Hono<Env> {
     app.use("/auth/*", async (c, next) => {
       const origin = c.req.header("Origin");
       if (c.req.method !== "GET" && origin && !allowedOrigins.has(origin)) {
+        // Origins are browser/config values, never PHI — log the mismatch so a
+        // misconfigured allowlist is diagnosable from the server output alone.
+        c.set("logDetail", `origin rejected: ${origin}`);
         return fail(c, "forbidden_origin", 403);
       }
       await next();
@@ -161,7 +152,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
           return token;
         }
       }
-      return getCookie(c, SESSION_COOKIE) || undefined;
+      return getCookie(c, SESSION_COOKIE_NAME) || undefined;
     };
 
     // NOTE (PHI safety): the request logger never logs bodies, so credentials in the
@@ -180,7 +171,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
       }
       try {
         const { sessionId } = await auth.login(body.email, body.password);
-        setCookie(c, SESSION_COOKIE, sessionId, cookieOpts);
+        setCookie(c, SESSION_COOKIE_NAME, sessionId, cookieOpts);
         return c.json({ sessionToken: sessionId });
       } catch (err) {
         if (err instanceof InvalidCredentialsError) {
@@ -205,7 +196,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
         // upstream (best-effort) revocation must not strand the user in a logged-in UI.
         await auth.logout(sessionId).catch(() => undefined);
       }
-      deleteCookie(c, SESSION_COOKIE, { path: "/" });
+      deleteCookie(c, SESSION_COOKIE_NAME, { path: "/" });
       return c.json({ ok: true });
     });
 
@@ -233,16 +224,9 @@ export function createApp(deps: AppDeps): Hono<Env> {
     });
   }
 
-  const getPatientProfile = deps.getPatientProfile;
-  if (getPatientProfile) {
-    app.get("/patients/:id", async (c) => {
-      const profile = await getPatientProfile(c.req.param("id"));
-      if (!profile) {
-        return fail(c, "not_found", 404);
-      }
-      return c.json(profile);
-    });
-  }
+  // NOTE: the former dev-only unauthenticated GET /patients/:id was removed with the
+  // portal-login slice (docs/AUTH.md: replace, not extend). Patient reads happen only
+  // through the session-scoped /patients/me above, as the end user's own principal.
 
   app.get("/health/medplum", async (c) => {
     try {
