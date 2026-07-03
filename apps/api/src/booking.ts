@@ -156,6 +156,9 @@ export function createBookingService(deps: {
       const service = await activeService(request.serviceCode);
       const startMs = Date.parse(request.start);
       // One minute of grace so "book the slot starting now" never loses to clock skew.
+      // Whether $book rejects an off-hours/off-grid start is Medplum's contract at
+      // v5.1.9 — on the live-verify checklist (V0_PROPOSAL §9); we don't re-derive
+      // availability here on an unverified assumption about $find grid alignment.
       if (Number.isNaN(startMs) || startMs < now().getTime() - 60_000) {
         throw new InvalidSlotError();
       }

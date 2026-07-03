@@ -161,7 +161,10 @@ export function createApp(deps: AppDeps): Hono<Env> {
       await next();
     };
     app.use("/auth/*", originGuard);
+    // Both forms so future subroutes (e.g. POST /appointments/:id/cancel) are
+    // covered fail-closed the day they mount, not remembered case-by-case.
     app.use("/appointments", originGuard);
+    app.use("/appointments/*", originGuard);
 
     const clientIp = (c: { req: { header: (name: string) => string | undefined } }) =>
       auth.clientIp ? auth.clientIp(c.req) : "direct";
