@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { tokens } from "@medibun/design-tokens";
 import { Sidebar } from "./sidebar";
 import { vi } from "vitest";
@@ -16,7 +16,19 @@ describe("portal sidebar", () => {
     render(<Sidebar />);
     const nav = screen.getByRole("navigation", { name: "Primary" });
     expect(nav).toBeInTheDocument();
-    expect(screen.getByText("Home")).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "Home" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("collapses to icons and back, keeping accessible names", () => {
+    render(<Sidebar />);
+    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    // Labels leave the DOM; the links stay reachable by their aria-labels.
+    expect(screen.queryByText("Home")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Home" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Book a visit" })).toBeInTheDocument();
+    expect(screen.queryByText("Soon")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
+    expect(screen.getByText("Home")).toBeInTheDocument();
   });
 
   it("marks not-yet-built destinations as Soon (honest shell)", () => {
@@ -37,6 +49,12 @@ describe("portal sidebar — signed in", () => {
     expect(screen.getByRole("link", { name: "Your account" })).toBeInTheDocument();
     expect(screen.getByText("Synthia Loginsmith")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Sign in" })).not.toBeInTheDocument();
+  });
+
+  it("shows the wallet balance in the profile card (truthful zero until commerce)", () => {
+    render(<Sidebar profileName="Synthia Loginsmith" />);
+    const profile = screen.getByText("Synthia Loginsmith").closest("a");
+    expect(profile).toHaveTextContent("$0");
   });
 
   it("shows the sign-in CTA when signed out", () => {

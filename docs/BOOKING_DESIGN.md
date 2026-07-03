@@ -112,11 +112,14 @@ photography-ready layouts, confident type scale, one signature motion moment (bo
 confirmed), interactions <400ms perceived. Voice guide unchanged (calm, concrete, zero
 exclamation marks). Accent stays action/active/focus-only.
 
-**Shell (rev. 3 direction, Alec 2026-07-03):** the sidebar profile block gains a **generated
-avatar** (deterministic gradient/initials from name/id — shadcn/Claude register; never a
-photo, so nothing PHI-shaped enters the shell), with designed-but-dormant slots for **wallet
-balance** (credits) and **membership/loyalty status** that activate when the commerce phase
-delivers real data. **AI seams get placement now, features later:** the concierge ("Ask") as
+**Shell (rev. 3 direction, Alec 2026-07-03):** the sidebar is **collapsible to an icon rail**
+(hand-drawn line icons, width animated on motion tokens, preference persisted as a non-PHI
+localStorage flag). The profile block carries the **generated avatar** (deterministic
+initials-on-categorical-wash from the display name — never a photo, so nothing PHI-shaped
+enters the shell) and the **wallet balance** — rendered now at its truthful value ($0 from
+one named constant; a wallet doesn't exist until commerce, and we never fake a demo number),
+wired to the experience DB when the commerce phase lands. **Membership/loyalty status** joins
+the card when that same phase delivers real data. **AI seams get placement now, features later:** the concierge ("Ask") as
 sidebar entry + a contextual "Not sure? Ask us" affordance beside the service menu (populated
 in S10), and a recommendation rail slot on the menu/home ("for you" — new services, "time for
 your next visit") populated by the Phase-2 growth engine. AI surfaces inherit the grounded/
