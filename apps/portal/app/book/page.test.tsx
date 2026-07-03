@@ -45,12 +45,14 @@ describe("booking discovery page", () => {
     await expect(BookPage()).rejects.toThrow("REDIRECT:/login");
   });
 
-  it("renders each bookable service as a link into its availability", async () => {
+  it("renders each bookable service as a link with price and duration up front", async () => {
     getServices.mockResolvedValue(services);
     render(await BookPage());
     const botox = screen.getByRole("link", { name: /Botox/ });
     expect(botox).toHaveAttribute("href", "/book/svc-botox");
-    expect(botox).toHaveTextContent("30 min · $395");
+    // Price and duration visible before any commitment (DESIGN.md tenet 6).
+    expect(botox).toHaveTextContent("$395");
+    expect(botox).toHaveTextContent("30 min");
     expect(screen.getByRole("link", { name: /Lip filler/ })).toHaveAttribute(
       "href",
       "/book/svc-lip-filler",

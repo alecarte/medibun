@@ -47,7 +47,7 @@ export default async function ServiceBookingPage({
                 aria-hidden
                 className={`h-2 w-2 rounded-full ${CATEGORY_DOT[service.categoryColor]}`}
               />
-              <p className="type-kicker">Book a visit</p>
+              <p className="type-kicker">Book a visit · Step 2 of 3</p>
             </div>
             <h1 className="type-display mt-3 text-3xl text-text-primary">{service.name}</h1>
             <p className="mt-3 max-w-xl text-sm text-text-secondary">
@@ -67,7 +67,12 @@ export default async function ServiceBookingPage({
           We couldn't load open times. Refresh to try again.
         </p>
       ) : (
-        <BookingFlow service={service} availability={availability} />
+        // The window start is pinned server-side so the 7-day strip hydrates identically.
+        <BookingFlow
+          service={service}
+          availability={availability}
+          windowStartIso={new Date().toISOString()}
+        />
       )}
     </div>
   );

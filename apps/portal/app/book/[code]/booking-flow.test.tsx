@@ -18,7 +18,10 @@ const service: ServiceSummary = {
   categoryColor: "sage",
 };
 
-// 14:00Z on 2026-07-09 = 10:00 AM America/New_York (the practice timezone).
+// Window starts Monday July 6 (America/New_York). Slots sit on Thursday July 9:
+// 14:00Z = 10:00 AM ET (morning) and 18:00Z = 2:00 PM ET (afternoon).
+const WINDOW_START = "2026-07-06T12:00:00.000Z";
+
 const availability: ServiceAvailability = {
   serviceCode: "svc-botox",
   practitioners: [
@@ -29,7 +32,7 @@ const availability: ServiceAvailability = {
       timezone: "America/New_York",
       slots: [
         { start: "2026-07-09T14:00:00.000Z", end: "2026-07-09T14:30:00.000Z" },
-        { start: "2026-07-09T15:00:00.000Z", end: "2026-07-09T15:30:00.000Z" },
+        { start: "2026-07-09T18:00:00.000Z", end: "2026-07-09T18:30:00.000Z" },
       ],
     },
     {
@@ -55,31 +58,56 @@ const booked = {
   end: "2026-07-09T14:30:00.000Z",
 };
 
+function renderFlow(overrides: { availability?: ServiceAvailability } = {}) {
+  return render(
+    <BookingFlow
+      service={service}
+      availability={overrides.availability ?? availability}
+      windowStartIso={WINDOW_START}
+    />,
+  );
+}
+
 describe("booking flow", () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
     refresh.mockClear();
   });
 
-  it("groups the selected practitioner's slots by practice-timezone day", () => {
-    render(<BookingFlow service={service} availability={availability} />);
-    expect(screen.getByRole("heading", { name: "Thursday, July 9" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "10:00 AM" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "11:00 AM" })).toBeInTheDocument();
+  it("renders the 7-day strip with empty days disabled and the first open day active", () => {
+    renderFlow();
+    const days = screen.getAllByRole("button", { name: /July/ });
+    expect(days).toHaveLength(7);
+    expect(screen.getByRole("button", { name: "Monday, July 6" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Thursday, July 9" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 
-  it("switches practitioners and clears the selection", () => {
-    render(<BookingFlow service={service} availability={availability} />);
+  it("groups the active day's times by day part in the practice timezone", () => {
+    renderFlow();
+    expect(screen.getByText("Morning")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "10:00 AM" })).toBeInTheDocument();
+    expect(screen.getByText("Afternoon")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "2:00 PM" })).toBeInTheDocument();
+  });
+
+  it("shows the first-available practitioner and switches via the affordance", () => {
+    renderFlow();
+    expect(screen.getByText(/first available/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "10:00 AM" }));
     expect(screen.getByRole("button", { name: "Book 10:00 AM" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Switch practitioner" }));
     fireEvent.click(screen.getByRole("button", { name: "Maya Chen" }));
+    // Selection cleared; Maya's Friday day is now open in the strip too.
     expect(screen.queryByRole("button", { name: "Book 10:00 AM" })).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Friday, July 10" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Friday, July 10" })).toBeEnabled();
   });
 
-  it("books optimistically: the confirmation states the outcome before the server settles", async () => {
+  it("books optimistically and lands the pre-arrival ritual", async () => {
     const calls = stubFetch(201, booked);
-    render(<BookingFlow service={service} availability={availability} />);
+    renderFlow();
     fireEvent.click(screen.getByRole("button", { name: "10:00 AM" }));
     fireEvent.click(screen.getByRole("button", { name: "Book 10:00 AM" }));
     // Optimistic: the outcome renders immediately, with an honest settling line.
@@ -89,6 +117,11 @@ describe("booking flow", () => {
     expect(
       screen.getByRole("heading", { name: /Booked for Thursday, July 9 at 10:00 AM/ }),
     ).toBeInTheDocument();
+    // The confirmation is the start of the next visit, not a receipt.
+    expect(screen.getByText(/Skip alcohol and blood thinners/)).toBeInTheDocument();
+    const calendar = screen.getByRole("link", { name: "Add to calendar" });
+    expect(calendar.getAttribute("href")).toMatch(/^data:text\/calendar/);
+    expect(decodeURIComponent(calendar.getAttribute("href")!)).toContain("UID:appt-1@medibun");
     expect(calls[0]!.url).toBe("/api/appointments");
     expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({
       serviceCode: "svc-botox",
@@ -102,33 +135,37 @@ describe("booking flow", () => {
 
   it("rolls back calmly when the slot was just taken, and hides the dead time", async () => {
     stubFetch(409, { error: "slot_taken", requestId: "r" });
-    render(<BookingFlow service={service} availability={availability} />);
+    renderFlow();
     fireEvent.click(screen.getByRole("button", { name: "10:00 AM" }));
     fireEvent.click(screen.getByRole("button", { name: "Book 10:00 AM" }));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("That time was just booked.");
     // Back on the picker, with the taken slot hidden and others still offered.
     expect(screen.queryByRole("button", { name: "10:00 AM" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "11:00 AM" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "2:00 PM" })).toBeInTheDocument();
     // Fresh availability is pulled so the picker converges on server truth.
     expect(refresh).toHaveBeenCalled();
   });
 
   it("hides a taken time only for its own practitioner (same-instant slots elsewhere stay)", async () => {
     stubFetch(409, { error: "slot_taken", requestId: "r" });
-    render(<BookingFlow service={service} availability={availability} />);
+    renderFlow();
     fireEvent.click(screen.getByRole("button", { name: "10:00 AM" }));
     fireEvent.click(screen.getByRole("button", { name: "Book 10:00 AM" }));
     await screen.findByRole("alert");
     // Riley's Thursday 10:00 AM is dead — Maya's Thursday 10:00 AM must survive.
+    fireEvent.click(screen.getByRole("button", { name: "Switch practitioner" }));
     fireEvent.click(screen.getByRole("button", { name: "Maya Chen" }));
-    expect(screen.getByRole("heading", { name: "Thursday, July 9" })).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "10:00 AM" })).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Thursday, July 9" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "10:00 AM" })).toBeInTheDocument();
   });
 
   it("treats a no-longer-offered time as gone: specific copy, hidden slot, refresh", async () => {
     stubFetch(400, { error: "invalid_request", requestId: "r" });
-    render(<BookingFlow service={service} availability={availability} />);
+    renderFlow();
     fireEvent.click(screen.getByRole("button", { name: "10:00 AM" }));
     fireEvent.click(screen.getByRole("button", { name: "Book 10:00 AM" }));
     const alert = await screen.findByRole("alert");
@@ -139,7 +176,7 @@ describe("booking flow", () => {
 
   it("keeps the failure copy calm and unblaming on unknown errors", async () => {
     stubFetch(500, { error: "internal_error", requestId: "r" });
-    render(<BookingFlow service={service} availability={availability} />);
+    renderFlow();
     fireEvent.click(screen.getByRole("button", { name: "10:00 AM" }));
     fireEvent.click(screen.getByRole("button", { name: "Book 10:00 AM" }));
     const alert = await screen.findByRole("alert");
@@ -149,23 +186,20 @@ describe("booking flow", () => {
   });
 
   it("designs the empty state: no open times, stated plainly", () => {
-    render(
-      <BookingFlow
-        service={service}
-        availability={{
-          serviceCode: "svc-botox",
-          practitioners: [
-            {
-              scheduleId: "sched-riley",
-              practitionerId: "prac-riley",
-              practitionerName: "Riley Reyes",
-              timezone: "America/New_York",
-              slots: [],
-            },
-          ],
-        }}
-      />,
-    );
+    renderFlow({
+      availability: {
+        serviceCode: "svc-botox",
+        practitioners: [
+          {
+            scheduleId: "sched-riley",
+            practitionerId: "prac-riley",
+            practitionerName: "Riley Reyes",
+            timezone: "America/New_York",
+            slots: [],
+          },
+        ],
+      },
+    });
     expect(screen.getByText(/No open times in the next week/)).toBeInTheDocument();
   });
 });

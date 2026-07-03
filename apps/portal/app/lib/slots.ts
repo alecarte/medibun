@@ -58,6 +58,75 @@ export function groupSlotsByDay(slots: readonly AvailabilitySlot[], timezone: st
   return [...groups.entries()].map(([dayKey, group]) => ({ dayKey, ...group }));
 }
 
+export type DayStripDay = {
+  /** Stable per-day key in the practice timezone (YYYY-MM-DD). */
+  readonly dayKey: string;
+  /** "Mon" */
+  readonly weekday: string;
+  /** "6" */
+  readonly dayOfMonth: string;
+  /** e.g. "Monday, July 6" (accessible label). */
+  readonly dayLabel: string;
+  readonly slots: readonly AvailabilitySlot[];
+};
+
+const weekdayFormat = memoized(
+  (timeZone) => new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" }),
+);
+const dayOfMonthFormat = memoized(
+  (timeZone) => new Intl.DateTimeFormat("en-US", { timeZone, day: "numeric" }),
+);
+
+/**
+ * The booking window as a 7-day strip (BOOKING_DESIGN.md §3): every practice-timezone
+ * day from `from` through the next 6 days, each carrying its slots — including empty
+ * days, so fullness is honestly visible per day.
+ */
+export function dayStrip(
+  slots: readonly AvailabilitySlot[],
+  timezone: string,
+  from: Date,
+): DayStripDay[] {
+  const groups = new Map(groupSlotsByDay(slots, timezone).map((g) => [g.dayKey, g.slots]));
+  const keyOf = dayKeyFormat(timezone);
+  const days: DayStripDay[] = [];
+  for (let i = 0; i < 7; i++) {
+    const date = new Date(from.getTime() + i * 24 * 60 * 60 * 1000);
+    const dayKey = keyOf.format(date);
+    days.push({
+      dayKey,
+      weekday: weekdayFormat(timezone).format(date),
+      dayOfMonth: dayOfMonthFormat(timezone).format(date),
+      dayLabel: dayLabelFormat(timezone).format(date),
+      slots: groups.get(dayKey) ?? [],
+    });
+  }
+  return days;
+}
+
+export type DayPart = {
+  /** "Morning" | "Afternoon" | "Evening" */
+  readonly label: string;
+  readonly slots: readonly AvailabilitySlot[];
+};
+
+const hourFormat = memoized(
+  (timeZone) => new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", hourCycle: "h23" }),
+);
+
+/** One day's slots bucketed Morning (<12) / Afternoon (12–16) / Evening (17+), practice tz. */
+export function dayParts(slots: readonly AvailabilitySlot[], timezone: string): DayPart[] {
+  const buckets: Record<string, AvailabilitySlot[]> = { Morning: [], Afternoon: [], Evening: [] };
+  for (const slot of [...slots].sort((a, b) => a.start.localeCompare(b.start))) {
+    const hour = Number(hourFormat(timezone).format(new Date(slot.start)));
+    const label = hour < 12 ? "Morning" : hour < 17 ? "Afternoon" : "Evening";
+    buckets[label]!.push(slot);
+  }
+  return Object.entries(buckets)
+    .filter(([, s]) => s.length > 0)
+    .map(([label, s]) => ({ label, slots: s }));
+}
+
 /** "2:30 PM" in the practice timezone. */
 export function formatSlotTime(iso: string, timezone: string): string {
   return plainSpaces(timeFormat(timezone).format(new Date(iso)));

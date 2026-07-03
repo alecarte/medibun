@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  dayParts,
+  dayStrip,
   formatDuration,
   formatPrice,
   formatSlotFull,
@@ -40,6 +42,50 @@ describe("groupSlotsByDay", () => {
       TZ,
     );
     expect(groups.map((g) => g.dayLabel)).toEqual(["Thursday, July 9", "Friday, July 10"]);
+  });
+});
+
+describe("dayStrip", () => {
+  it("renders all 7 window days including empty ones (honest fullness)", () => {
+    // from = Monday July 6 in America/New_York (10:00 local).
+    const from = new Date("2026-07-06T14:00:00.000Z");
+    const strip = dayStrip(
+      [
+        { start: "2026-07-06T15:00:00.000Z", end: "2026-07-06T15:30:00.000Z" },
+        { start: "2026-07-09T14:00:00.000Z", end: "2026-07-09T14:30:00.000Z" },
+      ],
+      TZ,
+      from,
+    );
+    expect(strip).toHaveLength(7);
+    expect(strip.map((d) => d.weekday)).toEqual(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]);
+    expect(strip[0]).toMatchObject({ dayOfMonth: "6", dayLabel: "Monday, July 6" });
+    expect(strip[0]!.slots).toHaveLength(1);
+    expect(strip[1]!.slots).toHaveLength(0);
+    expect(strip[3]!.slots).toHaveLength(1);
+  });
+});
+
+describe("dayParts", () => {
+  it("buckets a day's slots into morning, afternoon, and evening (practice tz)", () => {
+    const parts = dayParts(
+      [
+        { start: "2026-07-06T22:00:00.000Z", end: "2026-07-06T22:30:00.000Z" }, // 6:00 PM ET
+        { start: "2026-07-06T13:30:00.000Z", end: "2026-07-06T14:00:00.000Z" }, // 9:30 AM ET
+        { start: "2026-07-06T18:00:00.000Z", end: "2026-07-06T18:30:00.000Z" }, // 2:00 PM ET
+      ],
+      TZ,
+    );
+    expect(parts.map((p) => p.label)).toEqual(["Morning", "Afternoon", "Evening"]);
+    expect(parts[0]!.slots[0]!.start).toBe("2026-07-06T13:30:00.000Z");
+  });
+
+  it("omits empty buckets", () => {
+    const parts = dayParts(
+      [{ start: "2026-07-06T13:30:00.000Z", end: "2026-07-06T14:00:00.000Z" }],
+      TZ,
+    );
+    expect(parts.map((p) => p.label)).toEqual(["Morning"]);
   });
 });
 

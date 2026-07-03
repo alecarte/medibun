@@ -31,6 +31,10 @@ const service = {
   categoryColor: "sage" as const,
 };
 
+// The page pins the strip window to the real "now", so the fixture slot must be
+// relative — a fixed date would rot out of the 7-day window and flake.
+const slotStart = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
+slotStart.setUTCMinutes(0, 0, 0);
 const availability = {
   serviceCode: "svc-botox",
   practitioners: [
@@ -39,7 +43,12 @@ const availability = {
       practitionerId: "prac-riley",
       practitionerName: "Riley Reyes",
       timezone: "America/New_York",
-      slots: [{ start: "2026-07-09T14:00:00.000Z", end: "2026-07-09T14:30:00.000Z" }],
+      slots: [
+        {
+          start: slotStart.toISOString(),
+          end: new Date(slotStart.getTime() + 30 * 60 * 1000).toISOString(),
+        },
+      ],
     },
   ],
 };
@@ -71,7 +80,8 @@ describe("service booking page", () => {
     render(await ServiceBookingPage(props));
     expect(screen.getByRole("heading", { name: "Botox" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /All services/ })).toHaveAttribute("href", "/book");
-    expect(screen.getByRole("button", { name: "10:00 AM" })).toBeInTheDocument();
+    // The relative fixture slot renders as a time chip (label depends on the day).
+    expect(screen.getByRole("button", { name: /^\d{1,2}:\d{2} (AM|PM)$/ })).toBeInTheDocument();
   });
 
   it("designs the failure state when availability cannot load", async () => {

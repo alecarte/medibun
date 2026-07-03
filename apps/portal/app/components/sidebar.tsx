@@ -4,6 +4,8 @@ import { tokens } from "@medibun/design-tokens";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { Avatar } from "./avatar";
+
 const COMING_SOON = ["Your history", "Ask"] as const;
 
 const itemClass = (active: boolean) =>
@@ -54,11 +56,18 @@ export function Sidebar({ profileName }: { profileName?: string }) {
       </nav>
 
       {profileName ? (
+        // The shell identity block (V0_PROPOSAL §6 rev. 3): generated avatar now; wallet
+        // balance + membership/loyalty status render here once the commerce phase
+        // delivers real experience data — placement is reserved, nothing is faked.
         <Link
           href="/account"
-          className="rounded-control border border-border-hairline px-4 py-2 text-center text-sm text-text-secondary"
+          className="flex items-center gap-3 rounded-control border border-border-hairline px-3 py-2 text-left text-sm text-text-secondary"
         >
-          Signed in as <span className="font-medium text-text-primary">{profileName}</span>
+          <Avatar name={profileName} />
+          <span className="min-w-0">
+            <span className="block truncate font-medium text-text-primary">{profileName}</span>
+            <span className="block text-xs">Your account</span>
+          </span>
         </Link>
       ) : (
         <Link

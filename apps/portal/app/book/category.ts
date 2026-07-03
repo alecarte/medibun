@@ -13,3 +13,13 @@ export const CATEGORY_DOT: Record<ServiceColor, string> = {
   clay: "bg-category-clay-text",
   slate: "bg-category-slate-text",
 };
+
+/** Card media panel tint — the photography-ready area until real brand assets land. */
+export const CATEGORY_WASH: Record<ServiceColor, string> = {
+  sage: "bg-category-sage-wash",
+  teal: "bg-category-teal-wash",
+  indigo: "bg-category-indigo-wash",
+  plum: "bg-category-plum-wash",
+  clay: "bg-category-clay-wash",
+  slate: "bg-category-slate-wash",
+};
