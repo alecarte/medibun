@@ -155,7 +155,7 @@ describe("auth routes", () => {
   });
 
   it("rejects browser origins that are not allowlisted (CSRF defense)", async () => {
-    const { app } = makeApp({ auth: { allowedOrigins: ["https://portal.example.test"] } });
+    const { app, logs } = makeApp({ auth: { allowedOrigins: ["https://portal.example.test"] } });
     const evil = await app.request("/auth/login", {
       method: "POST",
       headers: {
@@ -165,6 +165,9 @@ describe("auth routes", () => {
       body: JSON.stringify({ email: "synth@example.test", password: "pw" }),
     });
     expect(evil.status).toBe(403);
+    // The rejected origin is logged (config/browser value, not PHI) so a
+    // misconfigured allowlist is diagnosable from server output alone.
+    expect(logs[0]?.detail).toBe("origin rejected: https://evil.example.test");
     const allowed = await app.request("/auth/login", {
       method: "POST",
       headers: {

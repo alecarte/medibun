@@ -202,7 +202,7 @@ MEDPLUM_PROJECT_ID=$PID
 EXPERIENCE_DATABASE_URL=postgres://medibun:medibun@localhost:5433/medibun_experience
 SESSION_ENCRYPTION_KEY=$(openssl rand -base64 32)
 API_COOKIE_INSECURE_DEV=1
-API_ALLOWED_ORIGINS=http://localhost:3100,http://localhost:3200
+API_ALLOWED_ORIGINS=http://localhost:3100,http://localhost:3200,http://127.0.0.1:3100,http://127.0.0.1:3200
 EOF
 echo "✓ wrote $HERE/.env (gitignored). Client: $CID  Bot: $BID  Project: $PID"
 

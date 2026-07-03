@@ -27,6 +27,8 @@ export type LogEntry = {
   readonly path: string;
   readonly status: number;
   readonly durationMs: number;
+  /** Middleware-set diagnostic (e.g. the rejected Origin header). Never PHI. */
+  readonly detail?: string;
 };
 
 export type AuthDeps = {
@@ -64,7 +66,7 @@ export type AppDeps = {
   readonly auth?: AuthDeps;
 };
 
-type Env = { Variables: { requestId: string } };
+type Env = { Variables: { requestId: string; logDetail?: string } };
 
 /**
  * The BFF's public error-code contract. Every client-facing error body is exactly
@@ -102,6 +104,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
       path: c.req.path,
       status: c.res.status,
       durationMs: performance.now() - start,
+      detail: c.get("logDetail"),
     });
   });
 
@@ -127,6 +130,9 @@ export function createApp(deps: AppDeps): Hono<Env> {
     app.use("/auth/*", async (c, next) => {
       const origin = c.req.header("Origin");
       if (c.req.method !== "GET" && origin && !allowedOrigins.has(origin)) {
+        // Origins are browser/config values, never PHI — log the mismatch so a
+        // misconfigured allowlist is diagnosable from the server output alone.
+        c.set("logDetail", `origin rejected: ${origin}`);
         return fail(c, "forbidden_origin", 403);
       }
       await next();

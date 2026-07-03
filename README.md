@@ -60,8 +60,11 @@ Testing is split by design: Vitest + RTL for web/packages, jest-expo for mobile 
   as its last step. Re-run it (idempotent).
 - **Stale workspace builds** — `dev:apps` and `demo:seed` build dependencies first via Turbo;
   if something still looks stale, `pnpm build`.
-- **Login 403 `forbidden_origin`** — your `.env` predates `API_ALLOWED_ORIGINS`; append
-  `API_ALLOWED_ORIGINS=http://localhost:3100,http://localhost:3200` to `infra/medplum/.env`
-  (or re-run `setup-dev.sh`).
+- **Login 403 `forbidden_origin`** — the BFF logs the exact rejected origin
+  (`"detail":"origin rejected: …"`) in the `@medibun/api:dev` output. The allowlist is an
+  EXACT string match against `API_ALLOWED_ORIGINS` in `infra/medplum/.env`; re-run
+  `setup-dev.sh` for current defaults (localhost + 127.0.0.1 on 3100/3200), make sure you
+  browse via one of those URLs, and restart `pnpm dev:apps` after any `.env` change (the
+  env file is read at process start only).
 - **Reset the local stack** — `cd infra/medplum && docker compose down -v` (destroys all local
   Medplum + experience data), then repeat setup.
