@@ -65,6 +65,15 @@ const PRACTITIONERS = [
 ] as const;
 
 async function main(): Promise<void> {
+  // Friendly preflight: the env comes from infra/medplum/.env, which setup-dev.sh writes
+  // as its LAST step — if it's missing, setup didn't complete.
+  if (!process.env.MEDPLUM_BASE_URL || !process.env.EXPERIENCE_DATABASE_URL) {
+    throw new Error(
+      "Medplum env not found. Run the local stack setup first:\n" +
+        "  cd infra/medplum && docker compose up -d && ./setup-dev.sh\n" +
+        "(setup-dev.sh writes infra/medplum/.env when it completes successfully)",
+    );
+  }
   const client = await authenticatedMedplumClient(readConfigFromEnv());
   const upsert = async <T extends Resource>(resource: T, key: string): Promise<T> =>
     client.createResourceIfNoneExist<T>(
