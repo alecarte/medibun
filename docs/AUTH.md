@@ -182,3 +182,10 @@ explicit human approval.
   against a real Medplum — policy read-back 8/8 resource entries, membership-pinned
   `patient-self-v1` binding confirmed by the fail-loud check. The policy path is now
   live-exercised end-to-end.
+- 2026-07-03 — Note for the deferred signup/phone-OTP decision (no change to accepted
+  decisions): the booking-conversion research (`BOOKING_DESIGN.md`) strengthens the case for
+  **guest-first booking with SMS-code identity** when signup lands — forced account creation
+  is the #2 booking-abandonment cause (Baymard), the premium field's best practice is
+  identity-after-slot-selection (Boulevard) or fully login-free SMS recognition (Mangomint),
+  and this dovetails with the already-decided "phone OTP when online booking launches."
+  Design the signup slice against BOOKING_DESIGN.md §4 when it's scheduled.

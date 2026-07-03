@@ -94,6 +94,35 @@ recurring set (per-vendor citations in the research transcript):
 - Confirmed by the sweep: **no vendor documents any screen-privacy/PHI-masking feature** —
   privacy glance mode stays a genuine differentiator.
 
+## 3.5 Patient-facing booking conversion (added 2026-07-03 — second research pass)
+
+Commissioned by Alec at S4 review with three binding tenets for patient surfaces:
+**frictionless · premium + responsive · conversion above all**. Method: three parallel
+research agents (named references Othership + Lore Bathing Club; premium-aesthetics field
+Ever/Body/Peachy/Glowbar/Heyday + platforms Boulevard/Mangomint/Zenoti; published conversion
+evidence — Baymard, NN/g, CXL, RCTs). Full synthesis + approved spec: `docs/BOOKING_DESIGN.md`.
+Headlines for this inventory:
+
+- **The modal premium booking shape is universal**: service-first → time-first (provider is a
+  secondary "switch"; "first available" default) → identity last → confirm; 4–5 screens,
+  prices visible from the first tap. Nobody premium is date-first or provider-first; nobody
+  premium gates availability behind login.
+- **Boulevard's conversion moat is slot presentation** ("Precision Scheduling": ML-ranked
+  slots that pack provider calendars) — slot ranking is a two-sided revenue surface and a
+  named post-v0 BFF/growth-engine opportunity for us. Their published data: online-first
+  bookers ~2× likelier to return; 67% of Gen Z has abandoned a business over clunky booking.
+- **Mangomint's differentiator is login-free booking** (SMS-code recognition, card-on-file
+  pre-fill) — the strongest new-patient friction lever; informs our post-v0 signup design
+  (AUTH.md review log notes it). Their injectables dataset: only ~22% of medspa bookings
+  happen online today; ~22% cancel (why card-on-file matters).
+- **Peachy's premium signature is flat pricing** (never per-unit at booking; clinical
+  complexity moved to the visit) — adopted in our spec.
+- **The named references (Othership, Lore) both run white-label booking shells** that break
+  brand at the money moment; their premium is naming, photography, copy, and
+  hospitality-coded policy. A brand-continuous custom flow is our structural advantage —
+  same lesson as the ModMed real-time complaint above: the incumbents' seams are our
+  differentiators.
+
 ## 4. Gap analysis → recommendations
 
 | Gap                                                            | Status in our plan                        | Recommendation                                                                                                                                                |

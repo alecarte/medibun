@@ -1,6 +1,9 @@
-# Booking design direction — research synthesis + proposed spec
+# Booking design direction — research synthesis + spec
 
-**Status: PROPOSED (2026-07-03) — awaiting Alec's sign-off on §3 before the S4 UI restyle.**
+**Status: APPROVED (Alec, 2026-07-03) — the §3 spec is the booking baseline, explicitly built
+for continued refinement: everything visual rides the token layer + swappable assets, and the
+§5 evidence gaps are ours to A/B once instrumentation lands. The lessons here inform all
+patient-surface design (see DESIGN.md calibration).**
 
 Commissioned by Alec 2026-07-03 at S4 review, with three binding tenets for all patient-surface
 design: **frictionless · premium + responsive feel · conversion above all** — every choice
@@ -109,6 +112,16 @@ photography-ready layouts, confident type scale, one signature motion moment (bo
 confirmed), interactions <400ms perceived. Voice guide unchanged (calm, concrete, zero
 exclamation marks). Accent stays action/active/focus-only.
 
+**Shell (rev. 3 direction, Alec 2026-07-03):** the sidebar profile block gains a **generated
+avatar** (deterministic gradient/initials from name/id — shadcn/Claude register; never a
+photo, so nothing PHI-shaped enters the shell), with designed-but-dormant slots for **wallet
+balance** (credits) and **membership/loyalty status** that activate when the commerce phase
+delivers real data. **AI seams get placement now, features later:** the concierge ("Ask") as
+sidebar entry + a contextual "Not sure? Ask us" affordance beside the service menu (populated
+in S10), and a recommendation rail slot on the menu/home ("for you" — new services, "time for
+your next visit") populated by the Phase-2 growth engine. AI surfaces inherit the grounded/
+cited/human-confirmed rules and ADR-0004 gates.
+
 **Explicitly banned (trust/premium):** countdown timers, presence counters, per-slot panic
 badges, fake anchoring, hidden prices, login walls before availability, app-install walls,
 off-brand booking surfaces.
@@ -136,3 +149,8 @@ borrowed patterns).
 - 2026-07-03 — Proposed, from the three-tenet directive (Alec) + three research passes.
   DESIGN.md amendment recorded alongside (patient-portal register moves from
   "quiet editorial" to "premium consumer"; staff app stays quiet-tool).
+- 2026-07-03 — **Approved (Alec)** against register mockups (menu + time picker): "a lot
+  closer to the vision and the eventual product," with the explicit expectation of room to
+  refine over time. Lessons propagated to DESIGN.md (patient-surface tenets),
+  COMPETITIVE_NOTES.md (booking-conversion research), ROADMAP.md (post-v0 conversion
+  levers), AUTH.md review log (guest/SMS-first identity note), and V0_PROPOSAL §6/§9.

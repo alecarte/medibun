@@ -40,6 +40,18 @@ avoid the generic "AI slop / vibe-code" register and sit alongside the best prod
 5. **Real content, always looked at.** Every surface is designed against realistic synthetic
    data (long names, 12-site treatments, edge cases). Empty, loading, and error states are
    designed, not defaulted. No slice ships without its screens being screenshot-reviewed.
+6. **Patient surfaces convert — honestly (added 2026-07-03; evidence in BOOKING_DESIGN.md).**
+   Price and duration are always visible before commitment (late-revealed costs are the #1
+   abandonment cause); choices are curated, never dumped (4–7 options per screen, 5–8 time
+   chips per day — a wall of options is friction wearing a completeness costume); smart
+   defaults do the remembering ("Book your usual", first-available provider, last choices
+   pre-filled — never a preselected upsell); identity and commitment come last, after the
+   thing is emotionally theirs; the confirmation screen is the start of the next visit
+   (add-to-calendar, prep content, arrival ritual), not a receipt. Scarcity only when
+   truthful and service-framed ("Saturdays usually fill by Wednesday"); countdowns, presence
+   counters, panic badges, and fake anchoring are banned — detected manipulation is fatal to
+   premium. Perceived response stays under ~400ms (prefetch, optimistic UI; skeletons only
+   for sub-second, layout-stable loads).
 
 ## Mechanics that enforce this
 

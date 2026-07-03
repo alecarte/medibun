@@ -36,6 +36,23 @@ Added 2026-07-02 (competitive scan, approved by Alec — see `COMPETITIVE_NOTES.
   amendment + approval gate when scheduled; **required before real (non-synthetic) operations**,
   wherever that lands relative to phases.
 
+Added 2026-07-03 (booking-conversion research, approved by Alec — see `BOOKING_DESIGN.md` §4
+for the full parked list with rationale). The post-v0 conversion levers, in rough order of
+leverage:
+
+- **Guest booking with SMS-code identity** (lands with the signup slice; folds into the
+  deferred phone-OTP decision — AUTH.md review log). Biggest single new-patient friction lever.
+- **Card-on-file hold at booking** with reassurance-worded policy (lands with Stripe; pairs
+  with no-show fees + deposits already in the Phase-2 backlog).
+- **Reminder cadence** (SMS/email, RCT-backed no-show reduction; comms vendor needs BAA) and
+  **confirmation-to-arrival prep content** as its first touchpoint.
+- **New-patient consultation-first entry** (the GFE requirement above, expressed as the booking
+  flow's front door for new injectable patients — how every premium competitor does it).
+- **Slot-ranking IP** (Boulevard-style calendar-packing availability ordering in the BFF) and
+  **waitlist backfill** — growth-engine material, event-driven on Bots.
+- **Funnel instrumentation** (lands with PostHog; BOOKING_DESIGN.md §5 lists the evidence gaps
+  we owe ourselves A/B tests on).
+
 ## Phase 3 — Handal migration (months 6–10)
 
 Surgical charting in the staff app, DoseSpot EPCS live, migrate history off 4D, retire it. EPCS is
