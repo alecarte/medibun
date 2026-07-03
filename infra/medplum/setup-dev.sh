@@ -139,9 +139,10 @@ echo "  ✓ policy: $POLICY_ID"
 # malformed criteria, which would fail open. Fail here, not in prod.
 POLICY_BACK="$(curl -s "$BASE/fhir/R4/AccessPolicy/$POLICY_ID" -H "Authorization: Bearer $ACCESS")"
 ENTRY_COUNT="$(printf '%s' "$POLICY_BACK" | jq '[.resource[]? | select((.criteria // "") != "")] | length')"
-[ "$ENTRY_COUNT" = "8" ] \
-  && echo "  ✓ policy read-back: 8 resource entries, all with criteria" \
-  || { echo "  ✗ policy read-back has $ENTRY_COUNT criteria-bearing entries (want 8) — criteria dropped?"; exit 1; }
+WANT_COUNT="$(printf '%s' "$POLICY_SRC" | jq '[.resource[]?] | length')"
+[ "$ENTRY_COUNT" = "$WANT_COUNT" ] \
+  && echo "  ✓ policy read-back: $ENTRY_COUNT/$WANT_COUNT resource entries, all with criteria" \
+  || { echo "  ✗ policy read-back has $ENTRY_COUNT criteria-bearing entries (want $WANT_COUNT) — criteria dropped?"; exit 1; }
 
 # Invite a SYNTHETIC patient user so the brokered-login flow is exercisable out of the box.
 # Synthetic, non-PHI; LOCAL DEV ONLY. Idempotent: re-invites upsert the ProjectMembership,

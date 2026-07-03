@@ -1,11 +1,11 @@
 "use client";
 
-import { createApiClient, LoginError } from "@medibun/api-client";
+import { createApiClient, LoginError, type LoginErrorCode } from "@medibun/api-client";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 /** Friendly, PHI-free copy per error code (DESIGN.md voice: concrete, no blame). */
-const ERROR_COPY: Record<string, string> = {
+const ERROR_COPY: Record<LoginErrorCode, string> = {
   invalid_credentials: "That email or password didn't match.",
   rate_limited: "Too many attempts. Wait a few minutes, then try again.",
   mfa_not_supported: "This account needs a verification step we don't support yet.",

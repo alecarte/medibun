@@ -1,22 +1,16 @@
 import { randomBytes } from "node:crypto";
-import { fileURLToPath } from "node:url";
 
-import { PGlite } from "@electric-sql/pglite";
 import { RefreshRejectedError } from "@medibun/medplum-backend";
 import { eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/pglite";
-import { migrate } from "drizzle-orm/pglite/migrator";
+import type { drizzle } from "drizzle-orm/pglite";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createTokenCipher } from "./crypto.js";
 import { createSessionStore, type SessionStore } from "./sessions.js";
 import * as schema from "../db/schema.js";
+import { bootTestDb } from "../db/test-db.js";
 
 const cipher = createTokenCipher(randomBytes(32).toString("base64"));
-
-// Apply the REAL checked-in migration (drizzle/) so tests and prod share one schema
-// definition — hand-written DDL here already drifted once (missing index).
-const migrationsFolder = fileURLToPath(new URL("../../drizzle", import.meta.url));
 
 const tokens = {
   profileReference: "Patient/p-1",
@@ -30,14 +24,10 @@ let store: SessionStore;
 let refreshCalls: string[];
 let db: ReturnType<typeof drizzle>;
 
-// One PGlite + one migration per file: booting and migrating per test blows vitest's
-// hook timeout on slow CI runners. Tests are isolated by wiping rows instead.
-// Even the single boot can exceed the default 10s hook timeout on a cold CI runner
-// (seen on PR #10 CI 2026-07-02) — give it an explicit generous budget.
+// One PGlite boot per file (shared helper applies the real migrations); explicit budget
+// for cold CI runners (seen on PR #10 CI 2026-07-02). Isolation = wiping rows.
 beforeAll(async () => {
-  const client = new PGlite();
-  db = drizzle(client, { schema });
-  await migrate(db, { migrationsFolder });
+  db = await bootTestDb();
 }, 60_000);
 
 beforeEach(async () => {

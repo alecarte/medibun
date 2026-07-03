@@ -1,3 +1,4 @@
+import { SESSION_COOKIE_NAME } from "@medibun/api-client";
 import type { PatientProfile } from "@medibun/api-client";
 import {
   InvalidCredentialsError,
@@ -112,7 +113,6 @@ export function createApp(deps: AppDeps): Hono<Env> {
 
   const auth = deps.auth;
   if (auth) {
-    const SESSION_COOKIE = "medibun_session";
     const cookieOpts = {
       httpOnly: true,
       sameSite: "Lax",
@@ -146,7 +146,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
           return token;
         }
       }
-      return getCookie(c, SESSION_COOKIE) || undefined;
+      return getCookie(c, SESSION_COOKIE_NAME) || undefined;
     };
 
     // NOTE (PHI safety): the request logger never logs bodies, so credentials in the
@@ -165,7 +165,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
       }
       try {
         const { sessionId } = await auth.login(body.email, body.password);
-        setCookie(c, SESSION_COOKIE, sessionId, cookieOpts);
+        setCookie(c, SESSION_COOKIE_NAME, sessionId, cookieOpts);
         return c.json({ sessionToken: sessionId });
       } catch (err) {
         if (err instanceof InvalidCredentialsError) {
@@ -190,7 +190,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
         // upstream (best-effort) revocation must not strand the user in a logged-in UI.
         await auth.logout(sessionId).catch(() => undefined);
       }
-      deleteCookie(c, SESSION_COOKIE, { path: "/" });
+      deleteCookie(c, SESSION_COOKIE_NAME, { path: "/" });
       return c.json({ ok: true });
     });
 

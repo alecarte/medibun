@@ -1,19 +1,14 @@
-import { fileURLToPath } from "node:url";
-
-import { PGlite } from "@electric-sql/pglite";
-import { drizzle } from "drizzle-orm/pglite";
-import { migrate } from "drizzle-orm/pglite/migrator";
+import type { drizzle } from "drizzle-orm/pglite";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { createServiceCatalog, type ServiceCatalog } from "./catalog.js";
+import { createServiceCatalog, type ServiceCatalog, type ServiceInsert } from "./catalog.js";
 import * as schema from "../db/schema.js";
-
-const migrationsFolder = fileURLToPath(new URL("../../drizzle", import.meta.url));
+import { bootTestDb } from "../db/test-db.js";
 
 let catalog: ServiceCatalog;
 let db: ReturnType<typeof drizzle>;
 
-const botox = {
+const botox: ServiceInsert = {
   id: "botox-standard",
   code: "svc-botox",
   name: "Botox",
@@ -23,11 +18,9 @@ const botox = {
   categoryColor: "sage",
 };
 
-// Same per-file PGlite pattern as sessions.test (explicit budget for cold CI runners).
+// One PGlite boot per file (shared helper); explicit budget for cold CI runners.
 beforeAll(async () => {
-  const client = new PGlite();
-  db = drizzle(client, { schema });
-  await migrate(db, { migrationsFolder });
+  db = await bootTestDb();
 }, 60_000);
 
 beforeEach(async () => {

@@ -39,7 +39,22 @@ StyleDictionary.registerFormat({
       const utility = t.name.replace(/^color-/, "").replace(/^brand-color-/, "brand-");
       return `  --color-${utility}: var(--${t.name});`;
     });
-    return `@import "tailwindcss";\n\n@theme inline {\n${lines.join("\n")}\n}\n`;
+    // Non-color bridges (fonts/shadows/radii) live HERE, once, so every web app gets the
+    // same Tailwind utility mapping without copy-pasting an @theme block into globals.css
+    // (review, 2026-07-02). Fonts resolve through next/font variables set on <html>.
+    const bridges = [
+      "  --font-display: var(--font-instrument-sans);",
+      "  --font-sans: var(--font-instrument-sans);",
+      "  --shadow-low: var(--elevation-low);",
+      "  --shadow-mid: var(--elevation-mid);",
+      "  --shadow-high: var(--elevation-high);",
+      "  --radius-sm: var(--radius-sm);",
+      "  --radius-md: var(--radius-md);",
+      "  --radius-lg: var(--radius-lg);",
+      "  --radius-xl: var(--radius-xl);",
+      "  --radius-control: var(--brand-radius-control);",
+    ];
+    return `@import "tailwindcss";\n\n@theme inline {\n${[...lines, ...bridges].join("\n")}\n}\n`;
   },
 });
 

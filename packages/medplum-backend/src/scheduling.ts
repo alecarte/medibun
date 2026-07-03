@@ -1,3 +1,4 @@
+import { isConflict, OperationOutcomeError } from "@medplum/core";
 import type { Bundle, HealthcareService, Practitioner, Schedule, Slot } from "@medplum/fhirtypes";
 
 /**
@@ -152,7 +153,7 @@ export async function findSlots(
     start: opts.start,
     end: opts.end,
     "service-type-reference": opts.healthcareServiceReference,
-    ...(opts.count ? { _count: String(opts.count) } : {}),
+    ...(opts.count !== undefined ? { _count: String(opts.count) } : {}),
   });
   const bundle = (await client.get(
     `fhir/R4/Schedule/${encodeURIComponent(opts.scheduleId)}/$find?${params.toString()}`,
@@ -189,7 +190,9 @@ export async function bookAppointment(
       ],
     })) as Bundle;
   } catch (err) {
-    if (err instanceof Error && /409|no longer available/i.test(err.message)) {
+    // Structural conflict detection (same pattern as patients.ts) — never string-match
+    // diagnostics: the server 409s a taken window with a conflict OperationOutcome.
+    if (err instanceof OperationOutcomeError && isConflict(err.outcome)) {
       throw new SlotTakenError();
     }
     throw err;

@@ -110,3 +110,11 @@ describe("api-client", () => {
     });
   });
 });
+
+describe("getMyProfile — benign not-found states", () => {
+  it("resolves undefined on 404 (valid session, no resolvable patient profile)", async () => {
+    const { fetchImpl } = stubFetch(404, { error: "not_found", requestId: "r" });
+    const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+    await expect(client.getMyProfile({ cookie: "medibun_session=x" })).resolves.toBeUndefined();
+  });
+});

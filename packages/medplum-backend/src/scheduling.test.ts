@@ -1,3 +1,4 @@
+import { OperationOutcomeError } from "@medplum/core";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -110,11 +111,31 @@ describe("bookAppointment", () => {
     );
   });
 
-  it("maps the 409 taken-window rejection to SlotTakenError", async () => {
-    const post = vi.fn().mockRejectedValue(new Error("Requested time slot is no longer available"));
+  it("maps the server's conflict OperationOutcome (409) to SlotTakenError", async () => {
+    // The REAL error shape MedplumClient throws: an OperationOutcomeError whose outcome
+    // is a conflict (isConflict) — never a message to be string-matched.
+    const conflict = new OperationOutcomeError({
+      resourceType: "OperationOutcome",
+      id: "conflict",
+      issue: [
+        {
+          severity: "error",
+          code: "conflict",
+          details: { text: "Requested time slot is no longer available" },
+        },
+      ],
+    });
+    const post = vi.fn().mockRejectedValue(conflict);
     await expect(
       bookAppointment({ get: vi.fn(), post }, { slot, serviceCode: "svc-botox" }),
     ).rejects.toBeInstanceOf(SlotTakenError);
+  });
+
+  it("does NOT map non-conflict errors to SlotTakenError (no message sniffing)", async () => {
+    const post = vi.fn().mockRejectedValue(new Error("something mentioning 409 unrelatedly"));
+    await expect(
+      bookAppointment({ get: vi.fn(), post }, { slot, serviceCode: "svc-botox" }),
+    ).rejects.toThrow(/unrelatedly/);
   });
 
   it("throws plainly when the Bundle carries no Appointment", async () => {

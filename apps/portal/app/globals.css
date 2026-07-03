@@ -5,23 +5,6 @@
 /* Tailwind v4 + the generated @theme that maps color utilities to those variables. */
 @import "@medibun/design-tokens/tailwind.css";
 
-/* Non-color token bridges into Tailwind utilities (colors come from the generated file).
-   Fonts resolve through next/font variables set on <html> (Fragment Mono joins when the
-   first data table ships). @theme inline resolves at use-sites, so mapping --radius-lg to
-   the :root token of the same name is not circular. */
-@theme inline {
-  --font-display: var(--font-instrument-sans);
-  --font-sans: var(--font-instrument-sans);
-  --shadow-low: var(--elevation-low);
-  --shadow-mid: var(--elevation-mid);
-  --shadow-high: var(--elevation-high);
-  --radius-sm: var(--radius-sm);
-  --radius-md: var(--radius-md);
-  --radius-lg: var(--radius-lg);
-  --radius-xl: var(--radius-xl);
-  --radius-control: var(--brand-radius-control);
-}
-
 @layer base {
   body {
     background-color: var(--color-surface-canvas);

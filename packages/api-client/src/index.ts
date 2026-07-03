@@ -34,13 +34,20 @@ export type SessionAuth = {
   readonly sessionToken?: string;
 };
 
-/** Backend login error codes (the BFF's stable, PHI-free error contract). */
-export type LoginErrorCode =
-  | "invalid_credentials"
-  | "rate_limited"
-  | "mfa_not_supported"
-  | "membership_selection_not_supported"
-  | "unknown";
+/** The BFF's session cookie name — the one shared constant between the BFF (which sets
+ *  it) and web apps (which forward it server-side). Change it here, nowhere else. */
+export const SESSION_COOKIE_NAME = "medibun_session";
+
+/** Backend login error codes (the BFF's stable, PHI-free error contract).
+ *  Single source of truth: the type derives from this array. */
+const LOGIN_CODES = [
+  "invalid_credentials",
+  "rate_limited",
+  "mfa_not_supported",
+  "membership_selection_not_supported",
+] as const;
+
+export type LoginErrorCode = (typeof LOGIN_CODES)[number] | "unknown";
 
 /** Login failure with the backend's error code. Never carries credentials or PHI. */
 export class LoginError extends Error {
@@ -58,16 +65,11 @@ export type ApiClient = {
   readonly login: (email: string, password: string) => Promise<{ sessionToken: string }>;
   /** Ends the session. Resolves even when upstream revocation is best-effort (BFF contract). */
   readonly logout: (auth?: SessionAuth) => Promise<void>;
-  /** The signed-in patient's own profile. Resolves undefined when not signed in (401). */
+  /** The signed-in patient's own profile. Resolves undefined when not signed in (401)
+   *  or when the session is valid but no patient profile resolves (404) — both are
+   *  benign signed-out-equivalent states for a UI, never crashes. */
   readonly getMyProfile: (auth?: SessionAuth) => Promise<PatientProfile | undefined>;
 };
-
-const LOGIN_CODES: readonly LoginErrorCode[] = [
-  "invalid_credentials",
-  "rate_limited",
-  "mfa_not_supported",
-  "membership_selection_not_supported",
-];
 
 function authHeaders(auth?: SessionAuth): Record<string, string> {
   if (auth?.sessionToken) {
@@ -97,8 +99,8 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
         const code: LoginErrorCode = await res
           .json()
           .then((body: unknown) => {
-            const error = (body as { error?: string } | null)?.error;
-            return LOGIN_CODES.includes(error as LoginErrorCode)
+            const error = (body as { error?: string } | null)?.error ?? "";
+            return (LOGIN_CODES as readonly string[]).includes(error)
               ? (error as LoginErrorCode)
               : "unknown";
           })
@@ -120,7 +122,11 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
 
     async getMyProfile(auth) {
       const res = await fetchImpl(`${baseUrl}/patients/me`, { headers: authHeaders(auth) });
-      if (res.status === 401) {
+      // 401 = no/expired session; 404 = valid session but no resolvable patient profile
+      // (the BFF's benign "no profile for this principal" response, e.g. a deleted
+      // Patient or a future staff session). Both read as "no profile" to callers —
+      // review finding 2026-07-02: throwing on the 404 crashed every portal RSC render.
+      if (res.status === 401 || res.status === 404) {
         return undefined;
       }
       if (!res.ok) {

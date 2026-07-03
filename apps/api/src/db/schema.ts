@@ -1,3 +1,4 @@
+import type { CategoryColor } from "@medibun/design-tokens";
 import { boolean, index, integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 /**
@@ -34,8 +35,9 @@ export const services = pgTable("services", {
   description: text("description").notNull(),
   durationMinutes: integer("duration_minutes").notNull(),
   priceCents: integer("price_cents").notNull(),
-  /** Categorical color token key (design-tokens color.category.*), e.g. "sage". */
-  categoryColor: text("category_color").notNull(),
+  /** Categorical color token key (design-tokens color.category.*), e.g. "sage" —
+   *  typed against the package's exported union so a token rename fails typecheck here. */
+  categoryColor: text("category_color").$type<CategoryColor>().notNull(),
   /** FHIR HealthcareService id (set once seeded/created in Medplum). */
   healthcareServiceId: text("healthcare_service_id"),
   /** Stripe product/price ids arrive with the commerce phase — nullable by design. */

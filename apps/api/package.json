@@ -15,12 +15,13 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@hono/node-server": "catalog:",
     "@medibun/api-client": "workspace:*",
+    "@medibun/design-tokens": "workspace:*",
     "@medibun/fhir-types": "workspace:*",
     "@medibun/medplum-backend": "workspace:*",
-    "hono": "catalog:",
-    "@hono/node-server": "catalog:",
     "drizzle-orm": "catalog:",
+    "hono": "catalog:",
     "pg": "catalog:"
   },
   "devDependencies": {

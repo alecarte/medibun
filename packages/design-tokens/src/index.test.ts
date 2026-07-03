@@ -49,3 +49,14 @@ describe("design-tokens", () => {
     expect(brandThemes.handal.colors.borderHairline).toBe(brandThemes.aureva.colors.borderHairline);
   });
 });
+
+describe("categorical color contract", () => {
+  it("every declared category key has text+wash tokens (DB keys stay in lockstep)", async () => {
+    const { categoryColors } = await import("./index.js");
+    const t = tokens as Record<string, string>;
+    for (const c of categoryColors) {
+      expect(t[`color-category-${c}-text`], `${c} text`).toBeDefined();
+      expect(t[`color-category-${c}-wash`], `${c} wash`).toBeDefined();
+    }
+  });
+});

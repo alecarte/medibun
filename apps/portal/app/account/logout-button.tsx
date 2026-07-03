@@ -13,6 +13,9 @@ export function LogoutButton() {
     try {
       // Same-origin /api proxy; the BFF revokes the session and clears the cookie.
       await createApiClient({ baseUrl: "/api" }).logout();
+    } catch {
+      // Never strand the user on a failed logout call — navigate home regardless;
+      // the refreshed render reflects the actual session state (review, 2026-07-02).
     } finally {
       router.push("/");
       router.refresh();

@@ -12,6 +12,11 @@ export type { TokenName } from "./tokens.generated.js";
  * Real branding is in progress externally; current values are placeholders — swapping
  * them is a change to tokens/brand.<name>.json only (docs/V0_PROPOSAL.md §6).
  */
+/** Categorical color keys for service/visit types (color.category.* tokens). The DB and
+ *  seeds reference these keys; deriving types from this array keeps them in lockstep. */
+export const categoryColors = ["sage", "teal", "indigo", "plum", "clay", "slate"] as const;
+export type CategoryColor = (typeof categoryColors)[number];
+
 export const brandVariableNames = [
   "brand-name",
   "brand-logo",
