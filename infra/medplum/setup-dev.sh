@@ -26,7 +26,11 @@ BASE="${BASE%/}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_NAME="Medibun Dev"
 
-# Helper: PKCE login for a given body, echo "<loginId> <code>" (code may be empty).
+# Helper: PKCE login for a given body; echoes "<verifier> <loginId> <code> <superAdminMembershipId>"
+# with '-' for absent fields (empty fields would shift under word-splitting `read`).
+# The 4th field exists because a bare login for a user with MULTIPLE memberships returns
+# `{login, memberships}` and NO code (v5.1.9 sendLoginResult) — the caller must then select
+# a profile via /auth/profile to get the code.
 pkce_login() {
   local body_extra="$1"
   local v ch
@@ -35,7 +39,10 @@ pkce_login() {
   local resp
   resp="$(curl -s -X POST "$BASE/auth/login" -H 'Content-Type: application/json' \
     -d "{\"email\":\"admin@example.com\",\"password\":\"medplum_admin\",\"codeChallenge\":\"$ch\",\"codeChallengeMethod\":\"S256\"$body_extra}")"
-  echo "$v $(printf '%s' "$resp" | jq -r '.login // empty') $(printf '%s' "$resp" | jq -r '.code // empty')"
+  echo "$v" \
+    "$(printf '%s' "$resp" | jq -r '.login // "-"')" \
+    "$(printf '%s' "$resp" | jq -r '.code // "-"')" \
+    "$(printf '%s' "$resp" | jq -r '[.memberships[]? | select(.project.display == "Super Admin")][0].id // "-"')"
 }
 
 # Exchange a PKCE code for an access token.
@@ -57,7 +64,17 @@ exchange() { # <verifier> <code>
 # project and $deploy fails "Not found". /auth/newproject makes the creator the project OWNER, so
 # admin endpoints (and the owner access token below) operate inside the new project correctly.
 echo "→ logging in as seeded admin to look for an existing '$PROJECT_NAME'…"
-read -r SAV _SAL SAC < <(pkce_login "")
+read -r SAV SALOGIN SAC SAMID < <(pkce_login "")
+if [ "$SAC" = "-" ] && [ "$SALOGIN" != "-" ]; then
+  # Re-run path: this script's project is OWNED by the same seeded admin, so after the first
+  # run the admin has 2+ memberships and the bare login returns no code — select the
+  # Super Admin profile explicitly (the canonical /auth/profile step the app UI performs).
+  [ "$SAMID" != "-" ] || { echo "✗ admin has multiple memberships but none in 'Super Admin'"; exit 1; }
+  echo "  (admin has multiple memberships — selecting the Super Admin profile)"
+  SAC="$(curl -s -X POST "$BASE/auth/profile" -H 'Content-Type: application/json' \
+    -d "{\"login\":\"$SALOGIN\",\"profile\":\"$SAMID\"}" | jq -r '.code // "-"')"
+fi
+[ "$SAC" != "-" ] && [ -n "$SAC" ] || { echo "✗ admin login failed"; exit 1; }
 SADMIN="$(exchange "$SAV" "$SAC")"
 [ -n "$SADMIN" ] && [ "$SADMIN" != "null" ] || { echo "✗ admin login failed"; exit 1; }
 
@@ -67,16 +84,18 @@ PID="$(curl -s "$BASE/fhir/R4/Project?name=Medibun%20Dev" \
 if [ -z "$PID" ]; then
   echo "→ creating regular project '$PROJECT_NAME' via /auth/newproject…"
   # A login scoped to projectId:"new" is membership-less, which /auth/newproject requires.
-  read -r NV NLOGIN _NC < <(pkce_login ",\"projectId\":\"new\",\"scope\":\"openid\"")
-  [ -n "$NLOGIN" ] && [ "$NLOGIN" != "null" ] || { echo "✗ could not get a membership-less login"; exit 1; }
+  read -r NV NLOGIN _NC _NM < <(pkce_login ",\"projectId\":\"new\",\"scope\":\"openid\"")
+  [ "$NLOGIN" != "-" ] || { echo "✗ could not get a membership-less login"; exit 1; }
   NPCODE="$(curl -s -X POST "$BASE/auth/newproject" -H 'Content-Type: application/json' \
     -d "{\"login\":\"$NLOGIN\",\"projectName\":\"$PROJECT_NAME\"}" | jq -r '.code')"
   [ -n "$NPCODE" ] && [ "$NPCODE" != "null" ] || { echo "✗ newproject failed"; exit 1; }
   ACCESS="$(exchange "$NV" "$NPCODE")"
 else
   # Existing project: log back in scoped to it to get an owner token for admin calls.
+  # (Scoped logins have a single candidate membership, so a code always comes back.)
   echo "→ reusing project; logging in scoped to it…"
-  read -r RV _RL RC < <(pkce_login ",\"projectId\":\"$PID\",\"scope\":\"openid\"")
+  read -r RV _RL RC _RM < <(pkce_login ",\"projectId\":\"$PID\",\"scope\":\"openid\"")
+  [ "$RC" != "-" ] || { echo "✗ project-scoped login returned no code"; exit 1; }
   ACCESS="$(exchange "$RV" "$RC")"
 fi
 [ -n "$ACCESS" ] && [ "$ACCESS" != "null" ] || { echo "✗ owner login for project failed"; exit 1; }
