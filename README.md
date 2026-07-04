@@ -53,7 +53,8 @@ pnpm format                                           # Prettier
 ```
 
 Testing is split by design: Vitest + RTL for web/packages, jest-expo for mobile (see
-`.claude/rules/testing.md`).
+`.claude/rules/testing.md`). For screenshot-reviewing UI without the full Medplum stack, use the
+stub-BFF + Playwright harness in [`tools/visual-check/`](tools/visual-check/README.md).
 
 ## Troubleshooting
 
