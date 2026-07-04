@@ -29,7 +29,9 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   return (
     <html lang="en" data-brand="aureva" className={instrumentSans.variable}>
       <body className="antialiased">
-        <div className="flex min-h-screen">
+        {/* Mobile-first: the shell stacks (top bar over content) below md and becomes
+            rail + content beside each other from md up. */}
+        <div className="flex min-h-screen flex-col md:flex-row">
           <Sidebar profileName={profile?.name} initialCollapsed={collapsed} />
           <main className="flex-1">{children}</main>
         </div>

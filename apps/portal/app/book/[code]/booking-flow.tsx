@@ -309,7 +309,9 @@ export function BookingFlow({
 
       {selected && practitioner && (
         <div className="sticky bottom-4 mt-10 rounded-lg border border-border-hairline bg-surface-card p-4 shadow-mid">
-          <div className="flex items-center justify-between gap-4">
+          {/* Mobile-first: the CTA is a full-width thumb target below sm, then moves
+              beside the summary where there's room. */}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
             <p className="text-sm text-text-secondary">
               <span className="font-semibold text-text-primary">
                 {service.name} with {practitioner.practitionerName}
@@ -363,7 +365,7 @@ function ConfirmationCard({
   }, []);
 
   return (
-    <div className="animate-confirm max-w-lg rounded-lg border border-border-hairline bg-surface-card p-8 shadow-low">
+    <div className="animate-confirm max-w-lg rounded-lg border border-border-hairline bg-surface-card p-5 shadow-low sm:p-8">
       <p className="type-kicker">Your visit</p>
       <h2
         ref={headingRef}

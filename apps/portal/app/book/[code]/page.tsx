@@ -35,7 +35,7 @@ export default async function ServiceBookingPage({
   const service = services?.find((s) => s.code === code);
 
   return (
-    <div className="mx-auto max-w-4xl px-8 pb-16">
+    <div className="mx-auto max-w-4xl px-5 pb-16 sm:px-8">
       <section className="pt-12 pb-8">
         <Link href="/book" className="text-sm text-text-secondary hover:text-text-primary">
           ← All services

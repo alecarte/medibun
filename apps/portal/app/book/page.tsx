@@ -23,7 +23,7 @@ export default async function BookPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl px-8 pb-16">
+    <div className="mx-auto max-w-4xl px-5 pb-16 sm:px-8">
       <section className="pt-12 pb-8">
         <p className="type-kicker">Book a visit · Step 1 of 3</p>
         <h1 className="type-display mt-3 text-3xl text-text-primary">What brings you in?</h1>

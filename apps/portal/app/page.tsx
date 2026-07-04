@@ -7,7 +7,7 @@ export default function Home() {
   const cardClass =
     "block h-full rounded-lg border border-border-hairline bg-surface-card p-6 shadow-low";
   return (
-    <div className="mx-auto max-w-4xl px-8 pb-16">
+    <div className="mx-auto max-w-4xl px-5 pb-16 sm:px-8">
       <section className="pt-12 pb-10">
         <p className="type-kicker">Welcome</p>
         <h1 className="type-display mt-3 max-w-2xl text-4xl text-text-primary">

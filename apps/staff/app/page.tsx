@@ -4,7 +4,7 @@
 // brand values, per CLAUDE.md).
 export default function Home() {
   return (
-    <div className="mx-auto max-w-5xl px-8 pb-16">
+    <div className="mx-auto max-w-5xl px-5 pb-16 sm:px-8">
       <section className="pt-8 pb-6">
         <p className="type-kicker">Front desk</p>
         <h1 className="type-display mt-2 text-3xl text-text-primary">Today</h1>

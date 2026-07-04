@@ -11,7 +11,7 @@ export default async function LoginPage() {
     redirect("/account");
   }
   return (
-    <div className="mx-auto max-w-sm px-8">
+    <div className="mx-auto max-w-sm px-5 sm:px-8">
       <section className="pt-16 pb-8">
         <p className="type-kicker">Welcome back</p>
         <h1 className="type-display mt-3 text-3xl text-text-primary">Sign in</h1>
