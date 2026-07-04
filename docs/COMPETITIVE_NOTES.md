@@ -123,6 +123,26 @@ Headlines for this inventory:
   same lesson as the ModMed real-time complaint above: the incumbents' seams are our
   differentiators.
 
+## 3.6 Patient-surface distribution (added 2026-07-04 — third research pass)
+
+Commissioned by Alec: standalone portal vs embeddable components for practice-owned sites vs
+website tools. Method: two parallel research agents (distribution landscape across 15 vendors;
+embed tech + HIPAA/browser constraints). Full synthesis + recommendation:
+`docs/PATIENT_SURFACE.md`. Headlines:
+
+- **Booking-step embeds are commoditized** (Boulevard's overlay is the premium bar; Mangomint
+  matches; Vagaro alone ships a WP plugin) — but **nobody in medspa embeds the rest of the
+  relationship** (membership/wallet/loyalty/orders/messaging all fall into off-brand hosted
+  portals or app silos). Mariana Tek proves the components+API architecture — in fitness.
+- **RepeatMD ($50M Series A, app-first membership/rewards layer)** proves demand for the
+  experience layer and, via its complaint profile (cost, contracts, app-download wall), the
+  dissatisfaction our web-first, booking-integrated version would attack.
+- **Authenticated sessions don't survive third-party embeds cross-browser** (Safari ITP;
+  CHIPS too young); the compliant industry line is guest flows embedded, authenticated depth
+  first-party. Premium ≠ never-leave-the-page; premium = **never see the vendor**.
+- **Website builders are a downmarket/acquired-agency game** — premium practices pay agencies
+  for WordPress/Webflow; be what agencies love to embed instead.
+
 ## 4. Gap analysis → recommendations
 
 | Gap                                                            | Status in our plan                        | Recommendation                                                                                                                                                |

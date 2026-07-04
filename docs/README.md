@@ -19,6 +19,7 @@ Write docs so that migration is mechanical: plain GitHub-flavored markdown, rela
 | [`AUTH.md`](AUTH.md)                           | Auth design: brokered Medplum login, sessions, cookies vs bearer, CSRF/origin guard.   |
 | [`DESIGN.md`](DESIGN.md)                       | Design tenets, the two registers (premium patient / quiet staff), token architecture.  |
 | [`BOOKING_DESIGN.md`](BOOKING_DESIGN.md)       | Research-backed booking + portal-shell spec (approved), incl. banned dark patterns.    |
+| [`PATIENT_SURFACE.md`](PATIENT_SURFACE.md)     | Distribution strategy: hosted portal → booking overlay → embedded components.          |
 | [`COMPETITIVE_NOTES.md`](COMPETITIVE_NOTES.md) | What the reference products (Resy, Lore, Othership, …) actually do.                    |
 | [`ROADMAP.md`](ROADMAP.md)                     | Phases beyond v0.                                                                      |
 | [`V0_PROPOSAL.md`](V0_PROPOSAL.md)             | The v0 cut, slice-by-slice status log, and review log — the living project record.     |

@@ -53,6 +53,18 @@ leverage:
 - **Funnel instrumentation** (lands with PostHog; BOOKING_DESIGN.md §5 lists the evidence gaps
   we owe ourselves A/B tests on).
 
+Added 2026-07-04 (patient-surface distribution research — see `PATIENT_SURFACE.md`, pending
+Alec's approval of the strategy):
+
+- **Booking overlay snippet** (Boulevard parity): full-viewport branded overlay iframing our
+  booking flow on the practice's WordPress site; guest-first, PHI only inside our origin.
+  Depends on guest/SMS identity above; adds embed-aware origin config to the BFF
+  (approval-gated auth change).
+- **Embedded relationship components** (the differentiator): membership join, wallet/loyalty
+  state, orders, "message your injector" entry as brandable components on the practice's own
+  site — guest-visible states embedded, one first-party hop for authenticated depth. WordPress
+  plugin packaging for agency ergonomics; branded custom domain (CNAME) for continuity.
+
 ## Phase 3 — Handal migration (months 6–10)
 
 Surgical charting in the staff app, DoseSpot EPCS live, migrate history off 4D, retire it. EPCS is

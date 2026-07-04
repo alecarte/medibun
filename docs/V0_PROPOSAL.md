@@ -243,6 +243,23 @@ actions, and screenshot review of every slice.
   get designed placement now so they arrive as data, not layout upheaval. Every AI surface
   follows the §3 rules (grounded, cited, human-confirmed actions) and the ADR-0004 gates.
 
+### Rev. 4 (Alec, 2026-07-04 — mobile-first + patient-surface distribution)
+
+- **Mobile-first, responsive design is binding from the start**, especially patient surfaces
+  (DESIGN.md tenet 7). Both app shells now carry a top-bar + drawer mobile shell below `md`;
+  patient flows are designed at phone width first. The staff shell reached parity with the
+  portal's (collapsible rail, ⌘B, brand mark) at Alec's request.
+- **Patient-portal product vision recorded:** the patient side will not look clinical. It
+  eventually becomes **embeddable components integrated into each practice's own beautiful
+  website** (Aureva's is agency-built WordPress) and/or a standalone portal for
+  membership/loyalty, orders, and two-way practitioner communication. Third research pass run
+  (distribution landscape + embed tech/HIPAA); synthesis and phased recommendation in
+  `docs/PATIENT_SURFACE.md` (**proposed, awaiting Alec**): v0 hosted portal with brand
+  continuity → post-v0 guest booking overlay (Boulevard parity) → embedded relationship
+  components (the market gap — no medspa vendor embeds membership/wallet/orders/messaging).
+  No website builder. v0 scope is unchanged by this; the binding carry-overs are mobile-first
+  and self-contained token-themed patient components.
+
 ## 7. External asks of Alec — start the clocks now
 
 | Ask                                                                                                     | Why                                                                                 | Lead time         |

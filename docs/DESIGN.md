@@ -52,6 +52,14 @@ avoid the generic "AI slop / vibe-code" register and sit alongside the best prod
    counters, panic badges, and fake anchoring are banned — detected manipulation is fatal to
    premium. Perceived response stays under ~400ms (prefetch, optimistic UI; skeletons only
    for sub-second, layout-stable loads).
+7. **Mobile-first, embed-ready (added 2026-07-04, Alec).** Every patient surface is designed at
+   phone width first and enhanced upward — the patient demographic books from a phone, and the
+   staff app must hold up on a front-desk tablet. Below `md` the app shells trade the rail for
+   a top bar + drawer; touch targets are full-width where thumbs live (sticky CTAs). And
+   because the patient experience will eventually render inside practice-owned websites
+   (docs/PATIENT_SURFACE.md), patient components stay **self-contained**: themed only by
+   tokens, no assumptions about viewport ownership, page chrome, or global window state — a
+   component that only works inside our shell is a future migration.
 
 ## Mechanics that enforce this
 
