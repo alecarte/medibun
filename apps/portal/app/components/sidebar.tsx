@@ -34,7 +34,7 @@ import {
 const WALLET_BALANCE_CENTS = 0;
 
 const ANIM =
-  "motion-safe:transition-[width,opacity] motion-safe:duration-[var(--motion-duration-base)] motion-safe:ease-[var(--motion-easing-standard)]";
+  "motion-safe:transition-[width,height,top,opacity] motion-safe:duration-[var(--motion-duration-base)] motion-safe:ease-[var(--motion-easing-standard)]";
 
 /** Labels fade + clip instead of unmounting: no reflow, and their accessible names
  *  survive in both states (so collapsed links need no aria-label duplicates). */
@@ -117,13 +117,25 @@ export function Sidebar({
     <aside
       className={`flex shrink-0 flex-col overflow-hidden border-r border-border-hairline px-3 py-6 ${ANIM} ${collapsed ? "w-16" : "w-60"}`}
     >
-      <div className="flex items-center overflow-hidden">
-        <Link
-          href="/"
-          tabIndex={collapsed ? -1 : 0}
-          className={`type-display min-w-0 flex-1 px-2.5 text-xl text-text-primary ${labelClass(collapsed)}`}
-        >
-          {tokens["brand-name"]}
+      {/* Two 40px controls can't share the collapsed rail's 40px row, so the header
+          animates between one row (wordmark + toggle at right) and a stacked column
+          (brand icon, toggle beneath). The brand renders as a logotype expanded and an
+          icon mark collapsed — the seam for practice-swappable logo assets (Practice
+          Management settings, later); with no icon asset the fallback is the practice
+          name's first letter on the brand's theme color. */}
+      <div className={`relative shrink-0 ${ANIM} ${collapsed ? "h-[5.25rem]" : "h-10"}`}>
+        <Link href="/" className="flex h-10 items-center">
+          <span
+            aria-hidden
+            className={`type-display absolute left-0 top-0 flex h-10 w-10 items-center justify-center rounded-lg bg-action-primary text-lg text-text-on-accent ${ANIM} ${collapsed ? "opacity-100" : "opacity-0"}`}
+          >
+            {tokens["brand-name"].charAt(0)}
+          </span>
+          <span
+            className={`type-display px-2.5 text-xl text-text-primary ${labelClass(collapsed)}`}
+          >
+            {tokens["brand-name"]}
+          </span>
         </Link>
         <button
           type="button"
@@ -132,7 +144,7 @@ export function Sidebar({
           aria-keyshortcuts="Control+B Meta+B"
           title={collapsed ? "Expand sidebar (⌘B)" : "Collapse sidebar (⌘B)"}
           onClick={toggle}
-          className="shrink-0 rounded-md p-2.5 text-text-secondary hover:bg-surface-well"
+          className={`absolute right-0 rounded-md p-2 text-text-secondary hover:bg-surface-well ${ANIM} ${collapsed ? "top-11" : "top-0"}`}
         >
           <PanelIcon />
         </button>

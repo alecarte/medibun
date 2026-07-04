@@ -34,6 +34,20 @@ describe("portal sidebar", () => {
     expect(screen.getByText("Home")).toHaveClass("opacity-100");
   });
 
+  it("swaps the logotype for the brand icon mark when collapsed (letter fallback)", () => {
+    render(<Sidebar />);
+    // No practice icon asset yet — the fallback mark is the practice name's first
+    // letter on the brand theme color. Expanded shows the logotype instead.
+    const mark = screen.getByText(tokens["brand-name"].charAt(0));
+    expect(mark).toHaveClass("opacity-0");
+    expect(screen.getByText(tokens["brand-name"])).toHaveClass("opacity-100");
+    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(mark).toHaveClass("opacity-100");
+    expect(screen.getByText(tokens["brand-name"])).toHaveClass("opacity-0");
+    // The wordmark keeps the accessible name in both states; the mark is decorative.
+    expect(mark).toHaveAttribute("aria-hidden");
+  });
+
   it("toggles with ⌘/Ctrl+B, but never steals the shortcut from a text field", () => {
     render(<Sidebar />);
     fireEvent.keyDown(window, { key: "b", ctrlKey: true });

@@ -118,7 +118,12 @@ cookie so the server renders the correct state on first paint — no flash). Col
 discipline (the pattern the leading shells — shadcn, Linear, VS Code — converge on): the rail
 is a **clipped view of the expanded layout**, never a second layout — icons keep the same
 x-position in both states, labels are `nowrap` and **fade + clip** rather than unmounting, so
-text cannot re-wrap or judder mid-transition; transitions are `motion-safe` only. Keyboard:
+text cannot re-wrap or judder mid-transition; transitions are `motion-safe` only. The brand renders as a
+**logotype expanded, icon mark collapsed** — the seam for practice-swappable logo assets
+(Practice Management settings, later); with no icon asset uploaded, the fallback mark is the
+practice name's **first letter on the brand theme color**. The collapse toggle stacks beneath
+the mark when collapsed (two 40px controls can't share the rail's one 40px row — the clipped/
+unclickable-toggle bug, fixed 2026-07-04). Keyboard:
 **⌘/Ctrl+B toggles the sidebar** (the shadcn/VS Code convention; ignored while typing in a
 field); **⌘/Ctrl+K is reserved** for search/concierge (patient "Ask" S10, staff palette S11) —
 don't spend it on anything else. The profile block carries the **generated avatar** (deterministic
