@@ -1,15 +1,93 @@
-import { createApiClient, LoginError } from "@medibun/api-client";
+import { createApiClient, BookingError, LoginError } from "@medibun/api-client";
+import { SlotTakenError, TIMEZONE_EXTENSION_URL } from "@medibun/medplum-backend";
 import { describe, expect, it } from "vitest";
 
 import { createApp, type AuthDeps } from "./app.js";
+import { createBookingService } from "./booking.js";
+import type { ServiceRow } from "./services/catalog.js";
 
 /**
  * Cross-package contract test (testing.md): the real @medibun/api-client speaks to the
  * real BFF app in-process, so a drift in route shape or DTO breaks here, not in an app.
+ * Booking runs the REAL booking service too — only the FHIR wire is stubbed.
  */
 const user = { profileReference: "Patient/p-1", accessToken: "at-1" };
 
-function makeApp(overrides: Partial<AuthDeps> = {}) {
+const NOW = new Date("2026-07-06T12:00:00.000Z");
+const SLOT_START = "2026-07-07T14:00:00.000Z";
+const SLOT_END = "2026-07-07T14:30:00.000Z";
+
+const botoxRow: ServiceRow = {
+  id: "botox-standard",
+  code: "svc-botox",
+  name: "Botox",
+  description: "Smooths dynamic lines.",
+  durationMinutes: 30,
+  priceCents: 39_500,
+  categoryColor: "sage",
+  healthcareServiceId: "hs-1",
+  stripeProductId: null,
+  active: true,
+  createdAt: NOW,
+};
+
+const scheduleBundle = {
+  resourceType: "Bundle",
+  type: "searchset",
+  entry: [
+    {
+      search: { mode: "match" },
+      resource: {
+        resourceType: "Schedule",
+        id: "sched-1",
+        actor: [{ reference: "Practitioner/prac-1" }],
+      },
+    },
+    {
+      search: { mode: "include" },
+      resource: {
+        resourceType: "Practitioner",
+        id: "prac-1",
+        name: [{ given: ["Riley"], family: "Reyes" }],
+        extension: [{ url: TIMEZONE_EXTENSION_URL, valueCode: "America/New_York" }],
+      },
+    },
+  ],
+};
+
+const findBundle = {
+  resourceType: "Bundle",
+  type: "searchset",
+  entry: [{ resource: { resourceType: "Slot", status: "free", start: SLOT_START, end: SLOT_END } }],
+};
+
+const bookedBundle = {
+  resourceType: "Bundle",
+  entry: [
+    { resource: { resourceType: "Appointment", id: "appt-1", start: SLOT_START, end: SLOT_END } },
+  ],
+};
+
+function makeBooking(post?: (url: string, body?: unknown) => Promise<unknown>) {
+  return createBookingService({
+    catalog: {
+      listActive: () => Promise.resolve([botoxRow]),
+      getByCode: (code) => Promise.resolve(code === "svc-botox" ? botoxRow : undefined),
+    },
+    getFhirClient: () =>
+      Promise.resolve({
+        get: (url: string) =>
+          Promise.resolve(url.startsWith("fhir/R4/Schedule?") ? scheduleBundle : findBundle),
+        post: post ?? (() => Promise.resolve(bookedBundle)),
+      }),
+    now: () => NOW,
+  });
+}
+
+function makeApp(
+  overrides: Partial<AuthDeps> = {},
+  booking: ReturnType<typeof makeBooking> = makeBooking(),
+) {
   const auth: AuthDeps = {
     login: () => Promise.resolve({ sessionId: "session-1" }),
     logout: () => Promise.resolve(),
@@ -24,11 +102,15 @@ function makeApp(overrides: Partial<AuthDeps> = {}) {
     log: () => undefined,
     checkMedplum: () => Promise.resolve(true),
     auth,
+    booking,
   });
 }
 
-function makeClient(overrides: Partial<AuthDeps> = {}) {
-  const app = makeApp(overrides);
+function makeClient(
+  overrides: Partial<AuthDeps> = {},
+  booking: ReturnType<typeof makeBooking> = makeBooking(),
+) {
+  const app = makeApp(overrides, booking);
   const fetchImpl = ((input: RequestInfo | URL, init?: RequestInit) =>
     app.request(input, init)) as typeof fetch;
   return createApiClient({ baseUrl: "http://bff.test", fetch: fetchImpl });
@@ -82,5 +164,81 @@ describe("api-client ⇄ BFF contract", () => {
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("not_found");
+  });
+});
+
+describe("api-client ⇄ BFF booking contract (real booking service, stubbed FHIR wire)", () => {
+  const auth = { cookie: "medibun_session=session-1" };
+
+  it("round-trips the service menu", async () => {
+    const client = makeClient();
+    await expect(client.listServices(auth)).resolves.toEqual([
+      {
+        code: "svc-botox",
+        name: "Botox",
+        description: "Smooths dynamic lines.",
+        durationMinutes: 30,
+        priceCents: 39_500,
+        categoryColor: "sage",
+      },
+    ]);
+  });
+
+  it("maps a signed-out menu request to a typed unauthorized BookingError", async () => {
+    const client = makeClient();
+    const err = await client.listServices().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BookingError);
+    expect((err as BookingError).code).toBe("unauthorized");
+  });
+
+  it("round-trips availability grouped by practitioner", async () => {
+    const client = makeClient();
+    await expect(client.getAvailability("svc-botox", auth)).resolves.toEqual({
+      serviceCode: "svc-botox",
+      timezone: "America/New_York",
+      windowStart: NOW.toISOString(),
+      windowDays: 7,
+      practitioners: [
+        {
+          scheduleId: "sched-1",
+          practitionerId: "prac-1",
+          practitionerName: "Riley Reyes",
+          slots: [{ start: SLOT_START, end: SLOT_END }],
+        },
+      ],
+    });
+  });
+
+  it("maps an unknown service to a typed not_found BookingError", async () => {
+    const client = makeClient();
+    const err = await client.getAvailability("svc-nope", auth).catch((e: unknown) => e);
+    expect((err as BookingError).code).toBe("not_found");
+  });
+
+  it("books a slot end-to-end and round-trips the confirmed appointment", async () => {
+    const client = makeClient();
+    await expect(
+      client.book({ serviceCode: "svc-botox", scheduleId: "sched-1", start: SLOT_START }, auth),
+    ).resolves.toEqual({
+      id: "appt-1",
+      serviceCode: "svc-botox",
+      serviceName: "Botox",
+      practitionerName: "Riley Reyes",
+      start: SLOT_START,
+      end: SLOT_END,
+    });
+  });
+
+  it("maps a taken window to a typed slot_taken BookingError", async () => {
+    // SlotTakenError from the wire layer propagates through the real booking service.
+    const client = makeClient(
+      {},
+      makeBooking(() => Promise.reject(new SlotTakenError())),
+    );
+    const err = await client
+      .book({ serviceCode: "svc-botox", scheduleId: "sched-1", start: SLOT_START }, auth)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BookingError);
+    expect((err as BookingError).code).toBe("slot_taken");
   });
 });

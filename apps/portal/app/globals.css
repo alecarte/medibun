@@ -31,4 +31,25 @@
     text-transform: uppercase;
     color: var(--color-text-secondary);
   }
+
+  /* The booking-confirmed signature moment (DESIGN.md motion budget: one per surface,
+     earned here). Motion tokens only; disabled for reduced-motion users. */
+  .animate-confirm {
+    animation: none;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    @keyframes confirm-rise {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+      to {
+        opacity: 1;
+        transform: none;
+      }
+    }
+    .animate-confirm {
+      animation: confirm-rise var(--motion-duration-feature) var(--motion-easing-standard) both;
+    }
+  }
 }

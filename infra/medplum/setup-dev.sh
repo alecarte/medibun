@@ -173,23 +173,61 @@ WANT_COUNT="$(printf '%s' "$POLICY_SRC" | jq '[.resource[]?] | length')"
   || { echo "  ✗ policy read-back has $ENTRY_COUNT criteria-bearing entries (want $WANT_COUNT) — criteria dropped?"; exit 1; }
 
 # Invite a SYNTHETIC patient user so the brokered-login flow is exercisable out of the box.
-# Synthetic, non-PHI; LOCAL DEV ONLY. Idempotent: re-invites upsert the ProjectMembership,
-# which also (re)binds the access policy on existing dev setups.
+# Synthetic, non-PHI; LOCAL DEV ONLY. On some existing dev projects the invite 409s with an
+# OperationOutcome instead of upserting (user created by an older script version) — in that
+# case we locate the existing membership and REPAIR the policy binding ourselves: an unbound
+# membership means full project access, the exact state the verify below fails loudly on.
 echo "→ inviting synthetic patient 'synthia.login@example.test' (policy-bound)…"
 INVITE_RES="$(curl -s -X POST "$BASE/admin/projects/$PID/invite" -H "Authorization: Bearer $ACCESS" \
   -H 'Content-Type: application/json' \
   -d "$(jq -n --arg pid "$POLICY_ID" '{resourceType:"Patient",firstName:"Synthia",lastName:"Loginsmith",email:"synthia.login@example.test",password:"synth-pw-12345",sendEmail:false,membership:{accessPolicy:{reference:("AccessPolicy/"+$pid)}}}')")"
-MEMBERSHIP_ID="$(printf '%s' "$INVITE_RES" | jq -r '.id // empty')"
-[ -n "$MEMBERSHIP_ID" ] || { echo "✗ invite failed: $INVITE_RES"; exit 1; }
+# Only a real ProjectMembership counts — an OperationOutcome's id (e.g. "conflict") must not
+# leak into the id variable (that produced the ProjectMembership/conflict lookup bug).
+MEMBERSHIP_ID="$(printf '%s' "$INVITE_RES" | jq -r 'select(.resourceType == "ProjectMembership") | .id // empty')"
+if [ -z "$MEMBERSHIP_ID" ]; then
+  echo "  … invite returned no membership (existing user?) — locating and repairing the binding"
+  # EXACTLY-ONE matches only (security-reviewer): binding the wrong membership would leave
+  # the real one unbound (= full project access) while the script reports success.
+  PATIENT_BUNDLE="$(curl -s "$BASE/fhir/R4/Patient?email=synthia.login@example.test" \
+    -H "Authorization: Bearer $ACCESS")"
+  [ "$(printf '%s' "$PATIENT_BUNDLE" | jq '[.entry[]?] | length')" = "1" ] \
+    || { echo "✗ expected exactly one synthetic patient by email; invite said: $INVITE_RES"; exit 1; }
+  PATIENT_ID="$(printf '%s' "$PATIENT_BUNDLE" | jq -r '.entry[0].resource.id')"
+  MEMBERSHIP_BUNDLE="$(curl -s "$BASE/fhir/R4/ProjectMembership?profile=Patient/$PATIENT_ID" \
+    -H "Authorization: Bearer $ACCESS")"
+  [ "$(printf '%s' "$MEMBERSHIP_BUNDLE" | jq '[.entry[]?] | length')" = "1" ] \
+    || { echo "✗ expected exactly one membership for Patient/$PATIENT_ID — reset the stack (docker compose down -v) and re-run"; exit 1; }
+  MEMBERSHIP_ID="$(printf '%s' "$MEMBERSHIP_BUNDLE" | jq -r '.entry[0].resource.id')"
+  # Repair-to-least-privilege: bind the approved patient-self-v1 policy (no policy content
+  # change, no widening — the unbound membership is the unsafe state). The PUT round-trips
+  # the fetched resource with only accessPolicy replaced, and success requires the response
+  # to BE a membership bound to the policy (an OperationOutcome's id must never pass again).
+  MEMBERSHIP_RES="$(curl -s "$BASE/fhir/R4/ProjectMembership/$MEMBERSHIP_ID" -H "Authorization: Bearer $ACCESS")"
+  printf '%s' "$MEMBERSHIP_RES" | jq -e --arg pid "Patient/$PATIENT_ID" \
+    '.resourceType == "ProjectMembership" and .profile.reference == $pid' >/dev/null \
+    || { echo "✗ membership $MEMBERSHIP_ID does not belong to Patient/$PATIENT_ID"; exit 1; }
+  curl -s -X PUT "$BASE/fhir/R4/ProjectMembership/$MEMBERSHIP_ID" -H "Authorization: Bearer $ACCESS" \
+    -H 'Content-Type: application/fhir+json' \
+    -d "$(printf '%s' "$MEMBERSHIP_RES" | jq --arg p "AccessPolicy/$POLICY_ID" '.accessPolicy = {reference: $p}')" \
+    | jq -e --arg p "AccessPolicy/$POLICY_ID" \
+      '.resourceType == "ProjectMembership" and .accessPolicy.reference == $p' >/dev/null \
+    || { echo "✗ membership rebind failed"; exit 1; }
+  echo "  ✓ rebound existing membership $MEMBERSHIP_ID to patient-self-v1"
+fi
 echo "  ✓ synthetic patient ready (synthia.login@example.test / synth-pw-12345)"
 
 # Trust-but-verify part 2: THIS user's membership (not just any membership) must reference
-# the policy — a policy-less membership has full project access.
-MEMBERSHIP_POLICY="$(curl -s "$BASE/fhir/R4/ProjectMembership/$MEMBERSHIP_ID" \
-  -H "Authorization: Bearer $ACCESS" | jq -r '.accessPolicy.reference // empty')"
+# the policy — a policy-less membership has full project access. Also assert no stale
+# parameterized access[] survives: Medplum resolves access[] IN PREFERENCE to accessPolicy,
+# so a leftover array would silently override the binding (security-reviewer 2026-07-04).
+MEMBERSHIP_BACK="$(curl -s "$BASE/fhir/R4/ProjectMembership/$MEMBERSHIP_ID" \
+  -H "Authorization: Bearer $ACCESS")"
+MEMBERSHIP_POLICY="$(printf '%s' "$MEMBERSHIP_BACK" | jq -r '.accessPolicy.reference // empty')"
 [ "$MEMBERSHIP_POLICY" = "AccessPolicy/$POLICY_ID" ] \
   && echo "  ✓ membership $MEMBERSHIP_ID bound to $MEMBERSHIP_POLICY" \
   || { echo "  ✗ membership $MEMBERSHIP_ID is NOT policy-bound (got: '$MEMBERSHIP_POLICY')"; exit 1; }
+[ "$(printf '%s' "$MEMBERSHIP_BACK" | jq '(.access // []) | length')" = "0" ] \
+  || { echo "  ✗ membership $MEMBERSHIP_ID carries a parameterized access[] that would override the policy"; exit 1; }
 
 cat > "$HERE/.env" <<EOF
 MEDPLUM_BASE_URL=$BASE/

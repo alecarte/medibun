@@ -163,6 +163,49 @@ export class SlotTakenError extends Error {
   }
 }
 
+export type ScheduleWithActor = {
+  readonly schedule: Schedule;
+  /** The schedule's single Practitioner actor, when the _include resolved it. */
+  readonly practitioner?: Practitioner;
+};
+
+/**
+ * All Schedules offering one of our services (token search on Schedule.serviceType),
+ * each paired with its Practitioner actor from `_include=Schedule:actor`. $find is
+ * instance-level, so callers fan availability out over this list.
+ */
+export async function listSchedulesForService(
+  client: FhirOpsClient,
+  serviceCode: string,
+): Promise<ScheduleWithActor[]> {
+  const params = new URLSearchParams({
+    "service-type": `${SERVICES_CODE_SYSTEM}|${serviceCode}`,
+    _include: "Schedule:actor",
+    // Medplum's max page size; no pagination here, so a schedule beyond this cap
+    // would be silently unofferable AND unbookable (book() re-derives from this list).
+    _count: "1000",
+  });
+  const bundle = (await client.get(`fhir/R4/Schedule?${params.toString()}`)) as Bundle;
+  const resources = (bundle.entry ?? []).flatMap((e) => (e.resource ? [e.resource] : []));
+  const practitioners = new Map(
+    resources
+      .filter((r): r is Practitioner => r.resourceType === "Practitioner" && Boolean(r.id))
+      .map((p) => [`Practitioner/${p.id}`, p]),
+  );
+  return resources
+    .filter((r): r is Schedule => r.resourceType === "Schedule")
+    .map((schedule) => {
+      const actorReference = schedule.actor?.[0]?.reference;
+      const practitioner = actorReference ? practitioners.get(actorReference) : undefined;
+      return practitioner ? { schedule, practitioner } : { schedule };
+    });
+}
+
+/** The actor-level IANA timezone (buildPractitioner sets it; $find/$book require it). */
+export function practitionerTimezone(practitioner: Practitioner): string | undefined {
+  return practitioner.extension?.find((e) => e.url === TIMEZONE_EXTENSION_URL)?.valueCode;
+}
+
 /** Free slots for one schedule + service in [start, end] (≤31 days, server-enforced). */
 export async function findSlots(
   client: FhirOpsClient,

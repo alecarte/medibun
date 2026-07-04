@@ -10,20 +10,7 @@ vi.mock("react", async (importOriginal) => {
 });
 
 import { getSessionProfile } from "./session";
-
-function stubFetch(status: number, body: unknown) {
-  const calls: { url: string; init?: RequestInit }[] = [];
-  vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
-    calls.push({ url: String(input), init });
-    return Promise.resolve(
-      new Response(JSON.stringify(body), {
-        status,
-        headers: { "content-type": "application/json" },
-      }),
-    );
-  });
-  return calls;
-}
+import { stubFetch } from "./stub-fetch";
 
 describe("getSessionProfile", () => {
   beforeEach(() => {

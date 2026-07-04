@@ -16,4 +16,6 @@ export type {
   Organization,
   Location,
   Slot,
+  // Booking (S4): the BFF names the schedule's Practitioner actor in its DTOs.
+  Practitioner,
 } from "@medplum/fhirtypes";

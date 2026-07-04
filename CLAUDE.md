@@ -51,7 +51,9 @@ needed after implementation.
 typecheck + lint + tests pass; new behavior has tests; no secrets or PHI in the diff, logs, or
 fixtures; access policy reviewed for any new PHI-touching endpoint; small diff where every line
 traces to the request; the `security-reviewer` subagent has run on any change touching PHI, auth,
-or AccessPolicy.
+or AccessPolicy; affected docs updated in the same change (docs are markdown-in-repo, the single
+source of truth — `/docs/README.md` maps them; new or changed BFF endpoints update
+`/docs/API.md`).
 
 ## Requires explicit human approval (never auto-execute)
 

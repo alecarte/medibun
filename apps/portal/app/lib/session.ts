@@ -1,6 +1,7 @@
-import { createApiClient, SESSION_COOKIE_NAME, type PatientProfile } from "@medibun/api-client";
-import { cookies } from "next/headers";
+import type { PatientProfile } from "@medibun/api-client";
 import { cache } from "react";
+
+import { bffClient, sessionCookie } from "./bff";
 
 /**
  * Server-side session read: forwards the incoming HttpOnly session cookie to the BFF
@@ -15,17 +16,14 @@ import { cache } from "react";
  * need a profile redirect to /login and the user can re-authenticate.
  */
 export const getSessionProfile = cache(async (): Promise<PatientProfile | undefined> => {
-  // Forward ONLY the session cookie (data minimization, security.md) — never the
-  // whole cookie header.
-  const session = (await cookies()).get(SESSION_COOKIE_NAME);
-  if (!session) {
+  // Forwards ONLY the session cookie (data minimization, security.md) — lib/bff.ts
+  // owns that policy and the BFF base URL.
+  const cookie = await sessionCookie();
+  if (!cookie) {
     return undefined;
   }
-  const client = createApiClient({
-    baseUrl: process.env.API_BASE_URL ?? "http://localhost:3001",
-  });
   try {
-    return await client.getMyProfile({ cookie: `${SESSION_COOKIE_NAME}=${session.value}` });
+    return await bffClient().getMyProfile({ cookie });
   } catch {
     // Identifier-free by design: no session value, no profile data in logs.
     console.error(JSON.stringify({ msg: "session probe failed; treating as signed out" }));

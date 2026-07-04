@@ -4,16 +4,19 @@ import {
   MfaRequiredError,
   MultipleMembershipsError,
   SessionExpiredError,
+  SlotTakenError,
 } from "@medibun/medplum-backend";
 import { describe, expect, it } from "vitest";
 
-import { createApp, type AuthDeps, type LogEntry } from "./app.js";
+import { createApp, type AuthDeps, type BookingDeps, type LogEntry } from "./app.js";
+import { InvalidSlotError, UnknownScheduleError, UnknownServiceError } from "./booking.js";
 
 /** Build an app with a captured log sink and a stubbed Medplum check. */
 function makeApp(
   opts: {
     checkMedplum?: () => Promise<boolean>;
     auth?: Partial<AuthDeps>;
+    booking?: Partial<BookingDeps>;
   } = {},
 ) {
   const logs: LogEntry[] = [];
@@ -27,10 +30,26 @@ function makeApp(
         ...opts.auth,
       }
     : undefined;
+  const booking: BookingDeps | undefined = opts.booking
+    ? {
+        listServices: () => Promise.resolve([]),
+        getAvailability: () =>
+          Promise.resolve({
+            serviceCode: "svc-x",
+            timezone: "America/New_York",
+            windowStart: "2026-07-06T12:00:00.000Z",
+            windowDays: 7,
+            practitioners: [],
+          }),
+        book: () => Promise.reject(new Error("book not stubbed")),
+        ...opts.booking,
+      }
+    : undefined;
   const app = createApp({
     log: (entry) => logs.push(entry),
     checkMedplum: opts.checkMedplum ?? (() => Promise.resolve(true)),
     auth,
+    booking,
   });
   return { app, logs };
 }
@@ -384,6 +403,209 @@ describe("auth routes", () => {
     expect(res.status).toBe(200);
     expect(revoked).toEqual(["33333333-3333-4333-8333-333333333333"]);
     expect(res.headers.get("set-cookie") ?? "").toContain("medibun_session=;");
+  });
+});
+
+describe("booking routes", () => {
+  const SESSION = "22222222-2222-4222-8222-222222222222";
+  const user = { profileReference: "Patient/p-1", accessToken: "at-1" };
+  const asPatient = { Cookie: `medibun_session=${SESSION}` };
+  const withSession = {
+    getUser: (id: string) => Promise.resolve(id === SESSION ? user : null),
+  };
+  const service = {
+    code: "svc-botox",
+    name: "Botox",
+    description: "Smooths dynamic lines.",
+    durationMinutes: 30,
+    priceCents: 39_500,
+    categoryColor: "sage" as const,
+  };
+  const booked = {
+    id: "appt-1",
+    serviceCode: "svc-botox",
+    serviceName: "Botox",
+    practitionerName: "Riley Reyes",
+    start: "2026-07-07T14:00:00.000Z",
+    end: "2026-07-07T14:30:00.000Z",
+  };
+  const request = {
+    serviceCode: "svc-botox",
+    scheduleId: "sched-1",
+    start: "2026-07-07T14:00:00.000Z",
+  };
+  const postAppointment = (headers: Record<string, string>, body: unknown = request) => ({
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify(body),
+  });
+
+  it("does not mount when booking deps are absent (auth-only deployments)", async () => {
+    const { app } = makeApp({ auth: {} });
+    expect((await app.request("/services")).status).toBe(404);
+  });
+
+  it("GET /services requires a session", async () => {
+    const { app } = makeApp({ auth: {}, booking: {} });
+    const res = await app.request("/services");
+    expect(res.status).toBe(401);
+    expect((await res.json()).error).toBe("unauthorized");
+  });
+
+  it("GET /services returns the menu for a signed-in patient", async () => {
+    const { app } = makeApp({
+      auth: withSession,
+      booking: { listServices: () => Promise.resolve([service]) },
+    });
+    const res = await app.request("/services", { headers: asPatient });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ services: [service] });
+  });
+
+  it("GET /services/:code/availability requires a session", async () => {
+    const { app } = makeApp({ auth: {}, booking: {} });
+    expect((await app.request("/services/svc-botox/availability")).status).toBe(401);
+  });
+
+  it("GET /services/:code/availability returns the fan-out result", async () => {
+    const availability = {
+      serviceCode: "svc-botox",
+      timezone: "America/New_York",
+      windowStart: "2026-07-06T12:00:00.000Z",
+      windowDays: 7,
+      practitioners: [
+        {
+          scheduleId: "sched-1",
+          practitionerId: "p1",
+          practitionerName: "Riley Reyes",
+          slots: [{ start: "2026-07-07T14:00:00.000Z", end: "2026-07-07T14:30:00.000Z" }],
+        },
+      ],
+    };
+    const { app } = makeApp({
+      auth: withSession,
+      booking: { getAvailability: () => Promise.resolve(availability) },
+    });
+    const res = await app.request("/services/svc-botox/availability", { headers: asPatient });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(availability);
+  });
+
+  it("maps an unknown service to a generic 404", async () => {
+    const { app } = makeApp({
+      auth: withSession,
+      booking: { getAvailability: () => Promise.reject(new UnknownServiceError()) },
+    });
+    const res = await app.request("/services/svc-nope/availability", { headers: asPatient });
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe("not_found");
+  });
+
+  it("POST /appointments requires a session", async () => {
+    const { app } = makeApp({ auth: {}, booking: {} });
+    const res = await app.request("/appointments", postAppointment({}));
+    expect(res.status).toBe(401);
+  });
+
+  it("POST /appointments books for the session patient and returns 201", async () => {
+    const bookCalls: { patientReference: string; request: unknown }[] = [];
+    const { app } = makeApp({
+      auth: withSession,
+      booking: {
+        book: (patientReference, req) => {
+          bookCalls.push({ patientReference, request: req });
+          return Promise.resolve(booked);
+        },
+      },
+    });
+    const res = await app.request("/appointments", postAppointment(asPatient));
+    expect(res.status).toBe(201);
+    expect(await res.json()).toEqual(booked);
+    // The patient reference comes from the SESSION, never from the request body.
+    expect(bookCalls).toEqual([{ patientReference: "Patient/p-1", request }]);
+  });
+
+  it("POST /appointments rejects a non-patient principal", async () => {
+    const { app } = makeApp({
+      auth: {
+        getUser: () =>
+          Promise.resolve({ profileReference: "Practitioner/staff-1", accessToken: "at" }),
+      },
+      booking: {},
+    });
+    const res = await app.request("/appointments", postAppointment(asPatient));
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe("forbidden");
+  });
+
+  it("POST /appointments rejects a body with missing fields", async () => {
+    const { app } = makeApp({ auth: withSession, booking: {} });
+    const res = await app.request(
+      "/appointments",
+      postAppointment(asPatient, { serviceCode: "svc-botox" }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("invalid_request");
+  });
+
+  it("POST /appointments rejects a literal null body as 400, not 500", async () => {
+    // JSON.parse("null") succeeds, so the parse fallback can't catch this shape.
+    const { app } = makeApp({ auth: withSession, booking: {} });
+    const res = await app.request("/appointments", postAppointment(asPatient, null));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("invalid_request");
+  });
+
+  it("login rejects a literal null body as 400, not 500", async () => {
+    const { app } = makeApp({ auth: {} });
+    const res = await app.request("/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "null",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("maps a taken slot to 409 slot_taken (client re-picks calmly)", async () => {
+    const { app } = makeApp({
+      auth: withSession,
+      booking: { book: () => Promise.reject(new SlotTakenError()) },
+    });
+    const res = await app.request("/appointments", postAppointment(asPatient));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("slot_taken");
+  });
+
+  it("maps crafted-request errors to a generic 400 without detail", async () => {
+    for (const err of [new UnknownScheduleError(), new InvalidSlotError()]) {
+      const { app } = makeApp({
+        auth: withSession,
+        booking: { book: () => Promise.reject(err) },
+      });
+      const res = await app.request("/appointments", postAppointment(asPatient));
+      expect(res.status).toBe(400);
+      const text = await res.text();
+      expect(text).not.toContain("schedule");
+      expect(JSON.parse(text).error).toBe("invalid_request");
+    }
+  });
+
+  it("POST /appointments enforces the Origin allowlist (CSRF)", async () => {
+    const { app } = makeApp({
+      auth: { ...withSession, allowedOrigins: ["https://portal.example.test"] },
+      booking: { book: () => Promise.resolve(booked) },
+    });
+    const rejected = await app.request(
+      "/appointments",
+      postAppointment({ ...asPatient, Origin: "https://evil.example.test" }),
+    );
+    expect(rejected.status).toBe(403);
+    expect((await rejected.json()).error).toBe("forbidden_origin");
+    const allowed = await app.request(
+      "/appointments",
+      postAppointment({ ...asPatient, Origin: "https://portal.example.test" }),
+    );
+    expect(allowed.status).toBe(201);
   });
 });
 

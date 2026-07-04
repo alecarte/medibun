@@ -6,8 +6,13 @@ avoid the generic "AI slop / vibe-code" register and sit alongside the best prod
 
 ## Calibration
 
-- **Quiet tool, both sides.** Patient portal and staff app share the same restrained register;
-  personality comes from the signature objects and motion, never from decoration.
+- **Two registers (amended 2026-07-03, Alec).** The **staff app stays a quiet tool** (restrained,
+  keyboard-first, content-first). The **patient portal is a premium consumer product**, governed
+  by three tenets — **frictionless · premium + responsive feel · conversion above all** — with
+  every design choice research-backed (see `docs/BOOKING_DESIGN.md` for the evidence base and
+  the banned dark-pattern list: no countdowns, presence counters, panic badges, hidden prices,
+  or login walls before availability). Personality still comes from signature objects, motion,
+  and content — never decoration for its own sake.
 - **The bar:** Anthropic/Claude (ivory warmth, generous whitespace, editorial type confidence,
   quiet chrome) × Notion (soft approachability, content-first, friendly without being cute).
   Explicitly _not_ cold-dense; warm-neutral and calm.
@@ -35,6 +40,26 @@ avoid the generic "AI slop / vibe-code" register and sit alongside the best prod
 5. **Real content, always looked at.** Every surface is designed against realistic synthetic
    data (long names, 12-site treatments, edge cases). Empty, loading, and error states are
    designed, not defaulted. No slice ships without its screens being screenshot-reviewed.
+6. **Patient surfaces convert — honestly (added 2026-07-03; evidence in BOOKING_DESIGN.md).**
+   Price and duration are always visible before commitment (late-revealed costs are the #1
+   abandonment cause); choices are curated, never dumped (4–7 options per screen, 5–8 time
+   chips per day — a wall of options is friction wearing a completeness costume); smart
+   defaults do the remembering ("Book your usual", first-available provider, last choices
+   pre-filled — never a preselected upsell); identity and commitment come last, after the
+   thing is emotionally theirs; the confirmation screen is the start of the next visit
+   (add-to-calendar, prep content, arrival ritual), not a receipt. Scarcity only when
+   truthful and service-framed ("Saturdays usually fill by Wednesday"); countdowns, presence
+   counters, panic badges, and fake anchoring are banned — detected manipulation is fatal to
+   premium. Perceived response stays under ~400ms (prefetch, optimistic UI; skeletons only
+   for sub-second, layout-stable loads).
+7. **Mobile-first, embed-ready (added 2026-07-04, Alec).** Every patient surface is designed at
+   phone width first and enhanced upward — the patient demographic books from a phone, and the
+   staff app must hold up on a front-desk tablet. Below `md` the app shells trade the rail for
+   a top bar + drawer; touch targets are full-width where thumbs live (sticky CTAs). And
+   because the patient experience will eventually render inside practice-owned websites
+   (docs/PATIENT_SURFACE.md), patient components stay **self-contained**: themed only by
+   tokens, no assumptions about viewport ownership, page chrome, or global window state — a
+   component that only works inside our shell is a future migration.
 
 ## Mechanics that enforce this
 
