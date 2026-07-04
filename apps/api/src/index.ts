@@ -15,6 +15,7 @@ import { createApp, type AuthDeps } from "./app.js";
 import { createTokenCipher } from "./auth/crypto.js";
 import { createSessionStore } from "./auth/sessions.js";
 import { createBookingService, type BookingService } from "./booking.js";
+import { createStaffService, type StaffService, type StaffUserClient } from "./staff.js";
 import { readApiConfigFromEnv } from "./config.js";
 import { checkMedplumConnection } from "./medplum.js";
 import { toPatientProfile } from "./patients.js";
@@ -26,7 +27,9 @@ const LOGIN_MAX_ATTEMPTS = 10;
 const LOGIN_WINDOW_MS = 15 * 60_000;
 
 /** Real auth wiring per docs/AUTH.md. Requires the experience DB + encryption key. */
-function buildAuthDeps(): { auth: AuthDeps; booking: BookingService; pool: pg.Pool } | undefined {
+function buildAuthDeps():
+  | { auth: AuthDeps; booking: BookingService; staff: StaffService; pool: pg.Pool }
+  | undefined {
   const dbUrl = process.env.EXPERIENCE_DATABASE_URL;
   const key = process.env.SESSION_ENCRYPTION_KEY;
   const projectId = process.env.MEDPLUM_PROJECT_ID;
@@ -153,7 +156,19 @@ function buildAuthDeps(): { auth: AuthDeps; booking: BookingService; pool: pg.Po
     getFhirClient,
   });
 
-  return { auth, booking, pool };
+  // Staff (S5): every FHIR call runs AS the signed-in staff member — a fresh client
+  // bound to their session's access token (same pattern as getMyProfile above), so
+  // AccessPolicy enforcement and AuditEvent attribution are the core's.
+  const staff = createStaffService({
+    catalog: createServiceCatalog(db),
+    userClient: (accessToken): StaffUserClient => {
+      const client = createMedplumClient(medplumConfig);
+      client.setAccessToken(accessToken);
+      return client;
+    },
+  });
+
+  return { auth, booking, staff, pool };
 }
 
 const authWiring = buildAuthDeps();
@@ -163,6 +178,7 @@ const app = createApp({
   checkMedplum: checkMedplumConnection,
   auth: authWiring?.auth,
   booking: authWiring?.booking,
+  staff: authWiring?.staff,
 });
 
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {

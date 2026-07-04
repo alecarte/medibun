@@ -4,6 +4,7 @@ import { tokens } from "@medibun/design-tokens";
 import { cookies } from "next/headers";
 import { Sidebar } from "./components/sidebar";
 import { COLLAPSE_COOKIE } from "./lib/prefs";
+import { getSessionStaff } from "./lib/session";
 import "./globals.css";
 
 const instrumentSans = Instrument_Sans({
@@ -17,9 +18,11 @@ export const metadata: Metadata = {
 };
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  // Collapse preference is a cookie so the FIRST paint is already collapsed/expanded —
-  // no post-hydration flash or layout shift (same pattern as the portal shell).
-  const cookieStore = await cookies();
+  // Session state drives the sidebar footer (identity vs sign-in CTA); reading it here
+  // makes every page per-request — correct for an authenticated app shell. The collapse
+  // preference is a cookie so the FIRST paint is already collapsed/expanded — no
+  // post-hydration flash or layout shift (same pattern as the portal shell).
+  const [staff, cookieStore] = await Promise.all([getSessionStaff(), cookies()]);
   const collapsed = cookieStore.get(COLLAPSE_COOKIE)?.value === "1";
   // `data-brand` is the runtime-theming seam: the settings GUI / per-tenant resolution
   // sets it server-side, and the [data-brand] CSS-variable scope swaps the brand with no rebuild.
@@ -29,7 +32,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
         {/* Mobile-first: the shell stacks (top bar over content) below md and becomes
             rail + content beside each other from md up. */}
         <div className="flex min-h-screen flex-col md:flex-row">
-          <Sidebar initialCollapsed={collapsed} />
+          <Sidebar staffName={staff?.name} initialCollapsed={collapsed} />
           <main className="flex-1">{children}</main>
         </div>
       </body>

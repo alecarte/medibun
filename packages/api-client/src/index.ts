@@ -77,6 +77,62 @@ export type BookedAppointment = {
   readonly end: string;
 };
 
+/** The signed-in staff member's own profile (Practitioner principal). */
+export type StaffProfile = {
+  readonly id: string;
+  /** Display name, already formatted by the backend. */
+  readonly name: string;
+};
+
+/** The staff-facing appointment workflow (V0_PROPOSAL S5). Order = the workflow order;
+ *  the BFF maps these to FHIR Appointment.status server-side. */
+export const APPOINTMENT_STATUSES = [
+  "scheduled",
+  "arrived",
+  "roomed",
+  "completed",
+  "no-show",
+] as const;
+
+export type AppointmentStatus = (typeof APPOINTMENT_STATUSES)[number];
+
+/** One column of the Today day sheet. */
+export type DaySheetPractitioner = {
+  readonly practitionerId: string;
+  readonly practitionerName: string;
+};
+
+/** One appointment block on the day sheet. PHI stays inside the authenticated session —
+ *  never in URLs, logs, or client storage (security.md). */
+export type DaySheetAppointment = {
+  readonly id: string;
+  readonly practitionerId: string;
+  readonly patientId: string;
+  readonly patientName: string;
+  readonly patientPhone?: string;
+  readonly patientEmail?: string;
+  /** Service fields resolve from the catalog when the appointment carries our code. */
+  readonly serviceCode?: string;
+  readonly serviceName?: string;
+  readonly serviceColor?: ServiceColor;
+  readonly start: string;
+  readonly end: string;
+  readonly status: AppointmentStatus;
+  /** No prior (non-cancelled) appointment — the front-desk hospitality cue. */
+  readonly firstVisit: boolean;
+  /** When the booking was created, when the record carries it. */
+  readonly bookedAt?: string;
+};
+
+export type DaySheet = {
+  /** The practice-local calendar date (YYYY-MM-DD) the sheet covers. */
+  readonly date: string;
+  /** IANA practice timezone — format all times in it. */
+  readonly timezone: string;
+  readonly practitioners: readonly DaySheetPractitioner[];
+  readonly appointments: readonly DaySheetAppointment[];
+};
+
 export type ApiClientConfig = {
   /** Base URL of our backend (the BFF). Never a Medplum/EMR URL. */
   readonly baseUrl: string;
@@ -140,6 +196,28 @@ export class BookingError extends Error {
   }
 }
 
+/** Staff endpoint error codes (the BFF's stable, PHI-free error contract). `conflict`
+ *  means the appointment changed under you (another station / stale sheet) — refetch. */
+const STAFF_CODES = [
+  "unauthorized",
+  "forbidden",
+  "not_found",
+  "invalid_request",
+  "conflict",
+] as const;
+
+export type StaffErrorCode = (typeof STAFF_CODES)[number] | "unknown";
+
+/** Staff request failure with the backend's error code. Never carries PHI. */
+export class StaffError extends Error {
+  readonly code: StaffErrorCode;
+  constructor(code: StaffErrorCode, status: number) {
+    super(`api-client: staff request failed (${code}, status ${status})`);
+    this.name = "StaffError";
+    this.code = code;
+  }
+}
+
 export type ApiClient = {
   readonly baseUrl: string;
   /** Brokered login. Resolves the opaque session token (web also gets an HttpOnly cookie). */
@@ -161,6 +239,20 @@ export type ApiClient = {
   /** Books a found slot for the signed-in patient. Throws BookingError — "slot_taken"
    *  when the window was booked between availability and confirm (safe to re-pick). */
   readonly book: (request: BookingRequest, auth?: SessionAuth) => Promise<BookedAppointment>;
+  /** The signed-in staff member's own profile. Resolves undefined when not signed in
+   *  (401) or when the session's principal is not staff (404) — both benign
+   *  signed-out-equivalent states for a UI, never crashes. */
+  readonly getStaffProfile: (auth?: SessionAuth) => Promise<StaffProfile | undefined>;
+  /** Today's day sheet (practitioner columns + appointments), practice-local. Staff
+   *  session required. Throws StaffError. */
+  readonly getDaySheet: (auth?: SessionAuth) => Promise<DaySheet>;
+  /** Moves an appointment through the status workflow (check-in, undo, roomed, …).
+   *  Throws StaffError — "conflict" when the appointment changed under you (refetch). */
+  readonly setAppointmentStatus: (
+    appointmentId: string,
+    status: AppointmentStatus,
+    auth?: SessionAuth,
+  ) => Promise<{ id: string; status: AppointmentStatus }>;
 };
 
 /** The BFF error envelope is `{error: code, requestId}`; parse the code against an
@@ -254,6 +346,43 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
         throw await bookingFailure(res);
       }
       return (await res.json()) as BookedAppointment;
+    },
+
+    async getStaffProfile(auth) {
+      const res = await fetchImpl(`${baseUrl}/staff/me`, { headers: authHeaders(auth) });
+      // 401 = no/expired session; 404 = valid session but not a staff principal (e.g. a
+      // patient session hitting the staff app). Both read as "no staff profile".
+      if (res.status === 401 || res.status === 404) {
+        return undefined;
+      }
+      if (!res.ok) {
+        // Generic by design: response bodies never make it into thrown messages.
+        throw new Error(`api-client: GET /staff/me failed with status ${res.status}`);
+      }
+      return (await res.json()) as StaffProfile;
+    },
+
+    async getDaySheet(auth) {
+      const res = await fetchImpl(`${baseUrl}/staff/today`, { headers: authHeaders(auth) });
+      if (!res.ok) {
+        throw new StaffError(await errorCodeFrom(res, STAFF_CODES), res.status);
+      }
+      return (await res.json()) as DaySheet;
+    },
+
+    async setAppointmentStatus(appointmentId, status, auth) {
+      const res = await fetchImpl(
+        `${baseUrl}/staff/appointments/${encodeURIComponent(appointmentId)}/status`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", ...authHeaders(auth) },
+          body: JSON.stringify({ status }),
+        },
+      );
+      if (!res.ok) {
+        throw new StaffError(await errorCodeFrom(res, STAFF_CODES), res.status);
+      }
+      return (await res.json()) as { id: string; status: AppointmentStatus };
     },
 
     async getMyProfile(auth) {

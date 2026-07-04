@@ -1,23 +1,29 @@
-import { SESSION_COOKIE_NAME } from "@medibun/api-client";
+import { APPOINTMENT_STATUSES, SESSION_COOKIE_NAME } from "@medibun/api-client";
 import type {
+  AppointmentStatus,
   BookedAppointment,
   BookingRequest,
+  DaySheet,
   PatientProfile,
   ServiceAvailability,
   ServiceSummary,
+  StaffProfile,
 } from "@medibun/api-client";
 import {
+  ForbiddenError,
   InvalidCredentialsError,
   MfaRequiredError,
   MultipleMembershipsError,
   SessionExpiredError,
   SlotTakenError,
+  StatusConflictError,
 } from "@medibun/medplum-backend";
 import { type Context, Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 
 import { InvalidSlotError, UnknownScheduleError, UnknownServiceError } from "./booking.js";
+import { InvalidTransitionError, UnknownAppointmentError } from "./staff.js";
 
 /**
  * @medibun/api — the BFF (ADR-0001). The only consumer of @medibun/medplum-backend;
@@ -77,6 +83,25 @@ export type BookingDeps = {
   readonly book: (patientReference: string, request: BookingRequest) => Promise<BookedAppointment>;
 };
 
+/** Staff routes run AS THE SIGNED-IN STAFF MEMBER (their Medplum token) — AccessPolicy
+ *  enforcement and audit attribution are the core's, not re-implemented here. */
+export type StaffDeps = {
+  readonly getStaffProfile: (user: {
+    profileReference: string;
+    accessToken: string;
+  }) => Promise<StaffProfile | undefined>;
+  readonly getDaySheet: (user: {
+    profileReference: string;
+    accessToken: string;
+  }) => Promise<DaySheet>;
+  /** Throws InvalidTransitionError / UnknownAppointmentError / StatusConflictError. */
+  readonly setAppointmentStatus: (
+    user: { profileReference: string; accessToken: string },
+    appointmentId: string,
+    status: AppointmentStatus,
+  ) => Promise<{ id: string; status: AppointmentStatus }>;
+};
+
 export type AppDeps = {
   readonly log: (entry: LogEntry) => void;
   /** Resolves true when Medplum is reachable and credentials are valid. */
@@ -85,6 +110,8 @@ export type AppDeps = {
   readonly auth?: AuthDeps;
   /** Booking routes mount only when provided ALONG WITH auth (sessions gate them). */
   readonly booking?: BookingDeps;
+  /** Staff routes mount only when provided ALONG WITH auth (sessions gate them). */
+  readonly staff?: StaffDeps;
 };
 
 type Env = { Variables: { requestId: string; logDetail?: string } };
@@ -106,7 +133,8 @@ type ErrorCode =
   | "forbidden_origin"
   | "unauthorized"
   | "forbidden"
-  | "slot_taken";
+  | "slot_taken"
+  | "conflict";
 
 export function createApp(deps: AppDeps): Hono<Env> {
   const app = new Hono<Env>();
@@ -331,6 +359,100 @@ export function createApp(deps: AppDeps): Hono<Env> {
             return fail(c, "invalid_request", 400);
           }
           throw err;
+        }
+      });
+    }
+
+    // Staff (S5). Sessions gate every route, and every call runs AS the signed-in staff
+    // member's own Medplum principal — their org-parameterized AccessPolicy (A3) is the
+    // enforcement line and AuditEvents attribute to them, by construction. Encounter
+    // writes belong to the check-in Bot (A7), never these routes.
+    const staff = deps.staff;
+    if (staff) {
+      /** Session user with a staff (Practitioner) principal, else a typed refusal. */
+      const staffUser = async (c: Context<Env>) => {
+        const user = await sessionUser(c);
+        if (!user) {
+          return { fail: fail(c, "unauthorized", 401 as const) };
+        }
+        if (!user.profileReference.startsWith("Practitioner/")) {
+          // A signed-in non-staff principal (e.g. a patient session) is a 403, not 404:
+          // the route exists, the principal isn't allowed on it.
+          return { fail: fail(c, "forbidden", 403 as const) };
+        }
+        return { user };
+      };
+
+      /** Shared staff error mapping: auth conditions and conflicts, never 500s. */
+      const staffFailure = (c: Context<Env>, err: unknown) => {
+        if (err instanceof SessionExpiredError) {
+          return fail(c, "unauthorized", 401);
+        }
+        if (err instanceof ForbiddenError) {
+          return fail(c, "forbidden", 403);
+        }
+        if (err instanceof UnknownAppointmentError) {
+          return fail(c, "not_found", 404);
+        }
+        // Both mean "the appointment moved under you" — refetch and re-decide. A stale
+        // day sheet (InvalidTransition) and a lost test-and-set race (StatusConflict)
+        // have the same client recovery.
+        if (err instanceof InvalidTransitionError || err instanceof StatusConflictError) {
+          return fail(c, "conflict", 409);
+        }
+        throw err;
+      };
+
+      app.get("/staff/me", async (c) => {
+        const user = await sessionUser(c);
+        if (!user) {
+          return fail(c, "unauthorized", 401);
+        }
+        try {
+          const profile = await staff.getStaffProfile(user);
+          // Not-a-staff-principal reads as "no staff profile" (mirrors /patients/me).
+          return profile ? c.json(profile) : fail(c, "not_found", 404);
+        } catch (err) {
+          return staffFailure(c, err);
+        }
+      });
+
+      app.get("/staff/today", async (c) => {
+        const gate = await staffUser(c);
+        if (!gate.user) {
+          return gate.fail;
+        }
+        try {
+          return c.json(await staff.getDaySheet(gate.user));
+        } catch (err) {
+          return staffFailure(c, err);
+        }
+      });
+
+      app.post("/staff/appointments/:id/status", async (c) => {
+        const gate = await staffUser(c);
+        if (!gate.user) {
+          return gate.fail;
+        }
+        // ?? {} — a literal `null` body parses successfully, so the catch can't cover it.
+        const body = ((await c.req.json().catch(() => ({}))) ?? {}) as { status?: unknown };
+        const status = body.status;
+        if (
+          typeof status !== "string" ||
+          !(APPOINTMENT_STATUSES as readonly string[]).includes(status)
+        ) {
+          return fail(c, "invalid_request", 400);
+        }
+        try {
+          return c.json(
+            await staff.setAppointmentStatus(
+              gate.user,
+              c.req.param("id"),
+              status as AppointmentStatus,
+            ),
+          );
+        } catch (err) {
+          return staffFailure(c, err);
         }
       });
     }

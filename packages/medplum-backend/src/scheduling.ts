@@ -169,6 +169,23 @@ export type ScheduleWithActor = {
   readonly practitioner?: Practitioner;
 };
 
+/** Map a `Schedule?_include=Schedule:actor` searchset to schedules with their actors. */
+export function schedulesWithActors(bundle: Bundle): ScheduleWithActor[] {
+  const resources = (bundle.entry ?? []).flatMap((e) => (e.resource ? [e.resource] : []));
+  const practitioners = new Map(
+    resources
+      .filter((r): r is Practitioner => r.resourceType === "Practitioner" && Boolean(r.id))
+      .map((p) => [`Practitioner/${p.id}`, p]),
+  );
+  return resources
+    .filter((r): r is Schedule => r.resourceType === "Schedule")
+    .map((schedule) => {
+      const actorReference = schedule.actor?.[0]?.reference;
+      const practitioner = actorReference ? practitioners.get(actorReference) : undefined;
+      return practitioner ? { schedule, practitioner } : { schedule };
+    });
+}
+
 /**
  * All Schedules offering one of our services (token search on Schedule.serviceType),
  * each paired with its Practitioner actor from `_include=Schedule:actor`. $find is
@@ -185,20 +202,7 @@ export async function listSchedulesForService(
     // would be silently unofferable AND unbookable (book() re-derives from this list).
     _count: "1000",
   });
-  const bundle = (await client.get(`fhir/R4/Schedule?${params.toString()}`)) as Bundle;
-  const resources = (bundle.entry ?? []).flatMap((e) => (e.resource ? [e.resource] : []));
-  const practitioners = new Map(
-    resources
-      .filter((r): r is Practitioner => r.resourceType === "Practitioner" && Boolean(r.id))
-      .map((p) => [`Practitioner/${p.id}`, p]),
-  );
-  return resources
-    .filter((r): r is Schedule => r.resourceType === "Schedule")
-    .map((schedule) => {
-      const actorReference = schedule.actor?.[0]?.reference;
-      const practitioner = actorReference ? practitioners.get(actorReference) : undefined;
-      return practitioner ? { schedule, practitioner } : { schedule };
-    });
+  return schedulesWithActors((await client.get(`fhir/R4/Schedule?${params.toString()}`)) as Bundle);
 }
 
 /** The actor-level IANA timezone (buildPractitioner sets it; $find/$book require it). */

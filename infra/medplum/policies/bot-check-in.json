@@ -1,0 +1,5 @@
+{
+  "resourceType": "AccessPolicy",
+  "name": "bot-check-in-v1",
+  "resource": [{ "resourceType": "Appointment", "readonly": true }, { "resourceType": "Encounter" }]
+}

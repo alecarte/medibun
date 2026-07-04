@@ -1,0 +1,28 @@
+{
+  "resourceType": "AccessPolicy",
+  "name": "staff-clinician-v1",
+  "resource": [
+    {
+      "resourceType": "Patient",
+      "criteria": "Patient?_compartment=%organization",
+      "readonly": true
+    },
+    { "resourceType": "Appointment", "criteria": "Appointment?_compartment=%organization" },
+    { "resourceType": "Schedule", "readonly": true },
+    { "resourceType": "Slot", "readonly": true },
+    { "resourceType": "HealthcareService", "readonly": true },
+    { "resourceType": "Practitioner", "readonly": true },
+    { "resourceType": "Location", "readonly": true },
+    { "resourceType": "Encounter", "criteria": "Encounter?_compartment=%organization" },
+    { "resourceType": "Procedure", "criteria": "Procedure?_compartment=%organization" },
+    {
+      "resourceType": "MedicationAdministration",
+      "criteria": "MedicationAdministration?_compartment=%organization"
+    },
+    { "resourceType": "Consent", "criteria": "Consent?_compartment=%organization" },
+    {
+      "resourceType": "QuestionnaireResponse",
+      "criteria": "QuestionnaireResponse?_compartment=%organization"
+    }
+  ]
+}

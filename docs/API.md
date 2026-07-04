@@ -26,7 +26,7 @@ Base URL in local dev: `http://localhost:3001`. The portal reaches it via its ow
 
 `internal_error` · `not_found` · `invalid_request` · `rate_limited` · `invalid_credentials` ·
 `mfa_not_supported` · `membership_selection_not_supported` · `forbidden_origin` ·
-`unauthorized` · `forbidden` · `slot_taken`
+`unauthorized` · `forbidden` · `slot_taken` · `conflict`
 
 ## Health
 
@@ -141,6 +141,71 @@ Success: `201` with a `BookedAppointment`:
 `401 unauthorized` · `403 forbidden` (non-patient principal — staff booking arrives with S11) ·
 `400 invalid_request` (missing/malformed fields, unknown service/schedule, invalid or past
 start) · `409 slot_taken` (the window was booked in the meantime — clients re-pick calmly).
+
+## Staff (S5)
+
+Session-gated, and — unlike booking — **every FHIR call runs as the signed-in staff member's
+own Medplum principal** (their session token). Their org-parameterized AccessPolicy
+(`staff-front-desk-v1` / `staff-clinician-v1`, A3) is the enforcement line, and AuditEvents
+attribute to them by construction. `GET /staff/today` and the status route additionally require
+a `Practitioner/` profile: a signed-in patient gets `403 forbidden`. Encounter creation on
+check-in belongs to the check-in Bot (A7), never these routes.
+
+### `GET /staff/me`
+
+The signed-in staff member's own profile. `200 { "id": "…", "name": "Noor Haddad" }` ·
+`401 unauthorized` · `404 not_found` (valid session, non-staff principal). The api-client folds
+both into `undefined`.
+
+### `GET /staff/today`
+
+The practice-local Today day sheet: one column per practitioner, every appointment in the day
+window (resolved in the practice timezone, DST-safe). Returns a `DaySheet`:
+
+```json
+{
+  "date": "2026-07-04",
+  "timezone": "America/New_York",
+  "practitioners": [{ "practitionerId": "…", "practitionerName": "Riley Reyes" }],
+  "appointments": [
+    {
+      "id": "…",
+      "practitionerId": "…",
+      "patientId": "…",
+      "patientName": "Synthia Loginsmith",
+      "patientPhone": "555-010-0100",
+      "patientEmail": "…",
+      "serviceCode": "svc-botox",
+      "serviceName": "Botox",
+      "serviceColor": "sage",
+      "start": "…",
+      "end": "…",
+      "status": "scheduled",
+      "firstVisit": true,
+      "bookedAt": "…"
+    }
+  ]
+}
+```
+
+`status` is the staff workflow — `scheduled | arrived | roomed | completed | no-show` — mapped
+by the BFF to FHIR `Appointment.status` (`booked | arrived | checked-in | fulfilled | noshow`).
+Appointments in unmapped FHIR statuses (cancelled, entered-in-error, …) are not day-sheet rows.
+Contact/service fields are optional; `firstVisit` means no prior non-cancelled appointment.
+
+`401 unauthorized` · `403 forbidden` (non-staff principal).
+
+### `POST /staff/appointments/:id/status`
+
+Body `{ "status": <workflow status> }`. Moves an appointment through the workflow. The server
+validates the transition against the appointment's CURRENT status (each forward step plus its
+exact reverse, for the ~10s undo) and writes with an atomic test-and-set — a concurrent move at
+another station loses cleanly. Success: `200 { "id": "…", "status": "arrived" }`.
+
+`400 invalid_request` (unknown status value) · `401 unauthorized` · `403 forbidden` (non-staff
+principal, or the AccessPolicy refused the write) · `404 not_found` ·
+`409 conflict` (illegal transition from the current status, or a lost race — the client
+refetches truth and re-decides; never clobbers).
 
 ## Change discipline
 

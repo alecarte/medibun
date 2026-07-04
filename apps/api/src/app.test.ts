@@ -8,8 +8,15 @@ import {
 } from "@medibun/medplum-backend";
 import { describe, expect, it } from "vitest";
 
-import { createApp, type AuthDeps, type BookingDeps, type LogEntry } from "./app.js";
+import {
+  createApp,
+  type AuthDeps,
+  type BookingDeps,
+  type LogEntry,
+  type StaffDeps,
+} from "./app.js";
 import { InvalidSlotError, UnknownScheduleError, UnknownServiceError } from "./booking.js";
+import { InvalidTransitionError, UnknownAppointmentError } from "./staff.js";
 
 /** Build an app with a captured log sink and a stubbed Medplum check. */
 function makeApp(
@@ -17,6 +24,7 @@ function makeApp(
     checkMedplum?: () => Promise<boolean>;
     auth?: Partial<AuthDeps>;
     booking?: Partial<BookingDeps>;
+    staff?: Partial<StaffDeps>;
   } = {},
 ) {
   const logs: LogEntry[] = [];
@@ -45,14 +53,39 @@ function makeApp(
         ...opts.booking,
       }
     : undefined;
+  const staff: StaffDeps | undefined = opts.staff
+    ? {
+        getStaffProfile: () => Promise.resolve(undefined),
+        getDaySheet: () =>
+          Promise.resolve({
+            date: "2026-07-04",
+            timezone: "America/New_York",
+            practitioners: [],
+            appointments: [],
+          }),
+        setAppointmentStatus: () => Promise.reject(new Error("setAppointmentStatus not stubbed")),
+        ...opts.staff,
+      }
+    : undefined;
   const app = createApp({
     log: (entry) => logs.push(entry),
     checkMedplum: opts.checkMedplum ?? (() => Promise.resolve(true)),
     auth,
     booking,
+    staff,
   });
   return { app, logs };
 }
+
+/** A resolvable staff session for staff-route tests. */
+const staffSession = {
+  getUser: () => Promise.resolve({ profileReference: "Practitioner/pr1", accessToken: "tok" }),
+};
+
+/** A resolvable PATIENT session (the wrong principal for staff routes). */
+const patientSession = {
+  getUser: () => Promise.resolve({ profileReference: "Patient/pt1", accessToken: "tok" }),
+};
 
 describe("GET /health", () => {
   it("returns 200 with status ok", async () => {
@@ -626,5 +659,144 @@ describe("GET /health/medplum", () => {
     const text = await res.text();
     expect(text).not.toContain("credentials");
     expect(JSON.parse(text)).toEqual({ connected: false });
+  });
+});
+
+describe("staff routes", () => {
+  const sheet = {
+    date: "2026-07-04",
+    timezone: "America/New_York",
+    practitioners: [{ practitionerId: "pr1", practitionerName: "Riley Reyes" }],
+    appointments: [],
+  };
+
+  it("staff routes 404 when staff deps are not wired", async () => {
+    const { app } = makeApp({ auth: staffSession });
+    expect((await app.request("/staff/today")).status).toBe(404);
+  });
+
+  describe("GET /staff/me", () => {
+    it("401s without a session", async () => {
+      const { app } = makeApp({ auth: {}, staff: {} });
+      expect((await app.request("/staff/me")).status).toBe(401);
+    });
+
+    it("returns the staff profile for a staff session", async () => {
+      const { app } = makeApp({
+        auth: staffSession,
+        staff: { getStaffProfile: () => Promise.resolve({ id: "pr1", name: "Riley Reyes" }) },
+      });
+      const res = await app.request("/staff/me", {
+        headers: { Authorization: "Bearer tok" },
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ id: "pr1", name: "Riley Reyes" });
+    });
+
+    it("404s when the session's principal has no staff profile", async () => {
+      const { app } = makeApp({ auth: patientSession, staff: {} });
+      const res = await app.request("/staff/me", { headers: { Authorization: "Bearer tok" } });
+      expect(res.status).toBe(404);
+    });
+
+    it("maps an upstream-expired token to 401 (re-authenticate, not 500)", async () => {
+      const { app } = makeApp({
+        auth: staffSession,
+        staff: { getStaffProfile: () => Promise.reject(new SessionExpiredError()) },
+      });
+      const res = await app.request("/staff/me", { headers: { Authorization: "Bearer tok" } });
+      expect(res.status).toBe(401);
+    });
+  });
+
+  describe("GET /staff/today", () => {
+    it("401s without a session", async () => {
+      const { app } = makeApp({ auth: {}, staff: {} });
+      expect((await app.request("/staff/today")).status).toBe(401);
+    });
+
+    it("403s a signed-in NON-staff principal (patient session)", async () => {
+      const { app } = makeApp({ auth: patientSession, staff: {} });
+      const res = await app.request("/staff/today", { headers: { Authorization: "Bearer tok" } });
+      expect(res.status).toBe(403);
+      expect(((await res.json()) as { error: string }).error).toBe("forbidden");
+    });
+
+    it("returns the day sheet for a staff session", async () => {
+      const { app } = makeApp({
+        auth: staffSession,
+        staff: { getDaySheet: () => Promise.resolve(sheet) },
+      });
+      const res = await app.request("/staff/today", { headers: { Authorization: "Bearer tok" } });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(sheet);
+    });
+  });
+
+  describe("POST /staff/appointments/:id/status", () => {
+    const post = (app: ReturnType<typeof makeApp>["app"], body: unknown) =>
+      app.request("/staff/appointments/a1/status", {
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: "Bearer tok" },
+        body: JSON.stringify(body),
+      });
+
+    it("401s without a session and 403s a patient session", async () => {
+      const noSession = makeApp({ auth: {}, staff: {} });
+      expect((await post(noSession.app, { status: "arrived" })).status).toBe(401);
+      const patient = makeApp({ auth: patientSession, staff: {} });
+      expect((await post(patient.app, { status: "arrived" })).status).toBe(403);
+    });
+
+    it("400s an unknown status value and a null body", async () => {
+      const { app } = makeApp({ auth: staffSession, staff: {} });
+      expect((await post(app, { status: "teleported" })).status).toBe(400);
+      expect((await post(app, null)).status).toBe(400);
+    });
+
+    it("applies a legal move and returns the new domain status", async () => {
+      const { app } = makeApp({
+        auth: staffSession,
+        staff: {
+          setAppointmentStatus: (_user, id, status) => Promise.resolve({ id, status }),
+        },
+      });
+      const res = await post(app, { status: "arrived" });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ id: "a1", status: "arrived" });
+    });
+
+    it("maps a stale/raced move to 409 conflict (client refetches)", async () => {
+      const { app } = makeApp({
+        auth: staffSession,
+        staff: { setAppointmentStatus: () => Promise.reject(new InvalidTransitionError()) },
+      });
+      const res = await post(app, { status: "completed" });
+      expect(res.status).toBe(409);
+      expect(((await res.json()) as { error: string }).error).toBe("conflict");
+    });
+
+    it("404s an unknown appointment", async () => {
+      const { app } = makeApp({
+        auth: staffSession,
+        staff: { setAppointmentStatus: () => Promise.reject(new UnknownAppointmentError()) },
+      });
+      expect((await post(app, { status: "arrived" })).status).toBe(404);
+    });
+
+    it("keeps mutating staff routes behind the global Origin guard", async () => {
+      const { app } = makeApp({ auth: staffSession, staff: {} });
+      const res = await app.request("/staff/appointments/a1/status", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          Authorization: "Bearer tok",
+          Origin: "https://evil.example",
+        },
+        body: JSON.stringify({ status: "arrived" }),
+      });
+      expect(res.status).toBe(403);
+      expect(((await res.json()) as { error: string }).error).toBe("forbidden_origin");
+    });
   });
 });

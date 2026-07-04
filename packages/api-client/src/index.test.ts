@@ -3,6 +3,8 @@ import {
   BookingError,
   createApiClient,
   LoginError,
+  StaffError,
+  type DaySheet,
   type BookedAppointment,
   type PatientProfile,
   type ServiceAvailability,
@@ -228,5 +230,80 @@ describe("getMyProfile — benign not-found states", () => {
     const { fetchImpl } = stubFetch(404, { error: "not_found", requestId: "r" });
     const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
     await expect(client.getMyProfile({ cookie: "medibun_session=x" })).resolves.toBeUndefined();
+  });
+});
+
+describe("staff endpoints", () => {
+  const sheet: DaySheet = {
+    date: "2026-07-04",
+    timezone: "America/New_York",
+    practitioners: [{ practitionerId: "pr1", practitionerName: "Riley Reyes" }],
+    appointments: [
+      {
+        id: "a1",
+        practitionerId: "pr1",
+        patientId: "pt1",
+        patientName: "Synthia Loginsmith",
+        start: "2026-07-04T14:00:00.000Z",
+        end: "2026-07-04T14:30:00.000Z",
+        status: "scheduled",
+        firstVisit: true,
+      },
+    ],
+  };
+
+  it("getStaffProfile GETs /staff/me with the forwarded cookie", async () => {
+    const { fetchImpl, calls } = stubFetch(200, { id: "pr1", name: "Riley Reyes" });
+    const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+    await expect(client.getStaffProfile({ cookie: "medibun_session=x" })).resolves.toEqual({
+      id: "pr1",
+      name: "Riley Reyes",
+    });
+    expect(calls[0]!.url).toBe("https://api.example.test/staff/me");
+    expect((calls[0]!.init?.headers as Record<string, string>).cookie).toBe("medibun_session=x");
+  });
+
+  it("getStaffProfile resolves undefined on 401 and 404 (benign signed-out states)", async () => {
+    for (const status of [401, 404]) {
+      const { fetchImpl } = stubFetch(status, { error: "x", requestId: "r" });
+      const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+      await expect(client.getStaffProfile()).resolves.toBeUndefined();
+    }
+  });
+
+  it("getDaySheet GETs /staff/today and returns the sheet", async () => {
+    const { fetchImpl, calls } = stubFetch(200, sheet);
+    const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+    await expect(client.getDaySheet({ sessionToken: "tok" })).resolves.toEqual(sheet);
+    expect(calls[0]!.url).toBe("https://api.example.test/staff/today");
+    expect((calls[0]!.init?.headers as Record<string, string>).authorization).toBe("Bearer tok");
+  });
+
+  it("getDaySheet throws a typed StaffError with the backend code", async () => {
+    const { fetchImpl } = stubFetch(403, { error: "forbidden", requestId: "r" });
+    const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+    const err = await client.getDaySheet().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StaffError);
+    expect((err as StaffError).code).toBe("forbidden");
+  });
+
+  it("setAppointmentStatus POSTs the new status and URL-encodes the id", async () => {
+    const { fetchImpl, calls } = stubFetch(200, { id: "a/1", status: "arrived" });
+    const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+    await expect(client.setAppointmentStatus("a/1", "arrived")).resolves.toEqual({
+      id: "a/1",
+      status: "arrived",
+    });
+    expect(calls[0]!.url).toBe("https://api.example.test/staff/appointments/a%2F1/status");
+    expect(calls[0]!.init?.method).toBe("POST");
+    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({ status: "arrived" });
+  });
+
+  it("setAppointmentStatus maps a 409 to the conflict code (refetch, don't clobber)", async () => {
+    const { fetchImpl } = stubFetch(409, { error: "conflict", requestId: "r" });
+    const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+    const err = await client.setAppointmentStatus("a1", "arrived").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StaffError);
+    expect((err as StaffError).code).toBe("conflict");
   });
 });

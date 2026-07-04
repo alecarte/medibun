@@ -1,6 +1,9 @@
 "use client";
 
+import { createApiClient } from "@medibun/api-client";
 import { tokens } from "@medibun/design-tokens";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { COLLAPSE_COOKIE } from "../lib/prefs";
@@ -78,17 +81,62 @@ function NavItems({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-/** Static until staff auth lands (S5) — then this becomes the login link/identity. */
-function SignInFooter({ collapsed }: { collapsed: boolean }) {
+/** Signed in: the staff member's identity + sign out. Signed out: the login link. */
+function SessionFooter({ collapsed, staffName }: { collapsed: boolean; staffName?: string }) {
+  const router = useRouter();
+  const [pending, setPending] = useState(false);
+
+  if (!staffName) {
+    return (
+      <Link
+        href="/login"
+        className="flex items-center justify-center gap-2 overflow-hidden rounded-control bg-action-primary px-2 py-2 text-sm font-medium text-text-on-accent"
+      >
+        <UserIcon />
+        {!collapsed && <span className="whitespace-nowrap">Sign in</span>}
+      </Link>
+    );
+  }
+
+  async function onSignOut() {
+    setPending(true);
+    try {
+      // Same-origin /api proxy; the BFF revokes the session and clears the cookie.
+      await createApiClient({ baseUrl: "/api" }).logout();
+    } catch {
+      // Never strand the user on a failed logout call — navigate regardless; the
+      // refreshed render reflects the actual session state.
+    } finally {
+      router.push("/login");
+      router.refresh();
+    }
+  }
+
   return (
-    <span className="flex items-center justify-center gap-2 overflow-hidden rounded-control bg-action-primary px-2 py-2 text-sm font-medium text-text-on-accent">
-      <UserIcon />
-      {!collapsed && <span className="whitespace-nowrap">Sign in</span>}
-    </span>
+    <div className="flex flex-col gap-2 overflow-hidden">
+      <span className="flex items-center gap-2 px-2.5 text-sm text-text-primary">
+        <UserIcon />
+        <span className={`min-w-0 truncate font-medium ${labelClass(collapsed)}`}>{staffName}</span>
+      </span>
+      <button
+        type="button"
+        onClick={() => void onSignOut()}
+        disabled={pending}
+        className={`rounded-control border border-border-interactive px-2 py-1.5 text-sm text-text-primary disabled:opacity-60 ${labelClass(collapsed)}`}
+      >
+        {pending ? "Signing out…" : "Sign out"}
+      </button>
+    </div>
   );
 }
 
-export function Sidebar({ initialCollapsed = false }: { initialCollapsed?: boolean }) {
+export function Sidebar({
+  initialCollapsed = false,
+  staffName,
+}: {
+  initialCollapsed?: boolean;
+  staffName?: string;
+}) {
   const [collapsed, setCollapsed] = useState(initialCollapsed);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -185,14 +233,17 @@ export function Sidebar({ initialCollapsed = false }: { initialCollapsed?: boole
               </button>
             </div>
             <NavItems collapsed={false} />
-            <SignInFooter collapsed={false} />
+            <SessionFooter collapsed={false} staffName={staffName} />
           </div>
         </div>
       )}
 
       {/* Desktop shell (md+): the collapsible rail. */}
       <aside
-        className={`hidden shrink-0 flex-col overflow-hidden border-r border-border-hairline px-3 py-5 md:flex ${ANIM} ${collapsed ? "w-16" : "w-56"}`}
+        // Sticky full-viewport rail (differs from the portal shell deliberately): the
+        // day sheet is viewport-tall by nature, and identity/sign-out must stay
+        // reachable without scrolling past the whole calendar.
+        className={`sticky top-0 hidden h-screen shrink-0 flex-col overflow-hidden border-r border-border-hairline px-3 py-5 md:flex ${ANIM} ${collapsed ? "w-16" : "w-56"}`}
       >
         <div className={`relative shrink-0 ${ANIM} ${collapsed ? "h-[5.25rem]" : "h-10"}`}>
           <span className="flex h-10 items-center">
@@ -220,7 +271,7 @@ export function Sidebar({ initialCollapsed = false }: { initialCollapsed?: boole
           <NavItems collapsed={collapsed} />
         </div>
 
-        <SignInFooter collapsed={collapsed} />
+        <SessionFooter collapsed={collapsed} staffName={staffName} />
       </aside>
     </>
   );
