@@ -1,9 +1,10 @@
 # Medibun
 
 Multi-tenant MedSpa/aesthetics platform on a Medplum FHIR core. Architecture, data model, and
-roadmap live in [`/docs`](docs/); the v0 cut and slice status live in
-[`docs/V0_PROPOSAL.md`](docs/V0_PROPOSAL.md). **Local dev is synthetic data only — never real
-PHI.**
+roadmap live in [`/docs`](docs/) ([`docs/README.md`](docs/README.md) is the map — including the
+BFF API reference in [`docs/API.md`](docs/API.md)); the v0 cut and slice status live in
+[`docs/V0_PROPOSAL.md`](docs/V0_PROPOSAL.md). Each app/package has its own short README. **Local
+dev is synthetic data only — never real PHI.**
 
 ## Prerequisites
 
