@@ -19,19 +19,36 @@ describe("portal sidebar", () => {
     expect(screen.getByRole("link", { name: "Home" })).toHaveAttribute("aria-current", "page");
   });
 
-  it("collapses to icons and back, keeping accessible names", () => {
+  it("collapses by fading labels — they never unmount, so names and layout survive", () => {
     render(<Sidebar />);
     fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
-    // Labels leave the DOM; the links stay reachable by their aria-labels.
-    expect(screen.queryByText("Home")).not.toBeInTheDocument();
+    // Animation discipline: labels stay in the DOM and fade (opacity), so text can't
+    // judder mid-transition and links keep their accessible names in both states.
+    expect(screen.getByText("Home")).toHaveClass("opacity-0");
     expect(screen.getByRole("link", { name: "Home" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Book a visit" })).toBeInTheDocument();
-    // Unbuilt destinations keep their honest "soon" in the accessibility tree even
-    // when collapsed (visually hidden text — spans can't carry aria-labels).
-    expect(screen.getByText("Your history — soon")).toBeInTheDocument();
-    expect(screen.getByText("Ask — soon")).toBeInTheDocument();
+    // Unbuilt destinations keep their honest label + "Soon" chip in the tree too.
+    expect(screen.getByText("Your history")).toBeInTheDocument();
+    expect(screen.getByText("Ask")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
-    expect(screen.getByText("Home")).toBeInTheDocument();
+    expect(screen.getByText("Home")).toHaveClass("opacity-100");
+  });
+
+  it("toggles with ⌘/Ctrl+B, but never steals the shortcut from a text field", () => {
+    render(<Sidebar />);
+    fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+    expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "B", metaKey: true });
+    expect(screen.getByRole("button", { name: "Collapse sidebar" })).toBeInTheDocument();
+    // Modified variants (⌘⇧B etc.) belong to other tools — leave them alone.
+    fireEvent.keyDown(window, { key: "b", ctrlKey: true, shiftKey: true });
+    expect(screen.getByRole("button", { name: "Collapse sidebar" })).toBeInTheDocument();
+    // Typing in a form control must not toggle the shell.
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    fireEvent.keyDown(input, { key: "b", ctrlKey: true });
+    expect(screen.getByRole("button", { name: "Collapse sidebar" })).toBeInTheDocument();
+    input.remove();
   });
 
   it("persists the preference as a cookie and honors the server-read initial state", () => {

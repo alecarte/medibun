@@ -114,7 +114,14 @@ exclamation marks). Accent stays action/active/focus-only.
 
 **Shell (rev. 3 direction, Alec 2026-07-03):** the sidebar is **collapsible to an icon rail**
 (hand-drawn line icons, width animated on motion tokens, preference persisted as a non-PHI
-localStorage flag). The profile block carries the **generated avatar** (deterministic
+cookie so the server renders the correct state on first paint — no flash). Collapse animation
+discipline (the pattern the leading shells — shadcn, Linear, VS Code — converge on): the rail
+is a **clipped view of the expanded layout**, never a second layout — icons keep the same
+x-position in both states, labels are `nowrap` and **fade + clip** rather than unmounting, so
+text cannot re-wrap or judder mid-transition; transitions are `motion-safe` only. Keyboard:
+**⌘/Ctrl+B toggles the sidebar** (the shadcn/VS Code convention; ignored while typing in a
+field); **⌘/Ctrl+K is reserved** for search/concierge (patient "Ask" S10, staff palette S11) —
+don't spend it on anything else. The profile block carries the **generated avatar** (deterministic
 initials-on-categorical-wash from the display name — never a photo, so nothing PHI-shaped
 enters the shell) and the **wallet balance** — rendered now at its truthful value ($0 from
 one named constant; a wallet doesn't exist until commerce, and we never fake a demo number),
