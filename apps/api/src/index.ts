@@ -66,6 +66,18 @@ function buildAuthDeps(): { auth: AuthDeps; booking: BookingService; pool: pg.Po
     refresh: (refreshToken) => refreshUserTokens(medplumConfig, refreshToken),
   });
 
+  const allowedOrigins = (process.env.API_ALLOWED_ORIGINS ?? "").split(",").filter(Boolean);
+  if (allowedOrigins.length === 0) {
+    // Loud, not fatal: mobile/server-to-server setups legitimately run with no browser
+    // origins, but a browser login against an empty allowlist 403s every time — the
+    // usual cause is a stale infra/medplum/.env (re-run setup-dev.sh, restart dev:apps).
+    console.warn(
+      JSON.stringify({
+        msg: "API_ALLOWED_ORIGINS is empty — browser logins will be rejected (forbidden_origin). See README troubleshooting.",
+      }),
+    );
+  }
+
   const auth: AuthDeps = {
     async login(email, password) {
       const tokens = await directUserLogin(medplumConfig, projectId, email, password);
@@ -113,7 +125,7 @@ function buildAuthDeps(): { auth: AuthDeps; booking: BookingService; pool: pg.Po
     recordAndCheckRateLimit: (ip) => store.recordAndCheck(ip, LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_MS),
     // Secure by default; explicit opt-out for local-http dev only.
     cookieSecure: process.env.API_COOKIE_INSECURE_DEV === "1" ? false : true,
-    allowedOrigins: (process.env.API_ALLOWED_ORIGINS ?? "").split(",").filter(Boolean),
+    allowedOrigins: allowedOrigins,
     // Trust a proxy-set header only on explicit opt-in (Vercel overwrites x-real-ip).
     // Default: ignore client-controlled headers; all direct traffic shares one bucket.
     clientIp:
