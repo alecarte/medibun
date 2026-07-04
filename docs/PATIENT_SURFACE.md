@@ -1,6 +1,6 @@
 # Patient-surface distribution strategy
 
-**Status: PROPOSED (Fable session, 2026-07-04) — awaiting Alec's review.** Question asked:
+**Status: APPROVED (Alec, 2026-07-04).** Question asked:
 should the patient side be a standalone portal, embeddable components for practice-owned sites
 (Aureva's is agency-built WordPress), or should we provide website-building tools? Two
 research passes (competitive landscape; embed tech + HIPAA) inform this. Citations inline;
@@ -143,3 +143,7 @@ two gate the _implementation_ of phase-2/3 embeds and get verified hands-on then
 - 2026-07-04 — Proposed, from Alec's prompt ("figure out how the patient side should look…
   find the gap in the market… we'll just be integrating this into a WordPress site"). Two
   research passes (competitive distribution landscape; embed tech/HIPAA), synthesized here.
+- 2026-07-04 — **Approved by Alec** ("I approve this new plan"). The phased strategy in §3 is
+  the standing direction: hosted portal with brand continuity now, guest booking overlay
+  post-v0, embedded relationship components + WP plugin as the differentiator. No website
+  builder.

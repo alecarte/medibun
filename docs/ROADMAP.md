@@ -53,8 +53,8 @@ leverage:
 - **Funnel instrumentation** (lands with PostHog; BOOKING_DESIGN.md §5 lists the evidence gaps
   we owe ourselves A/B tests on).
 
-Added 2026-07-04 (patient-surface distribution research — see `PATIENT_SURFACE.md`, pending
-Alec's approval of the strategy):
+Added 2026-07-04 (patient-surface distribution research — see `PATIENT_SURFACE.md`, approved
+by Alec 2026-07-04):
 
 - **Booking overlay snippet** (Boulevard parity): full-viewport branded overlay iframing our
   booking flow on the practice's WordPress site; guest-first, PHI only inside our origin.

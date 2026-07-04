@@ -254,7 +254,7 @@ actions, and screenshot review of every slice.
   website** (Aureva's is agency-built WordPress) and/or a standalone portal for
   membership/loyalty, orders, and two-way practitioner communication. Third research pass run
   (distribution landscape + embed tech/HIPAA); synthesis and phased recommendation in
-  `docs/PATIENT_SURFACE.md` (**proposed, awaiting Alec**): v0 hosted portal with brand
+  `docs/PATIENT_SURFACE.md` (**approved by Alec, 2026-07-04**): v0 hosted portal with brand
   continuity → post-v0 guest booking overlay (Boulevard parity) → embedded relationship
   components (the market gap — no medspa vendor embeds membership/wallet/orders/messaging).
   No website builder. v0 scope is unchanged by this; the binding carry-overs are mobile-first
