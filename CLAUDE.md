@@ -113,3 +113,12 @@ These follow from the brief and decisions made during bootstrap. Treat them like
   app uses extensionless relative imports (Metro/Babel resolution). Match the package you're in.
 - `@medibun/design-tokens` regenerates `src/tokens.generated.ts` and `dist/` on `build`; don't
   hand-edit generated files.
+
+## Session hygiene
+
+- Repeatable workflows are skills, not memory: `slice` (start-to-done slice ritual) and
+  `visual-check` (screenshot-review harness, `tools/visual-check/`). Use them.
+- When compacting or summarizing a session, always preserve: the active slice + branch, the
+  modified-file list, gate/checklist state (what's run, what's still owed), approval-gate
+  decisions pending or granted, and live-verify items. `docs/V0_PROPOSAL.md` §9 is the durable
+  copy — update it before pausing long-running work.

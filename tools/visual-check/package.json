@@ -1,0 +1,9 @@
+{
+  "name": "visual-check",
+  "private": true,
+  "type": "module",
+  "description": "Screenshot-review harness: stub BFF + Playwright scripts (not a workspace package — install here on demand)",
+  "devDependencies": {
+    "playwright-core": "^1.49.0"
+  }
+}

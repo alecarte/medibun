@@ -28,8 +28,7 @@ Binding. Operationalizes the definition of done in `CLAUDE.md`.
 - Synthetic, non-PHI only. No real SSN/MRN/DOB/patient identifiers in fixtures (the pre-edit hook
   blocks the obvious shapes). See `security.md`.
 
-## Definition of done (testing portion)
+## Definition of done
 
-`pnpm typecheck` + `pnpm lint` + `pnpm test` pass; new behavior has tests; no secrets/PHI in the
-diff, logs, or fixtures; access policy reviewed for any new PHI-touching endpoint; security-reviewer
-has run on any PHI/auth/AccessPolicy change.
+Canonical in `CLAUDE.md` — not restated here. This file only defines what its "tested" and
+"new behavior has tests" clauses mean.
