@@ -1,17 +1,16 @@
+import { categoryColors } from "@medibun/design-tokens";
+
+import { CATEGORY_TEXT, CATEGORY_WASH } from "../book/category";
+
 /**
  * Generated avatar (V0_PROPOSAL §6 rev. 3): a deterministic initials-on-wash disc derived
  * from the display name — deliberately never a photo, so nothing PHI-shaped enters the
- * shell. Colors come from the categorical token ramp (tokens are the only visual source).
+ * shell. Styles derive from the one categorical ramp in book/category.ts (whose literal
+ * class strings keep Tailwind's scanner satisfied), so a palette change lands here free.
  */
-
-const AVATAR_STYLES = [
-  "bg-category-sage-wash text-category-sage-text",
-  "bg-category-teal-wash text-category-teal-text",
-  "bg-category-indigo-wash text-category-indigo-text",
-  "bg-category-plum-wash text-category-plum-text",
-  "bg-category-clay-wash text-category-clay-text",
-  "bg-category-slate-wash text-category-slate-text",
-] as const;
+const AVATAR_STYLES = categoryColors.map(
+  (color) => `${CATEGORY_WASH[color]} ${CATEGORY_TEXT[color]}`,
+);
 
 /** Stable small hash so the same name always gets the same color. */
 function hashName(name: string): number {
@@ -29,19 +28,12 @@ export function initials(name: string): string {
   return (first + last).toUpperCase() || "?";
 }
 
-export function Avatar({
-  name,
-  size = "md",
-}: {
-  readonly name: string;
-  readonly size?: "md" | "lg";
-}) {
+export function Avatar({ name }: { readonly name: string }) {
   const style = AVATAR_STYLES[hashName(name) % AVATAR_STYLES.length];
-  const sizing = size === "lg" ? "h-12 w-12 text-base" : "h-8 w-8 text-xs";
   return (
     <span
       aria-hidden
-      className={`inline-flex shrink-0 items-center justify-center rounded-full font-semibold ${sizing} ${style}`}
+      className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${style}`}
     >
       {initials(name)}
     </span>

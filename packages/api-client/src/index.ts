@@ -45,13 +45,17 @@ export type PractitionerAvailability = {
   readonly practitionerId: string;
   /** Display name, already formatted by the backend. */
   readonly practitionerName: string;
-  /** IANA timezone the practitioner schedules in — format slot times in it. */
-  readonly timezone: string;
   readonly slots: readonly AvailabilitySlot[];
 };
 
 export type ServiceAvailability = {
   readonly serviceCode: string;
+  /** IANA practice timezone — format slot times and bucket days in it. */
+  readonly timezone: string;
+  /** The exact window the slots were fetched for (ISO instant + day count) — the UI
+   *  renders THIS window, never a clock of its own, so no slot can fall outside it. */
+  readonly windowStart: string;
+  readonly windowDays: number;
   readonly practitioners: readonly PractitionerAvailability[];
 };
 

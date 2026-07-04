@@ -102,12 +102,14 @@ describe("getAvailability", () => {
     const availability = await service.getAvailability("svc-botox");
     expect(availability).toEqual({
       serviceCode: "svc-botox",
+      timezone: "America/New_York",
+      windowStart: NOW.toISOString(),
+      windowDays: 7,
       practitioners: [
         {
           scheduleId: "sched-1",
           practitionerId: "p1",
           practitionerName: "Riley Reyes",
-          timezone: "America/New_York",
           slots: [{ start: "2026-07-07T14:00:00.000Z", end: "2026-07-07T14:30:00.000Z" }],
         },
       ],

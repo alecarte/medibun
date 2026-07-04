@@ -23,3 +23,13 @@ export const CATEGORY_WASH: Record<ServiceColor, string> = {
   clay: "bg-category-clay-wash",
   slate: "bg-category-slate-wash",
 };
+
+/** Saturated text color per category (also the avatar initials color). */
+export const CATEGORY_TEXT: Record<ServiceColor, string> = {
+  sage: "text-category-sage-text",
+  teal: "text-category-teal-text",
+  indigo: "text-category-indigo-text",
+  plum: "text-category-plum-text",
+  clay: "text-category-clay-text",
+  slate: "text-category-slate-text",
+};

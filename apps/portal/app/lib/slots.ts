@@ -6,14 +6,6 @@ import type { AvailabilitySlot } from "@medibun/api-client";
  * not in the browser's zone. Numbers are always tabular (DESIGN.md).
  */
 
-export type DayGroup = {
-  /** Stable per-day key in the practice timezone (YYYY-MM-DD). */
-  readonly dayKey: string;
-  /** e.g. "Thursday, July 9" */
-  readonly dayLabel: string;
-  readonly slots: readonly AvailabilitySlot[];
-};
-
 // Intl.DateTimeFormat construction is expensive and the picker formats one label per
 // slot per render — cache per timezone (one practice timezone per page in practice).
 const memoized = (build: (timezone: string) => Intl.DateTimeFormat) => {
@@ -43,21 +35,6 @@ const timeFormat = memoized(
  *  output (and the tests pinning it) is byte-identical across Node/browser versions. */
 const plainSpaces = (s: string) => s.replace(/\u202f/g, " ");
 
-/** Slots bucketed per practice-timezone day, in chronological order. */
-export function groupSlotsByDay(slots: readonly AvailabilitySlot[], timezone: string): DayGroup[] {
-  const keyOf = dayKeyFormat(timezone);
-  const labelOf = dayLabelFormat(timezone);
-  const groups = new Map<string, { dayLabel: string; slots: AvailabilitySlot[] }>();
-  for (const slot of [...slots].sort((a, b) => a.start.localeCompare(b.start))) {
-    const date = new Date(slot.start);
-    const dayKey = keyOf.format(date);
-    const group = groups.get(dayKey) ?? { dayLabel: labelOf.format(date), slots: [] };
-    group.slots.push(slot);
-    groups.set(dayKey, group);
-  }
-  return [...groups.entries()].map(([dayKey, group]) => ({ dayKey, ...group }));
-}
-
 export type DayStripDay = {
   /** Stable per-day key in the practice timezone (YYYY-MM-DD). */
   readonly dayKey: string;
@@ -78,28 +55,53 @@ const dayOfMonthFormat = memoized(
 );
 
 /**
- * The booking window as a 7-day strip (BOOKING_DESIGN.md §3): every practice-timezone
- * day from `from` through the next 6 days, each carrying its slots — including empty
- * days, so fullness is honestly visible per day.
+ * The booking window as a day strip (BOOKING_DESIGN.md §3): every practice-timezone
+ * calendar day the window [start, start + days*24h] intersects, each carrying its
+ * slots — including empty days, so fullness is honestly visible per day. The window
+ * comes from the availability DTO, never a client clock, so no payload slot can fall
+ * outside the strip. Walked in 6-hour steps: unlike +24h arithmetic, that can never
+ * duplicate or skip a practice-timezone day across DST transitions (23h/25h days).
  */
 export function dayStrip(
   slots: readonly AvailabilitySlot[],
   timezone: string,
-  from: Date,
+  windowStartIso: string,
+  windowDays: number,
 ): DayStripDay[] {
-  const groups = new Map(groupSlotsByDay(slots, timezone).map((g) => [g.dayKey, g.slots]));
   const keyOf = dayKeyFormat(timezone);
+  // Bucket slots per day, sorted once — dayParts relies on this order downstream.
+  const buckets = new Map<string, AvailabilitySlot[]>();
+  for (const slot of [...slots].sort((a, b) => a.start.localeCompare(b.start))) {
+    const dayKey = keyOf.format(new Date(slot.start));
+    const bucket = buckets.get(dayKey);
+    if (bucket) {
+      bucket.push(slot);
+    } else {
+      buckets.set(dayKey, [slot]);
+    }
+  }
+  const startMs = Date.parse(windowStartIso);
+  const endMs = startMs + windowDays * 24 * 60 * 60 * 1000;
+  const STEP_MS = 6 * 60 * 60 * 1000;
   const days: DayStripDay[] = [];
-  for (let i = 0; i < 7; i++) {
-    const date = new Date(from.getTime() + i * 24 * 60 * 60 * 1000);
+  const seen = new Set<string>();
+  for (let t = startMs; ; t += STEP_MS) {
+    const clamped = Math.min(t, endMs);
+    const date = new Date(clamped);
     const dayKey = keyOf.format(date);
-    days.push({
-      dayKey,
-      weekday: weekdayFormat(timezone).format(date),
-      dayOfMonth: dayOfMonthFormat(timezone).format(date),
-      dayLabel: dayLabelFormat(timezone).format(date),
-      slots: groups.get(dayKey) ?? [],
-    });
+    if (!seen.has(dayKey)) {
+      seen.add(dayKey);
+      days.push({
+        dayKey,
+        weekday: weekdayFormat(timezone).format(date),
+        dayOfMonth: dayOfMonthFormat(timezone).format(date),
+        dayLabel: dayLabelFormat(timezone).format(date),
+        slots: buckets.get(dayKey) ?? [],
+      });
+    }
+    if (clamped === endMs) {
+      break;
+    }
   }
   return days;
 }
@@ -114,10 +116,11 @@ const hourFormat = memoized(
   (timeZone) => new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", hourCycle: "h23" }),
 );
 
-/** One day's slots bucketed Morning (<12) / Afternoon (12–16) / Evening (17+), practice tz. */
+/** One day's slots bucketed Morning (<12) / Afternoon (12–16) / Evening (17+), practice
+ *  tz. Input arrives chronologically sorted (dayStrip buckets sort once). */
 export function dayParts(slots: readonly AvailabilitySlot[], timezone: string): DayPart[] {
   const buckets: Record<string, AvailabilitySlot[]> = { Morning: [], Afternoon: [], Evening: [] };
-  for (const slot of [...slots].sort((a, b) => a.start.localeCompare(b.start))) {
+  for (const slot of slots) {
     const hour = Number(hourFormat(timezone).format(new Date(slot.start)));
     const label = hour < 12 ? "Morning" : hour < 17 ? "Afternoon" : "Evening";
     buckets[label]!.push(slot);

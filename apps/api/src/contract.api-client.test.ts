@@ -195,12 +195,14 @@ describe("api-client ⇄ BFF booking contract (real booking service, stubbed FHI
     const client = makeClient();
     await expect(client.getAvailability("svc-botox", auth)).resolves.toEqual({
       serviceCode: "svc-botox",
+      timezone: "America/New_York",
+      windowStart: NOW.toISOString(),
+      windowDays: 7,
       practitioners: [
         {
           scheduleId: "sched-1",
           practitionerId: "prac-1",
           practitionerName: "Riley Reyes",
-          timezone: "America/New_York",
           slots: [{ start: SLOT_START, end: SLOT_END }],
         },
       ],

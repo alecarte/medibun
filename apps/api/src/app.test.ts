@@ -33,7 +33,14 @@ function makeApp(
   const booking: BookingDeps | undefined = opts.booking
     ? {
         listServices: () => Promise.resolve([]),
-        getAvailability: () => Promise.resolve({ serviceCode: "svc-x", practitioners: [] }),
+        getAvailability: () =>
+          Promise.resolve({
+            serviceCode: "svc-x",
+            timezone: "America/New_York",
+            windowStart: "2026-07-06T12:00:00.000Z",
+            windowDays: 7,
+            practitioners: [],
+          }),
         book: () => Promise.reject(new Error("book not stubbed")),
         ...opts.booking,
       }
@@ -463,12 +470,14 @@ describe("booking routes", () => {
   it("GET /services/:code/availability returns the fan-out result", async () => {
     const availability = {
       serviceCode: "svc-botox",
+      timezone: "America/New_York",
+      windowStart: "2026-07-06T12:00:00.000Z",
+      windowDays: 7,
       practitioners: [
         {
           scheduleId: "sched-1",
           practitionerId: "p1",
           practitionerName: "Riley Reyes",
-          timezone: "America/New_York",
           slots: [{ start: "2026-07-07T14:00:00.000Z", end: "2026-07-07T14:30:00.000Z" }],
         },
       ],

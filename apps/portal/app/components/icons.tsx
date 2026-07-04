@@ -1,7 +1,11 @@
 /**
  * Minimal line icons for the shell (hand-drawn, stroke=currentColor — no icon
- * dependency for five glyphs). 24px grid, 1.5px stroke, round caps: the
+ * dependency for a handful of glyphs). 24px grid, 1.5px stroke, round caps: the
  * refined-schematic register from DESIGN.md.
+ *
+ * Boundary (decided at S4.5 review): hand-rolled icons are for the SHELL only. The
+ * moment shadcn components (which ship lucide) land, new icons come from lucide at a
+ * matched stroke weight — don't grow a parallel icon system here.
  */
 
 function Icon({ children, className }: { children: React.ReactNode; className?: string }) {

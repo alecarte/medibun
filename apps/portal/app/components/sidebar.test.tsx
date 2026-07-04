@@ -26,9 +26,24 @@ describe("portal sidebar", () => {
     expect(screen.queryByText("Home")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Home" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Book a visit" })).toBeInTheDocument();
-    expect(screen.queryByText("Soon")).not.toBeInTheDocument();
+    // Unbuilt destinations keep their honest "soon" in the accessibility tree even
+    // when collapsed (visually hidden text — spans can't carry aria-labels).
+    expect(screen.getByText("Your history — soon")).toBeInTheDocument();
+    expect(screen.getByText("Ask — soon")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
     expect(screen.getByText("Home")).toBeInTheDocument();
+  });
+
+  it("persists the preference as a cookie and honors the server-read initial state", () => {
+    render(<Sidebar />);
+    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(document.cookie).toContain("medibun_sidebar=1");
+    fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
+    expect(document.cookie).toContain("medibun_sidebar=0");
+    // A fresh render with the server-read cookie value starts collapsed — the first
+    // paint is already right, no post-hydration flash (code-review fix).
+    render(<Sidebar initialCollapsed />);
+    expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeInTheDocument();
   });
 
   it("marks not-yet-built destinations as Soon (honest shell)", () => {

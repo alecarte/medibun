@@ -3,8 +3,9 @@
 import { tokens } from "@medibun/design-tokens";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
+import { COLLAPSE_COOKIE } from "../lib/prefs";
 import { formatPrice } from "../lib/slots";
 import { Avatar } from "./avatar";
 import {
@@ -17,8 +18,9 @@ import {
   WalletIcon,
 } from "./icons";
 
-// Non-PHI UI preference only — never session or patient data in client storage.
-const COLLAPSE_KEY = "medibun.sidebar.collapsed";
+// Collapse preference rides a cookie (lib/prefs.ts), not localStorage: the server
+// layout renders the collapsed state on the first paint (no post-hydration flash or
+// layout shift) and document.cookie never throws where storage is blocked (review fixes).
 
 // Wallet credits arrive with the commerce phase (BOOKING_DESIGN.md shell spec); until
 // then the truthful balance of a not-yet-existing wallet is zero. One constant to
@@ -32,18 +34,21 @@ const itemClass = (active: boolean, collapsed: boolean) =>
 
 // The persistent app shell navigation. Items activate as their slices land (booking
 // landed with S4; history S9, concierge S10) — shown as "Soon" until then.
-export function Sidebar({ profileName }: { profileName?: string }) {
+export function Sidebar({
+  profileName,
+  initialCollapsed = false,
+}: {
+  profileName?: string;
+  /** Server-read cookie value, so the first paint is already in the right state. */
+  initialCollapsed?: boolean;
+}) {
   const pathname = usePathname();
-  const [collapsed, setCollapsed] = useState(false);
-  // Restore after mount (client storage isn't available during SSR).
-  useEffect(() => {
-    setCollapsed(localStorage.getItem(COLLAPSE_KEY) === "1");
-  }, []);
+  const [collapsed, setCollapsed] = useState(initialCollapsed);
   const toggle = () => {
-    setCollapsed((current) => {
-      localStorage.setItem(COLLAPSE_KEY, current ? "0" : "1");
-      return !current;
-    });
+    const next = !collapsed;
+    // Side effect in the handler, never in the state updater (updaters must be pure).
+    document.cookie = `${COLLAPSE_COOKIE}=${next ? "1" : "0"}; path=/; max-age=31536000; SameSite=Lax`;
+    setCollapsed(next);
   };
 
   const links = [
@@ -109,14 +114,18 @@ export function Sidebar({ profileName }: { profileName?: string }) {
           </Link>
         ))}
         {comingSoon.map(({ label, icon: ItemIcon }) => (
+          // Plain content, no aria-label: generic spans are name-prohibited, so the
+          // label lives in (visually hidden) text and the "soon" honesty survives in
+          // the accessibility tree in both states (review fix).
           <span
             key={label}
-            aria-label={label}
             title={collapsed ? `${label} — soon` : undefined}
             className={`${itemClass(false, collapsed)} ${collapsed ? "opacity-50" : ""}`}
           >
             <ItemIcon />
-            {!collapsed && (
+            {collapsed ? (
+              <span className="sr-only">{label} — soon</span>
+            ) : (
               <>
                 <span className="flex-1">{label}</span>
                 <span className="rounded-full bg-surface-well px-2 py-0.5 text-xs">Soon</span>

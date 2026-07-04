@@ -31,18 +31,21 @@ const service = {
   categoryColor: "sage" as const,
 };
 
-// The page pins the strip window to the real "now", so the fixture slot must be
-// relative — a fixed date would rot out of the 7-day window and flake.
-const slotStart = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
+// The strip renders the availability DTO's own window, so the fixture is fully
+// deterministic — no wall-clock dependence.
+const slotStart = new Date("2026-07-09T14:00:00.000Z");
 slotStart.setUTCMinutes(0, 0, 0);
 const availability = {
   serviceCode: "svc-botox",
+  timezone: "America/New_York",
+  // The strip renders the DTO's window — anchor it just before the fixture slot.
+  windowStart: new Date(slotStart.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+  windowDays: 7,
   practitioners: [
     {
       scheduleId: "sched-riley",
       practitionerId: "prac-riley",
       practitionerName: "Riley Reyes",
-      timezone: "America/New_York",
       slots: [
         {
           start: slotStart.toISOString(),

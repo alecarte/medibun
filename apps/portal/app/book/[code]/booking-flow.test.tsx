@@ -9,6 +9,17 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh }),
 }));
 
+// jsdom has no object-URL support; capture the Blob so tests can read the .ics payload.
+const createdBlobs: Blob[] = [];
+beforeEach(() => {
+  createdBlobs.length = 0;
+  URL.createObjectURL = vi.fn((blob: Blob | MediaSource) => {
+    createdBlobs.push(blob as Blob);
+    return "blob:mock-ics";
+  });
+  URL.revokeObjectURL = vi.fn();
+});
+
 const service: ServiceSummary = {
   code: "svc-botox",
   name: "Botox",
@@ -18,18 +29,18 @@ const service: ServiceSummary = {
   categoryColor: "sage",
 };
 
-// Window starts Monday July 6 (America/New_York). Slots sit on Thursday July 9:
+// Window starts Monday July 6, 8:00 AM ET; slots sit on Thursday July 9:
 // 14:00Z = 10:00 AM ET (morning) and 18:00Z = 2:00 PM ET (afternoon).
-const WINDOW_START = "2026-07-06T12:00:00.000Z";
-
 const availability: ServiceAvailability = {
   serviceCode: "svc-botox",
+  timezone: "America/New_York",
+  windowStart: "2026-07-06T12:00:00.000Z",
+  windowDays: 7,
   practitioners: [
     {
       scheduleId: "sched-riley",
       practitionerId: "prac-riley",
       practitionerName: "Riley Reyes",
-      timezone: "America/New_York",
       slots: [
         { start: "2026-07-09T14:00:00.000Z", end: "2026-07-09T14:30:00.000Z" },
         { start: "2026-07-09T18:00:00.000Z", end: "2026-07-09T18:30:00.000Z" },
@@ -39,7 +50,6 @@ const availability: ServiceAvailability = {
       scheduleId: "sched-maya",
       practitionerId: "prac-maya",
       practitionerName: "Maya Chen",
-      timezone: "America/New_York",
       // First slot is the SAME instant as Riley's first — the aligned-grid norm.
       slots: [
         { start: "2026-07-09T14:00:00.000Z", end: "2026-07-09T14:30:00.000Z" },
@@ -60,11 +70,7 @@ const booked = {
 
 function renderFlow(overrides: { availability?: ServiceAvailability } = {}) {
   return render(
-    <BookingFlow
-      service={service}
-      availability={overrides.availability ?? availability}
-      windowStartIso={WINDOW_START}
-    />,
+    <BookingFlow service={service} availability={overrides.availability ?? availability} />,
   );
 }
 
@@ -74,12 +80,13 @@ describe("booking flow", () => {
     refresh.mockClear();
   });
 
-  it("renders the 7-day strip with empty days disabled and the first open day active", () => {
+  it("renders every window day with availability in the accessible name, empty days disabled", () => {
     renderFlow();
+    // The 7*24h window from Monday 8:00 AM ET touches 8 calendar days.
     const days = screen.getAllByRole("button", { name: /July/ });
-    expect(days).toHaveLength(7);
-    expect(screen.getByRole("button", { name: "Monday, July 6" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Thursday, July 9" })).toHaveAttribute(
+    expect(days).toHaveLength(8);
+    expect(screen.getByRole("button", { name: "Monday, July 6, no open times" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Thursday, July 9, 2 open times" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
@@ -93,19 +100,24 @@ describe("booking flow", () => {
     expect(screen.getByRole("button", { name: "2:00 PM" })).toBeInTheDocument();
   });
 
-  it("shows the first-available practitioner and switches via the affordance", () => {
+  it("switches practitioners and reveals the newly picked day's times", () => {
     renderFlow();
-    expect(screen.getByText(/first available/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "10:00 AM" }));
     expect(screen.getByRole("button", { name: "Book 10:00 AM" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Switch practitioner" }));
     fireEvent.click(screen.getByRole("button", { name: "Maya Chen" }));
-    // Selection cleared; Maya's Friday day is now open in the strip too.
     expect(screen.queryByRole("button", { name: "Book 10:00 AM" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Friday, July 10" })).toBeEnabled();
+    // Day switching actually swaps the rendered slots (regression guard).
+    fireEvent.click(screen.getByRole("button", { name: "Friday, July 10, 1 open time" }));
+    expect(screen.getByRole("button", { name: /Friday, July 10/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "10:00 AM" })).toBeInTheDocument();
+    expect(screen.queryByText("Afternoon")).not.toBeInTheDocument();
   });
 
-  it("books optimistically and lands the pre-arrival ritual", async () => {
+  it("books optimistically, moves focus to the outcome, and lands the pre-arrival ritual", async () => {
     const calls = stubFetch(201, booked);
     renderFlow();
     fireEvent.click(screen.getByRole("button", { name: "10:00 AM" }));
@@ -114,14 +126,22 @@ describe("booking flow", () => {
     expect(screen.getByText(/Booked for/)).toBeInTheDocument();
     expect(screen.getByText("Saving to your record…")).toBeInTheDocument();
     expect(await screen.findByText("It's on the studio's schedule.")).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: /Booked for Thursday, July 9 at 10:00 AM/ }),
-    ).toBeInTheDocument();
+    const heading = screen.getByRole("heading", {
+      name: /Booked for Thursday, July 9 at 10:00 AM/,
+    });
+    // Focus lands on the outcome so it is announced (a11y review fix).
+    expect(heading).toHaveFocus();
     // The confirmation is the start of the next visit, not a receipt.
     expect(screen.getByText(/Skip alcohol and blood thinners/)).toBeInTheDocument();
     const calendar = screen.getByRole("link", { name: "Add to calendar" });
-    expect(calendar.getAttribute("href")).toMatch(/^data:text\/calendar/);
-    expect(decodeURIComponent(calendar.getAttribute("href")!)).toContain("UID:appt-1@medibun");
+    expect(calendar).toHaveAttribute("href", "blob:mock-ics");
+    // Stable UID regardless of settle timing — re-downloads must not duplicate events.
+    const ics = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.readAsText(createdBlobs[0]!);
+    });
+    expect(ics).toContain("UID:svc-botox-2026-07-09T14:00:00.000Z@medibun");
     expect(calls[0]!.url).toBe("/api/appointments");
     expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({
       serviceCode: "svc-botox",
@@ -133,13 +153,14 @@ describe("booking flow", () => {
     expect(refresh).not.toHaveBeenCalled();
   });
 
-  it("rolls back calmly when the slot was just taken, and hides the dead time", async () => {
+  it("rolls back calmly when the slot was just taken, hides the dead time, focuses the error", async () => {
     stubFetch(409, { error: "slot_taken", requestId: "r" });
     renderFlow();
     fireEvent.click(screen.getByRole("button", { name: "10:00 AM" }));
     fireEvent.click(screen.getByRole("button", { name: "Book 10:00 AM" }));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("That time was just booked.");
+    expect(alert).toHaveFocus();
     // Back on the picker, with the taken slot hidden and others still offered.
     expect(screen.queryByRole("button", { name: "10:00 AM" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "2:00 PM" })).toBeInTheDocument();
@@ -156,10 +177,32 @@ describe("booking flow", () => {
     // Riley's Thursday 10:00 AM is dead — Maya's Thursday 10:00 AM must survive.
     fireEvent.click(screen.getByRole("button", { name: "Switch practitioner" }));
     fireEvent.click(screen.getByRole("button", { name: "Maya Chen" }));
-    expect(screen.getByRole("button", { name: "Thursday, July 9" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: /Thursday, July 9/ })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
+    expect(screen.getByRole("button", { name: "10:00 AM" })).toBeInTheDocument();
+  });
+
+  it("re-defaults the practitioner when a refresh removes the selected schedule (no dead end)", async () => {
+    stubFetch(409, { error: "slot_taken", requestId: "r" });
+    const { rerender } = renderFlow();
+    fireEvent.click(screen.getByRole("button", { name: "10:00 AM" }));
+    fireEvent.click(screen.getByRole("button", { name: "Book 10:00 AM" }));
+    await screen.findByRole("alert");
+    // Fresh availability arrives without Riley's schedule (retired between renders).
+    rerender(
+      <BookingFlow
+        service={service}
+        availability={{
+          ...availability,
+          practitioners: availability.practitioners.filter((p) => p.scheduleId === "sched-maya"),
+        }}
+      />,
+    );
+    // The picker re-defaults to Maya instead of dead-ending on "No open times".
+    expect(screen.getByText("Maya Chen")).toBeInTheDocument();
+    expect(screen.queryByText(/No open times in the next week/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "10:00 AM" })).toBeInTheDocument();
   });
 
@@ -188,13 +231,12 @@ describe("booking flow", () => {
   it("designs the empty state: no open times, stated plainly", () => {
     renderFlow({
       availability: {
-        serviceCode: "svc-botox",
+        ...availability,
         practitioners: [
           {
             scheduleId: "sched-riley",
             practitionerId: "prac-riley",
             practitionerName: "Riley Reyes",
-            timezone: "America/New_York",
             slots: [],
           },
         ],

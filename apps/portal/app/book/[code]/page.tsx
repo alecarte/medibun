@@ -67,12 +67,8 @@ export default async function ServiceBookingPage({
           We couldn't load open times. Refresh to try again.
         </p>
       ) : (
-        // The window start is pinned server-side so the 7-day strip hydrates identically.
-        <BookingFlow
-          service={service}
-          availability={availability}
-          windowStartIso={new Date().toISOString()}
-        />
+        // The day strip renders the DTO's own window — no client clock to drift.
+        <BookingFlow service={service} availability={availability} />
       )}
     </div>
   );
