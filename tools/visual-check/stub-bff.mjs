@@ -100,9 +100,9 @@ createServer((req, res) => {
       : json(res, 401, { error: "unauthorized", requestId: "stub" });
   }
   if (!signedIn) return json(res, 401, { error: "unauthorized", requestId: "stub" });
-  if (url.pathname === "/staff/today") {
+  if (url.pathname === "/staff/schedule") {
     return json(res, 200, {
-      date: new Date().toISOString().slice(0, 10),
+      date: url.searchParams.get("date") ?? new Date().toISOString().slice(0, 10),
       timezone: "America/New_York",
       practitioners: [
         { practitionerId: "prac-maya", practitionerName: "Maya Chen" },

@@ -345,7 +345,7 @@ describe("api-client ⇄ BFF staff contract (real staff service, stubbed FHIR wi
 
   it("round-trips the day sheet DTO (the contract's heart)", async () => {
     const client = makeStaffClient();
-    const sheet = await client.getDaySheet(auth);
+    const sheet = await client.getDaySheet(undefined, auth);
     expect(sheet).toEqual({
       date: "2026-07-06",
       timezone: "America/New_York",

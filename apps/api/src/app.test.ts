@@ -672,7 +672,7 @@ describe("staff routes", () => {
 
   it("staff routes 404 when staff deps are not wired", async () => {
     const { app } = makeApp({ auth: staffSession });
-    expect((await app.request("/staff/today")).status).toBe(404);
+    expect((await app.request("/staff/schedule")).status).toBe(404);
   });
 
   describe("GET /staff/me", () => {
@@ -709,15 +709,17 @@ describe("staff routes", () => {
     });
   });
 
-  describe("GET /staff/today", () => {
+  describe("GET /staff/schedule", () => {
     it("401s without a session", async () => {
       const { app } = makeApp({ auth: {}, staff: {} });
-      expect((await app.request("/staff/today")).status).toBe(401);
+      expect((await app.request("/staff/schedule")).status).toBe(401);
     });
 
     it("403s a signed-in NON-staff principal (patient session)", async () => {
       const { app } = makeApp({ auth: patientSession, staff: {} });
-      const res = await app.request("/staff/today", { headers: { Authorization: "Bearer tok" } });
+      const res = await app.request("/staff/schedule", {
+        headers: { Authorization: "Bearer tok" },
+      });
       expect(res.status).toBe(403);
       expect(((await res.json()) as { error: string }).error).toBe("forbidden");
     });
@@ -727,9 +729,31 @@ describe("staff routes", () => {
         auth: staffSession,
         staff: { getDaySheet: () => Promise.resolve(sheet) },
       });
-      const res = await app.request("/staff/today", { headers: { Authorization: "Bearer tok" } });
+      const res = await app.request("/staff/schedule", {
+        headers: { Authorization: "Bearer tok" },
+      });
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual(sheet);
+    });
+
+    it("passes a valid date param through and 400s malformed or impossible dates", async () => {
+      const dates: (string | undefined)[] = [];
+      const { app } = makeApp({
+        auth: staffSession,
+        staff: {
+          getDaySheet: (_user, date) => {
+            dates.push(date);
+            return Promise.resolve(sheet);
+          },
+        },
+      });
+      const get = (qs: string) =>
+        app.request(`/staff/schedule${qs}`, { headers: { Authorization: "Bearer tok" } });
+      expect((await get("?date=2026-07-06")).status).toBe(200);
+      expect(dates).toEqual(["2026-07-06"]);
+      expect((await get("?date=tomorrow")).status).toBe(400);
+      expect((await get("?date=2026-02-31")).status).toBe(400);
+      expect(dates).toEqual(["2026-07-06"]); // rejected dates never reach the service
     });
   });
 

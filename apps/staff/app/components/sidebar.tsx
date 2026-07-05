@@ -3,11 +3,19 @@
 import { createApiClient } from "@medibun/api-client";
 import { tokens } from "@medibun/design-tokens";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { COLLAPSE_COOKIE } from "../lib/prefs";
-import { CalendarIcon, ChatIcon, CloseIcon, MenuIcon, PanelIcon, UserIcon } from "./icons";
+import {
+  CalendarIcon,
+  ChatIcon,
+  CloseIcon,
+  HomeIcon,
+  MenuIcon,
+  PanelIcon,
+  UserIcon,
+} from "./icons";
 
 // The staff shell, in the quiet-tool register — same mechanics as the portal shell
 // (collapsible icon rail, cookie-persisted server-first-paint state, ⌘/Ctrl+B toggle,
@@ -16,10 +24,14 @@ import { CalendarIcon, ChatIcon, CloseIcon, MenuIcon, PanelIcon, UserIcon } from
 //
 // ⌘/Ctrl+K is RESERVED for the staff command palette / assistant (S11).
 
+// "Today" is the future staff DASHBOARD (events, follow-ups, radar — direction from the
+// S5a review); the schedule is its own destination. Items without an href are honest
+// "Soon" placeholders until their slices land (dashboard TBD, patients S7, assistant S11).
 const NAV_ITEMS = [
-  { label: "Today", icon: CalendarIcon, active: true },
-  { label: "Patients", icon: UserIcon, active: false },
-  { label: "Assistant", icon: ChatIcon, active: false },
+  { label: "Today", icon: HomeIcon, href: undefined },
+  { label: "Schedule", icon: CalendarIcon, href: "/schedule" },
+  { label: "Patients", icon: UserIcon, href: undefined },
+  { label: "Assistant", icon: ChatIcon, href: undefined },
 ] as const;
 
 const ANIM =
@@ -50,33 +62,47 @@ function Wordmark() {
   );
 }
 
-/** Items beyond Today activate as their slices land (patients with capture S7,
- *  assistant S11) — shown as "Soon" until then, honestly. */
 function NavItems({ collapsed }: { collapsed: boolean }) {
+  const pathname = usePathname();
   return (
     <nav aria-label="Primary" className="flex flex-1 flex-col gap-1">
-      {NAV_ITEMS.map(({ label, icon: ItemIcon, active }) => (
-        <span
-          key={label}
-          aria-current={active ? "page" : undefined}
-          title={collapsed ? (active ? label : `${label} — soon`) : undefined}
-          className={`flex items-center gap-3 overflow-hidden rounded-md px-2.5 py-2 text-sm ${
-            active
-              ? "bg-brand-wash font-medium text-brand-primary"
-              : "text-text-secondary" + (collapsed ? " opacity-50" : "")
-          }`}
-        >
-          <ItemIcon />
-          <span className={`flex-1 ${labelClass(collapsed)}`}>{label}</span>
-          {!active && (
+      {NAV_ITEMS.map(({ label, icon: ItemIcon, href }) => {
+        const active = href !== undefined && pathname.startsWith(href);
+        const itemClass = `flex items-center gap-3 overflow-hidden rounded-md px-2.5 py-2 text-sm ${
+          active
+            ? "bg-brand-wash font-medium text-brand-primary"
+            : "text-text-secondary" + (collapsed ? " opacity-50" : "")
+        }`;
+        if (href === undefined) {
+          return (
             <span
-              className={`rounded-full bg-surface-well px-2 py-0.5 text-xs ${labelClass(collapsed)}`}
+              key={label}
+              title={collapsed ? `${label} — soon` : undefined}
+              className={itemClass}
             >
-              Soon
+              <ItemIcon />
+              <span className={`flex-1 ${labelClass(collapsed)}`}>{label}</span>
+              <span
+                className={`rounded-full bg-surface-well px-2 py-0.5 text-xs ${labelClass(collapsed)}`}
+              >
+                Soon
+              </span>
             </span>
-          )}
-        </span>
-      ))}
+          );
+        }
+        return (
+          <Link
+            key={label}
+            href={href}
+            aria-current={active ? "page" : undefined}
+            title={collapsed ? label : undefined}
+            className={itemClass}
+          >
+            <ItemIcon />
+            <span className={`flex-1 ${labelClass(collapsed)}`}>{label}</span>
+          </Link>
+        );
+      })}
     </nav>
   );
 }

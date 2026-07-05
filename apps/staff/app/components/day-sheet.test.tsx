@@ -79,7 +79,7 @@ describe("DaySheetView", () => {
   it("shows the designed empty state when the day has no appointments", () => {
     stubFetch(200, {});
     render(<DaySheetView sheet={{ ...sheet, appointments: [] }} />);
-    expect(screen.getByText("No appointments today.")).toBeInTheDocument();
+    expect(screen.getByText("No appointments on this day.")).toBeInTheDocument();
     expect(screen.getByText(/Portal bookings appear here/)).toBeInTheDocument();
     // Columns still render — the sheet's shape is honest even when empty.
     expect(screen.getByText("Riley Reyes")).toBeInTheDocument();

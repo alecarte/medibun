@@ -243,9 +243,10 @@ export type ApiClient = {
    *  (401) or when the session's principal is not staff (404) — both benign
    *  signed-out-equivalent states for a UI, never crashes. */
   readonly getStaffProfile: (auth?: SessionAuth) => Promise<StaffProfile | undefined>;
-  /** Today's day sheet (practitioner columns + appointments), practice-local. Staff
-   *  session required. Throws StaffError. */
-  readonly getDaySheet: (auth?: SessionAuth) => Promise<DaySheet>;
+  /** The schedule day sheet (practitioner columns + appointments) for one
+   *  practice-local date (YYYY-MM-DD; omit for today). Staff session required.
+   *  Throws StaffError. */
+  readonly getDaySheet: (date?: string, auth?: SessionAuth) => Promise<DaySheet>;
   /** Moves an appointment through the status workflow (check-in, undo, roomed, …).
    *  Throws StaffError — "conflict" when the appointment changed under you (refetch). */
   readonly setAppointmentStatus: (
@@ -362,8 +363,11 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
       return (await res.json()) as StaffProfile;
     },
 
-    async getDaySheet(auth) {
-      const res = await fetchImpl(`${baseUrl}/staff/today`, { headers: authHeaders(auth) });
+    async getDaySheet(date, auth) {
+      const query = date ? `?date=${encodeURIComponent(date)}` : "";
+      const res = await fetchImpl(`${baseUrl}/staff/schedule${query}`, {
+        headers: authHeaders(auth),
+      });
       if (!res.ok) {
         throw new StaffError(await errorCodeFrom(res, STAFF_CODES), res.status);
       }

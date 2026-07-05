@@ -147,7 +147,7 @@ start) · `409 slot_taken` (the window was booked in the meantime — clients re
 Session-gated, and — unlike booking — **every FHIR call runs as the signed-in staff member's
 own Medplum principal** (their session token). Their org-parameterized AccessPolicy
 (`staff-front-desk-v1` / `staff-clinician-v1`, A3) is the enforcement line, and AuditEvents
-attribute to them by construction. `GET /staff/today` and the status route additionally require
+attribute to them by construction. `GET /staff/schedule` and the status route additionally require
 a `Practitioner/` profile: a signed-in patient gets `403 forbidden`. Encounter creation on
 check-in belongs to the check-in Bot (A7), never these routes.
 
@@ -157,10 +157,13 @@ The signed-in staff member's own profile. `200 { "id": "…", "name": "Noor Hadd
 `401 unauthorized` · `404 not_found` (valid session, non-staff principal). The api-client folds
 both into `undefined`.
 
-### `GET /staff/today`
+### `GET /staff/schedule`
 
-The practice-local Today day sheet: one column per practitioner, every appointment in the day
-window (resolved in the practice timezone, DST-safe). Returns a `DaySheet`:
+The schedule day sheet for ONE practice-local date: one column per practitioner, every
+appointment in that day's window (resolved in the practice timezone, DST-safe). Optional
+`?date=YYYY-MM-DD` (a real calendar date — anything else is `400 invalid_request`); omitted =
+today. A calendar date is navigation state, not PHI — the only query parameter this surface
+carries. Weekly/monthly ranges are a future slice. Returns a `DaySheet`:
 
 ```json
 {
@@ -193,7 +196,8 @@ by the BFF to FHIR `Appointment.status` (`booked | arrived | checked-in | fulfil
 Appointments in unmapped FHIR statuses (cancelled, entered-in-error, …) are not day-sheet rows.
 Contact/service fields are optional; `firstVisit` means no prior non-cancelled appointment.
 
-`401 unauthorized` · `403 forbidden` (non-staff principal).
+`400 invalid_request` (malformed/impossible date) · `401 unauthorized` · `403 forbidden`
+(non-staff principal).
 
 ### `POST /staff/appointments/:id/status`
 

@@ -25,7 +25,7 @@ import {
 } from "../lib/day-sheet";
 
 /**
- * The Today day sheet: one column per practitioner, every appointment at once
+ * The schedule day sheet: one column per practitioner, every appointment at once
  * (V0_PROPOSAL S5 spec). Quiet-tool register; keyboard-first (arrows move, Enter opens
  * details, C checks in, Z undoes); check-in is undo-over-confirm — the write happens
  * immediately and a ~10s toast offers the compensating reverse (DESIGN.md tenet 4).
@@ -396,7 +396,9 @@ export function DaySheetView({ sheet }: { sheet: DaySheet }) {
             {sheet.appointments.length === 0 && (
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="text-center">
-                  <p className="text-sm font-medium text-text-primary">No appointments today.</p>
+                  <p className="text-sm font-medium text-text-primary">
+                    No appointments on this day.
+                  </p>
                   <p className="mt-1 text-sm text-text-secondary">
                     Portal bookings appear here as they land.
                   </p>

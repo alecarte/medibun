@@ -3,6 +3,7 @@ import { render, screen, fireEvent, within } from "@testing-library/react";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+  usePathname: () => "/schedule",
 }));
 import { tokens } from "@medibun/design-tokens";
 import { Sidebar } from "./sidebar";
@@ -16,18 +17,19 @@ describe("staff sidebar", () => {
     expect(rail().getByText(tokens["brand-name"])).toBeInTheDocument();
   });
 
-  it("exposes primary navigation with Today active", () => {
+  it("exposes primary navigation with Schedule active for the current path", () => {
     render(<Sidebar />);
     expect(rail().getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
-    expect(rail().getByText("Today").closest("[aria-current]")).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
+    const schedule = rail().getByRole("link", { name: "Schedule" });
+    expect(schedule).toHaveAttribute("href", "/schedule");
+    expect(schedule).toHaveAttribute("aria-current", "page");
   });
 
-  it("marks not-yet-built destinations as Soon (honest shell)", () => {
+  it("marks not-yet-built destinations as Soon — incl. the future Today dashboard", () => {
     render(<Sidebar />);
-    expect(rail().getAllByText("Soon")).toHaveLength(2);
+    expect(rail().getAllByText("Soon")).toHaveLength(3);
+    // Today is the dashboard seam, not a link yet.
+    expect(rail().getByText("Today").closest("a")).toBeNull();
   });
 
   it("collapses by fading labels (never unmounting) and persists its own cookie", () => {

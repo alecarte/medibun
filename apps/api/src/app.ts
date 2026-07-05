@@ -23,7 +23,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 
 import { InvalidSlotError, UnknownScheduleError, UnknownServiceError } from "./booking.js";
-import { InvalidTransitionError, UnknownAppointmentError } from "./staff.js";
+import { InvalidTransitionError, isValidDateString, UnknownAppointmentError } from "./staff.js";
 
 /**
  * @medibun/api — the BFF (ADR-0001). The only consumer of @medibun/medplum-backend;
@@ -90,10 +90,10 @@ export type StaffDeps = {
     profileReference: string;
     accessToken: string;
   }) => Promise<StaffProfile | undefined>;
-  readonly getDaySheet: (user: {
-    profileReference: string;
-    accessToken: string;
-  }) => Promise<DaySheet>;
+  readonly getDaySheet: (
+    user: { profileReference: string; accessToken: string },
+    date?: string,
+  ) => Promise<DaySheet>;
   /** Throws InvalidTransitionError / UnknownAppointmentError / StatusConflictError. */
   readonly setAppointmentStatus: (
     user: { profileReference: string; accessToken: string },
@@ -417,13 +417,19 @@ export function createApp(deps: AppDeps): Hono<Env> {
         }
       });
 
-      app.get("/staff/today", async (c) => {
+      // The schedule for one practice-local date; no date = today. A date is calendar
+      // navigation state, not PHI — the one query param this surface carries.
+      app.get("/staff/schedule", async (c) => {
         const gate = await staffUser(c);
         if (!gate.user) {
           return gate.fail;
         }
+        const date = c.req.query("date");
+        if (date !== undefined && !isValidDateString(date)) {
+          return fail(c, "invalid_request", 400);
+        }
         try {
-          return c.json(await staff.getDaySheet(gate.user));
+          return c.json(await staff.getDaySheet(gate.user, date));
         } catch (err) {
           return staffFailure(c, err);
         }

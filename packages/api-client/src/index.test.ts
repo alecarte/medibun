@@ -271,12 +271,19 @@ describe("staff endpoints", () => {
     }
   });
 
-  it("getDaySheet GETs /staff/today and returns the sheet", async () => {
+  it("getDaySheet GETs /staff/schedule (no date = today) and returns the sheet", async () => {
     const { fetchImpl, calls } = stubFetch(200, sheet);
     const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
-    await expect(client.getDaySheet({ sessionToken: "tok" })).resolves.toEqual(sheet);
-    expect(calls[0]!.url).toBe("https://api.example.test/staff/today");
+    await expect(client.getDaySheet(undefined, { sessionToken: "tok" })).resolves.toEqual(sheet);
+    expect(calls[0]!.url).toBe("https://api.example.test/staff/schedule");
     expect((calls[0]!.init?.headers as Record<string, string>).authorization).toBe("Bearer tok");
+  });
+
+  it("getDaySheet passes an explicit date as the query param", async () => {
+    const { fetchImpl, calls } = stubFetch(200, sheet);
+    const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+    await client.getDaySheet("2026-07-06", { sessionToken: "tok" });
+    expect(calls[0]!.url).toBe("https://api.example.test/staff/schedule?date=2026-07-06");
   });
 
   it("getDaySheet throws a typed StaffError with the backend code", async () => {

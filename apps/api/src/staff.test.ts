@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createStaffService,
+  dayBoundsFor,
   InvalidTransitionError,
+  isValidDateString,
   UnknownAppointmentError,
   zonedDayBounds,
   type StaffUserClient,
@@ -12,6 +14,24 @@ import {
 import type { ServiceRow } from "./services/catalog.js";
 
 const TZ = "America/New_York";
+
+describe("isValidDateString", () => {
+  it("accepts real calendar dates and rejects malformed or impossible ones", () => {
+    expect(isValidDateString("2026-07-06")).toBe(true);
+    expect(isValidDateString("2026-02-31")).toBe(false);
+    expect(isValidDateString("tomorrow")).toBe(false);
+    expect(isValidDateString("2026-7-6")).toBe(false);
+  });
+});
+
+describe("dayBoundsFor", () => {
+  it("bounds an explicit practice-local date (the schedule day switcher)", () => {
+    const bounds = dayBoundsFor("2026-07-06", TZ);
+    expect(bounds.date).toBe("2026-07-06");
+    expect(bounds.start.toISOString()).toBe("2026-07-06T04:00:00.000Z");
+    expect(bounds.end.toISOString()).toBe("2026-07-07T04:00:00.000Z");
+  });
+});
 
 describe("zonedDayBounds", () => {
   it("bounds an ordinary practice day (EDT, UTC-4)", () => {
@@ -244,6 +264,17 @@ describe("getDaySheet", () => {
     });
     const sheet = await service(client).getDaySheet(user);
     expect(sheet.appointments[0]!.firstVisit).toBe(false);
+  });
+
+  it("uses an explicit date's bounds when the day switcher asks for one", async () => {
+    const { client, get } = fakeClient({
+      schedules: schedulesBundle,
+      appointments: { resourceType: "Bundle", type: "searchset" },
+    });
+    const sheet = await service(client).getDaySheet(user, "2026-07-06");
+    expect(sheet.date).toBe("2026-07-06");
+    const apptUrl = get.mock.calls.map((c) => String(c[0])).find((u) => APPOINTMENTS_URL.test(u))!;
+    expect(apptUrl).toContain(encodeURIComponent("2026-07-06T04:00:00.000Z"));
   });
 
   it("adds a column for a practitioner with appointments but no schedule", async () => {

@@ -104,11 +104,36 @@ function tzOffsetMs(instantMs: number, timeZone: string): number {
   return asUtc - instantMs;
 }
 
+/** A real calendar date in YYYY-MM-DD form (2026-02-31 round-trips false). */
+export function isValidDateString(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+  const [y, m, d] = value.split("-").map(Number);
+  return new Date(Date.UTC(y!, m! - 1, d!)).toISOString().slice(0, 10) === value;
+}
+
 /**
- * The practice-local calendar day containing `now`: its date string and [start, end)
- * instants. DST-safe: the double correction converges on zones where a transition sits
- * between the UTC guess and local midnight, so fall-back days are truly 25h long.
+ * [start, end) instants of one practice-local calendar date. DST-safe: the double
+ * correction converges on zones where a transition sits between the UTC guess and
+ * local midnight, so fall-back days are truly 25h long.
  */
+export function dayBoundsFor(
+  date: string,
+  timeZone: string,
+): { date: string; start: Date; end: Date } {
+  const startOf = (ymd: string): Date => {
+    const utcGuess = Date.parse(`${ymd}T00:00:00Z`);
+    let t = utcGuess - tzOffsetMs(utcGuess, timeZone);
+    t = utcGuess - tzOffsetMs(t, timeZone);
+    return new Date(t);
+  };
+  const [y, m, d] = date.split("-").map(Number);
+  const nextYmd = new Date(Date.UTC(y!, m! - 1, d! + 1)).toISOString().slice(0, 10);
+  return { date, start: startOf(date), end: startOf(nextYmd) };
+}
+
+/** The practice-local calendar day containing `now`. */
 export function zonedDayBounds(
   now: Date,
   timeZone: string,
@@ -120,15 +145,7 @@ export function zonedDayBounds(
     month: "2-digit",
     day: "2-digit",
   }).format(now);
-  const startOf = (ymd: string): Date => {
-    const utcGuess = Date.parse(`${ymd}T00:00:00Z`);
-    let t = utcGuess - tzOffsetMs(utcGuess, timeZone);
-    t = utcGuess - tzOffsetMs(t, timeZone);
-    return new Date(t);
-  };
-  const [y, m, d] = date.split("-").map(Number);
-  const nextYmd = new Date(Date.UTC(y!, m! - 1, d! + 1)).toISOString().slice(0, 10);
-  return { date, start: startOf(date), end: startOf(nextYmd) };
+  return dayBoundsFor(date, timeZone);
 }
 
 const telecomValue = (patient: Patient, system: "phone" | "email"): string | undefined =>
@@ -157,8 +174,9 @@ export type SessionUser = { profileReference: string; accessToken: string };
 export type StaffService = {
   /** The staff member's own profile, or undefined for non-Practitioner principals. */
   readonly getStaffProfile: (user: SessionUser) => Promise<StaffProfile | undefined>;
-  /** Today's practitioner-column day sheet, practice-local. */
-  readonly getDaySheet: (user: SessionUser) => Promise<DaySheet>;
+  /** The practitioner-column day sheet for one practice-local date (default: today).
+   *  `date` must be pre-validated (isValidDateString) by the route. */
+  readonly getDaySheet: (user: SessionUser, date?: string) => Promise<DaySheet>;
   /** Moves an appointment through the workflow. Throws InvalidTransitionError /
    *  UnknownAppointmentError (plus the medplum-backend auth/conflict errors). */
   readonly setAppointmentStatus: (
@@ -192,7 +210,7 @@ export function createStaffService(deps: {
       return practitioner && { id, name: humanNameDisplay(practitioner.name?.[0]) };
     },
 
-    async getDaySheet(user) {
+    async getDaySheet(user, date) {
       const client = deps.userClient(user.accessToken);
       // Columns + practice timezone come from the Schedules (one actor each, S3 seed);
       // the catalog resolves service names/colors. Independent reads — run together.
@@ -205,7 +223,7 @@ export function createStaffService(deps: {
         schedules
           .map(({ practitioner }) => practitioner && practitionerTimezone(practitioner))
           .find(Boolean) ?? "UTC";
-      const bounds = zonedDayBounds(now(), timezone);
+      const bounds = date ? dayBoundsFor(date, timezone) : zonedDayBounds(now(), timezone);
       const day = await listDayAppointments(client, {
         start: bounds.start.toISOString(),
         end: bounds.end.toISOString(),

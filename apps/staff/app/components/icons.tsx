@@ -33,6 +33,32 @@ export function CalendarIcon({ className }: { className?: string }) {
   );
 }
 
+export function HomeIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <path d="M4.5 10.5 12 4l7.5 6.5" />
+      <path d="M6.5 9v9.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V9" />
+      <path d="M10 19.5v-5h4v5" />
+    </Icon>
+  );
+}
+
+export function ChevronLeftIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <path d="M14.5 6 8.5 12l6 6" />
+    </Icon>
+  );
+}
+
+export function ChevronRightIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <path d="M9.5 6l6 6-6 6" />
+    </Icon>
+  );
+}
+
 export function UserIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>
