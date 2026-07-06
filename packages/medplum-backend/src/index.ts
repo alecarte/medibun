@@ -31,6 +31,7 @@ export {
   type DayAppointments,
   type DaySheetReader,
 } from "./day-sheet.js";
+export { resolveBookedSlots, windowIsFree } from "./reschedule.js";
 export {
   createInternalEvent,
   deleteInternalEvent,

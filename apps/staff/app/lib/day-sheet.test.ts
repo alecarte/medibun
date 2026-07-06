@@ -105,6 +105,29 @@ describe("columnLayout", () => {
   });
 });
 
+describe("snapMinutes / minutesToWallTime (S5.5 drag)", () => {
+  it("snaps a grid y-offset to the 15-minute grid", async () => {
+    const { snapMinutes, HOUR_PX } = await import("./day-sheet");
+    expect(snapMinutes(0)).toBe(0);
+    expect(snapMinutes(HOUR_PX)).toBe(60);
+    expect(snapMinutes(HOUR_PX * 1.1)).toBe(60); // 66 min → 60
+    expect(snapMinutes(HOUR_PX * 1.15)).toBe(75); // 69 min → 75
+  });
+
+  it("clamps to the day (never before 00:00 or starting at/after 24:00)", async () => {
+    const { snapMinutes, HOUR_PX } = await import("./day-sheet");
+    expect(snapMinutes(-50)).toBe(0);
+    expect(snapMinutes(HOUR_PX * 25)).toBe(24 * 60 - 15);
+  });
+
+  it("renders minutes as the BFF's wall-time form", async () => {
+    const { minutesToWallTime } = await import("./day-sheet");
+    expect(minutesToWallTime(0)).toBe("00:00");
+    expect(minutesToWallTime(75)).toBe("01:15");
+    expect(minutesToWallTime(14 * 60 + 45)).toBe("14:45");
+  });
+});
+
 describe("isAllDayEvent", () => {
   it("recognizes a whole practice-local day (both edges at local midnight), DST-proof", async () => {
     const { isAllDayEvent } = await import("./day-sheet");

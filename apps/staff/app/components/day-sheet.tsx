@@ -24,13 +24,16 @@ import {
   formatBookedAt,
   formatColumnDay,
   formatHour,
+  formatMinutesLabel,
   formatTime,
   formatToolbarDate,
   FORWARD_ACTIONS,
   HOUR_PX,
   hourOf,
   isAllDayEvent,
+  minutesToWallTime,
   shiftYmd,
+  snapMinutes,
   STATUS_CHIP,
   STATUS_DOT,
   STATUS_LABEL,
@@ -83,7 +86,23 @@ type Undo =
       readonly event: InternalEvent;
       readonly action: "added" | "removed";
       readonly expiresAt: number;
+    }
+  | {
+      /** Drag-to-reschedule (S5.5): undo moves the appointment back to its ORIGINAL
+       *  window/practitioner (a compensating reverse reschedule). */
+      readonly kind: "move";
+      readonly appointment: DaySheetAppointment;
+      readonly expiresAt: number;
     };
+
+/** A live drag: the ghost's target column + snapped start (minutes-of-day). */
+type DragState = {
+  readonly appointment: DaySheetAppointment;
+  readonly columnIndex: number;
+  readonly minutes: number;
+  readonly durationMinutes: number;
+  readonly committing: boolean;
+};
 
 /** A rendered column: practitioners (day view) or weekdays (week view). */
 type Column = {
@@ -175,6 +194,29 @@ export function ScheduleView({
   const [masked, setMasked] = useState(false);
   const displayName = (name: string) => (masked ? maskName(name) : name);
 
+  // ---- Drag-to-reschedule (S5.5, day view, mouse) ------------------------------
+  // Server-confirmed MOVES on top of the sheet (like status overrides): the drop
+  // applies the BFF response; the next refreshed sheet is server truth and clears it.
+  const [moves, setMoves] = useState<
+    Record<string, { start: string; end: string; practitionerId: string }>
+  >({});
+  const [drag, setDrag] = useState<DragState | undefined>();
+  /** Armed on pointerdown; becomes a drag after ~6px of travel (else it's a click). */
+  const dragArm = useRef<
+    | {
+        appointment: DaySheetAppointment;
+        pointerId: number | undefined;
+        startX: number;
+        startY: number;
+        grabOffsetY: number;
+      }
+    | undefined
+  >(undefined);
+  const dragLive = useRef<DragState | undefined>(undefined);
+  const suppressClick = useRef(false);
+  const gridRef = useRef<HTMLDivElement>(null);
+  const dayColumnRefs = useRef(new Map<number, HTMLDivElement>());
+
   // A new sheet (refresh/navigation) is server truth arriving: drop the optimistic
   // overrides, drop a keyboard cursor pointing at an appointment that no longer exists
   // (a stale focusedId leaves NO block tabbable — the keyboard dies), and let a real
@@ -183,6 +225,7 @@ export function ScheduleView({
   if (prev.sheet !== sheet || prev.practitionerId !== practitionerId) {
     setPrev({ sheet, practitionerId });
     setOverrides({});
+    setMoves({});
     if (prev.practitionerId !== practitionerId) {
       setPicked(undefined);
     }
@@ -195,10 +238,21 @@ export function ScheduleView({
   const dialogRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Confirmed moves applied over the wire sheet — everything downstream (columns,
+  // keyboard map, detail card) sees the moved appointment where it now lives.
+  const effectiveAppointments = useMemo(
+    () =>
+      sheet.appointments.map((a) => {
+        const move = moves[a.id];
+        return move ? { ...a, ...move } : a;
+      }),
+    [sheet, moves],
+  );
+
   // ---- Columns ---------------------------------------------------------------
   const columns: Column[] = useMemo(() => {
     if (isWeek) {
-      const mine = sheet.appointments.filter((a) => a.practitionerId === selectedPractitioner);
+      const mine = effectiveAppointments.filter((a) => a.practitionerId === selectedPractitioner);
       const myEvents = sheet.events.filter(
         (e) => selectedPractitioner && e.practitionerIds.includes(selectedPractitioner),
       );
@@ -220,7 +274,7 @@ export function ScheduleView({
     }
     return sheet.practitioners.map((p) => ({
       key: p.practitionerId,
-      appointments: sheet.appointments
+      appointments: effectiveAppointments
         .filter((a) => a.practitionerId === p.practitionerId)
         .sort(byStart),
       events: sheet.events
@@ -231,7 +285,10 @@ export function ScheduleView({
     }));
   }, [sheet, isWeek, selectedPractitioner, tz]);
 
-  const appointmentById = useMemo(() => new Map(sheet.appointments.map((a) => [a.id, a])), [sheet]);
+  const appointmentById = useMemo(
+    () => new Map(effectiveAppointments.map((a) => [a.id, a])),
+    [effectiveAppointments],
+  );
   const eventById = useMemo(() => new Map(sheet.events.map((e) => [e.id, e])), [sheet]);
   const visibleAppointments = useMemo(() => columns.flatMap((c) => c.appointments), [columns]);
   const firstFocusableId = columns.find((c) => c.appointments.length > 0)?.appointments[0]?.id;
@@ -398,8 +455,33 @@ export function ScheduleView({
     // navigated away from the day it lives on.
     if (entry.kind === "status") {
       void writeStatus(entry.appointment, entry.to, entry.from, false);
+    } else if (entry.kind === "move") {
+      void undoMove(entry.appointment);
     } else {
       void undoEvent(entry);
+    }
+  }
+
+  /** Undo a drag: a compensating reschedule back to the ORIGINAL window/practitioner.
+   *  It can itself 409 (someone took the old window) — surface that honestly. */
+  async function undoMove(original: DaySheetAppointment) {
+    pendingWrites.current += 1;
+    try {
+      await api.rescheduleAppointment(original.id, {
+        date: ymdOf(original.start, tz),
+        startTime: wallTime(original.start, tz),
+        practitionerId: original.practitionerId,
+      });
+      router.refresh();
+    } catch (err) {
+      if (err instanceof StaffError && err.code === "conflict") {
+        setNotice("The original time is no longer free. Refreshing the schedule.");
+        router.refresh();
+      } else {
+        setNotice("Couldn't undo the move. Try again.");
+      }
+    } finally {
+      pendingWrites.current -= 1;
     }
   }
 
@@ -453,6 +535,135 @@ export function ScheduleView({
     }
     router.refresh();
   }
+
+  // ---- Drag-to-reschedule handlers (S5.5) -------------------------------------
+  /** Pointerdown on a block arms a potential drag. Mouse only for now: on touch,
+   *  a finger on a block must keep scrolling the grid (touch parity is a queued
+   *  follow-up in SCHEDULE_DESIGN.md §10). */
+  function armDrag(event: React.PointerEvent, appointment: DaySheetAppointment) {
+    if (isWeek || event.pointerType === "touch" || event.pointerType === "pen") {
+      return;
+    }
+    if (event.button !== 0 || statusOf(appointment) !== "scheduled" || drag) {
+      return;
+    }
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    dragArm.current = {
+      appointment,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      grabOffsetY: event.clientY - rect.top,
+    };
+  }
+
+  async function dropDrag() {
+    const dropped = dragLive.current;
+    dragArm.current = undefined;
+    dragLive.current = undefined;
+    setDrag(undefined);
+    if (!dropped) {
+      return;
+    }
+    const target = columns[dropped.columnIndex];
+    const startTime = minutesToWallTime(dropped.minutes);
+    if (
+      !target ||
+      (target.key === dropped.appointment.practitionerId &&
+        startTime === wallTime(dropped.appointment.start, tz))
+    ) {
+      return; // dropped back where it was — nothing to do
+    }
+    pendingWrites.current += 1;
+    try {
+      const moved = await api.rescheduleAppointment(dropped.appointment.id, {
+        date: sheet.date,
+        startTime,
+        practitionerId: target.key, // day-view column keys ARE practitioner ids
+      });
+      // The response is server truth — apply it until the next refreshed sheet lands.
+      setMoves((m) => ({
+        ...m,
+        [moved.id]: { start: moved.start, end: moved.end, practitionerId: moved.practitionerId },
+      }));
+      setUndo({
+        kind: "move",
+        appointment: dropped.appointment,
+        expiresAt: Date.now() + UNDO_WINDOW_MS,
+      });
+      router.refresh();
+    } catch (err) {
+      if (err instanceof StaffError && err.code === "conflict") {
+        setNotice("That time is taken, or the appointment changed. Refreshing the schedule.");
+        router.refresh();
+      } else {
+        setNotice("Couldn't move the appointment. Try again.");
+      }
+    } finally {
+      pendingWrites.current -= 1;
+    }
+  }
+
+  // Window-level drag tracking. Re-subscribed per render (this file's listener
+  // pattern) so the handlers always close over fresh state.
+  useEffect(() => {
+    const onPointerMove = (event: PointerEvent) => {
+      const arm = dragArm.current;
+      if (!arm || event.pointerId !== arm.pointerId) {
+        return;
+      }
+      if (
+        !dragLive.current &&
+        Math.abs(event.clientX - arm.startX) + Math.abs(event.clientY - arm.startY) < 6
+      ) {
+        return; // still a click until the pointer commits to traveling
+      }
+      const grid = gridRef.current?.getBoundingClientRect();
+      if (!grid) {
+        return;
+      }
+      suppressClick.current = true;
+      let columnIndex = dragLive.current?.columnIndex ?? 0;
+      dayColumnRefs.current.forEach((el, index) => {
+        const rect = el.getBoundingClientRect();
+        if (event.clientX >= rect.left && event.clientX < rect.right) {
+          columnIndex = index;
+        }
+      });
+      const next: DragState = {
+        appointment: arm.appointment,
+        columnIndex,
+        minutes: snapMinutes(event.clientY - grid.top - arm.grabOffsetY),
+        durationMinutes:
+          (Date.parse(arm.appointment.end) - Date.parse(arm.appointment.start)) / 60000,
+        committing: false,
+      };
+      dragLive.current = next;
+      setDrag(next);
+    };
+    const onPointerUp = (event: PointerEvent) => {
+      const arm = dragArm.current;
+      if (!arm || event.pointerId !== arm.pointerId) {
+        return;
+      }
+      void dropDrag();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && dragLive.current) {
+        dragArm.current = undefined;
+        dragLive.current = undefined;
+        setDrag(undefined);
+      }
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  });
 
   // ---- Navigation (URL is the state) -----------------------------------------
   function hrefFor(next: { view?: ScheduleView; date?: string | null; practitioner?: string }) {
@@ -871,7 +1082,12 @@ export function ScheduleView({
             ))}
           </div>
 
-          <div className="relative flex" style={{ height: GRID_HEIGHT }}>
+          <div
+            ref={gridRef}
+            data-testid="schedule-grid"
+            className="relative flex"
+            style={{ height: GRID_HEIGHT }}
+          >
             {/* Sticky time gutter */}
             <div className="sticky left-0 z-10 w-14 shrink-0 bg-surface-card" aria-hidden>
               {hours.map((hour) => (
@@ -911,7 +1127,7 @@ export function ScheduleView({
             </div>
 
             {/* Columns */}
-            {columns.map((c) => {
+            {columns.map((c, columnIndex) => {
               // Overlapping appointments share the column side by side (4D-study
               // defect-class fix) — a solo block still spans the full width.
               const layout = columnLayout(c.appointments);
@@ -920,8 +1136,30 @@ export function ScheduleView({
                   key={c.key}
                   role="list"
                   aria-label={c.label}
+                  ref={(el) => {
+                    if (el) {
+                      dayColumnRefs.current.set(columnIndex, el);
+                    } else {
+                      dayColumnRefs.current.delete(columnIndex);
+                    }
+                  }}
                   className="relative min-w-40 flex-1 border-l border-border-hairline"
                 >
+                  {/* Drag ghost: the snapped landing window in the hovered column. */}
+                  {!isWeek && drag && drag.columnIndex === columnIndex && (
+                    <div
+                      data-testid="drag-ghost"
+                      className="pointer-events-none absolute right-1.5 left-1.5 z-30 rounded-md border-2 border-dashed border-action-primary bg-brand-wash/70 px-2 py-1"
+                      style={{
+                        top: (drag.minutes / 60) * HOUR_PX,
+                        height: (drag.durationMinutes / 60) * HOUR_PX,
+                      }}
+                    >
+                      <span className="text-[11px] font-medium text-brand-primary tabular-nums">
+                        {formatMinutesLabel(drag.minutes)}
+                      </span>
+                    </div>
+                  )}
                   {/* Internal events first (DOM order = paint order): appointments
                     stack above an overlapping all-day wash, never under it. */}
                   {c.events.map((e) => {
@@ -987,11 +1225,21 @@ export function ScheduleView({
                           }}
                           tabIndex={a.id === (focusedId ?? firstFocusableId) ? 0 : -1}
                           onFocus={() => setFocusedId(a.id)}
-                          onClick={() => setDetailId(a.id === detailId ? undefined : a.id)}
+                          onPointerDown={(event) => armDrag(event, a)}
+                          onClick={() => {
+                            // A finished drag ends where a click would begin — swallow it.
+                            if (suppressClick.current) {
+                              suppressClick.current = false;
+                              return;
+                            }
+                            setDetailId(a.id === detailId ? undefined : a.id);
+                          }}
                           aria-haspopup="dialog"
                           aria-expanded={detailId === a.id}
                           className={`block h-full w-full overflow-hidden rounded-md border border-border-hairline border-l-4 bg-surface-card px-2 py-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-action-primary ${edge} ${
                             dimmed ? "opacity-70" : ""
+                          } ${!isWeek && status === "scheduled" ? "cursor-grab" : ""} ${
+                            drag?.appointment.id === a.id ? "opacity-40" : ""
                           }`}
                         >
                           {isWeek ? (
@@ -1202,9 +1450,11 @@ export function ScheduleView({
           <span className="text-sm text-text-primary">
             {undo.kind === "status"
               ? `${ACTION_DONE[undo.to]} — ${displayName(undo.appointment.patientName)}`
-              : `${undo.event.title ?? EVENT_TYPE_LABEL[undo.event.type]} ${
-                  undo.action === "added" ? "added" : "removed"
-                }`}
+              : undo.kind === "move"
+                ? `Moved — ${displayName(undo.appointment.patientName)}`
+                : `${undo.event.title ?? EVENT_TYPE_LABEL[undo.event.type]} ${
+                    undo.action === "added" ? "added" : "removed"
+                  }`}
           </span>
           <button
             type="button"

@@ -211,6 +211,23 @@ export type CreateInternalEventRequest = {
   readonly endTime?: string;
 };
 
+/** Drag-to-reschedule (S5.5): practice-local target — the BFF owns timezone math and
+ *  preserves the appointment's duration. */
+export type RescheduleRequest = {
+  readonly date: string;
+  /** "HH:mm" wall time on `date` (15-minute snap in the UI). */
+  readonly startTime: string;
+  /** Target column — may equal the current practitioner (time-only move). */
+  readonly practitionerId: string;
+};
+
+export type RescheduledAppointment = {
+  readonly id: string;
+  readonly practitionerId: string;
+  readonly start: string;
+  readonly end: string;
+};
+
 export type DaySheet = {
   /** The practice-local calendar date (YYYY-MM-DD) the range STARTS on. */
   readonly date: string;
@@ -348,6 +365,15 @@ export type ApiClient = {
     status: AppointmentStatus,
     auth?: SessionAuth,
   ) => Promise<{ id: string; status: AppointmentStatus }>;
+  /** Drag-to-reschedule (S5.5): moves a SCHEDULED appointment to a new practice-local
+   *  time and/or practitioner, duration preserved. Throws StaffError — "conflict" when
+   *  the target window is taken, the appointment moved under you, or it isn't
+   *  scheduled anymore (refetch and re-decide). */
+  readonly rescheduleAppointment: (
+    appointmentId: string,
+    request: RescheduleRequest,
+    auth?: SessionAuth,
+  ) => Promise<RescheduledAppointment>;
   /** Creates an internal event (day off / meeting / block) and its booking-blocking
    *  slots. Staff session required. Throws StaffError ("invalid_request" for bad
    *  windows/practitioners). */
@@ -498,6 +524,21 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
         throw new StaffError(await errorCodeFrom(res, STAFF_CODES), res.status);
       }
       return (await res.json()) as { id: string; status: AppointmentStatus };
+    },
+
+    async rescheduleAppointment(appointmentId, request, auth) {
+      const res = await fetchImpl(
+        `${baseUrl}/staff/appointments/${encodeURIComponent(appointmentId)}/reschedule`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", ...authHeaders(auth) },
+          body: JSON.stringify(request),
+        },
+      );
+      if (!res.ok) {
+        throw new StaffError(await errorCodeFrom(res, STAFF_CODES), res.status);
+      }
+      return (await res.json()) as RescheduledAppointment;
     },
 
     async createInternalEvent(request, auth) {

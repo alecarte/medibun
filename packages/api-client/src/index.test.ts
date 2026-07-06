@@ -321,6 +321,44 @@ describe("staff endpoints", () => {
     expect((err as StaffError).code).toBe("conflict");
   });
 
+  it("rescheduleAppointment POSTs the practice-local move and returns the new window", async () => {
+    const moved = {
+      id: "a1",
+      practitionerId: "pr2",
+      start: "2026-07-06T19:15:00.000Z",
+      end: "2026-07-06T19:45:00.000Z",
+    };
+    const { fetchImpl, calls } = stubFetch(200, moved);
+    const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+    await expect(
+      client.rescheduleAppointment(
+        "a/1",
+        { date: "2026-07-06", startTime: "15:15", practitionerId: "pr2" },
+        { sessionToken: "tok" },
+      ),
+    ).resolves.toEqual(moved);
+    expect(calls[0]!.url).toBe("https://api.example.test/staff/appointments/a%2F1/reschedule");
+    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({
+      date: "2026-07-06",
+      startTime: "15:15",
+      practitionerId: "pr2",
+    });
+  });
+
+  it("rescheduleAppointment maps a 409 to conflict (taken window / lost race)", async () => {
+    const { fetchImpl } = stubFetch(409, { error: "conflict", requestId: "r" });
+    const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+    const err = await client
+      .rescheduleAppointment("a1", {
+        date: "2026-07-06",
+        startTime: "15:15",
+        practitionerId: "pr1",
+      })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StaffError);
+    expect((err as StaffError).code).toBe("conflict");
+  });
+
   it("createInternalEvent POSTs /staff/events and returns the created event", async () => {
     const event = {
       id: "ev1",

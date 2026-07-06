@@ -564,6 +564,131 @@ describe("ScheduleView — internal events (S5c)", () => {
   });
 });
 
+describe("ScheduleView — drag to reschedule (S5.5)", () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    push.mockClear();
+    refresh.mockClear();
+  });
+
+  function setRect(el: Element, rect: Partial<DOMRect>) {
+    (el as HTMLElement).getBoundingClientRect = () =>
+      ({
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        width: 0,
+        height: 0,
+        x: 0,
+        y: 0,
+        toJSON() {},
+        ...rect,
+      }) as DOMRect;
+  }
+
+  /** jsdom has no layout — pin the grid, both practitioner columns, and the dragged
+   *  block to the geometry the real page would have (112px/hour, gutter at x=56). */
+  function primeGeometry() {
+    setRect(screen.getByTestId("schedule-grid"), {
+      top: 0,
+      left: 56,
+      right: 856,
+      width: 800,
+      height: 2688,
+    });
+    const columns = screen.getAllByRole("list");
+    setRect(columns[0]!, { left: 56, right: 456 }); // Riley (pr1)
+    setRect(columns[1]!, { left: 456, right: 856 }); // Maya (pr2)
+    const block = screen.getByText("Synthia Loginsmith").closest("button")!;
+    setRect(block, { top: 14 * 112, left: 60, right: 450 }); // 2:00 PM EDT
+    return block;
+  }
+
+  const drag = (block: HTMLElement, toX: number, toY: number) => {
+    fireEvent.pointerDown(block, { pointerId: 1, button: 0, clientX: 100, clientY: 14 * 112 + 10 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: toX, clientY: toY });
+  };
+
+  it("drags a scheduled block across columns; POSTs the snapped practice-local move", async () => {
+    const calls = stubFetch(200, {
+      id: "a1",
+      practitionerId: "pr2",
+      start: "2026-07-06T19:15:00.000Z",
+      end: "2026-07-06T19:45:00.000Z",
+    });
+    render(<ScheduleView {...dayProps} />);
+    const block = primeGeometry();
+    // Grabbed 10px into the block, dropped in Maya's column at 3:15 PM.
+    drag(block, 600, 15.25 * 112 + 10);
+    expect(screen.getByTestId("drag-ghost")).toBeInTheDocument();
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 600, clientY: 15.25 * 112 + 10 });
+    expect(await screen.findByText(/Moved — Synthia Loginsmith/)).toBeInTheDocument();
+    expect(calls[0]!.url).toBe("/api/staff/appointments/a1/reschedule");
+    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({
+      date: "2026-07-06",
+      startTime: "15:15",
+      practitionerId: "pr2",
+    });
+    expect(refresh).toHaveBeenCalled();
+    // The drop is a drag's end, not a click: no detail card.
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("undo is a compensating reverse move back to the original window", async () => {
+    const calls = stubFetch(200, {
+      id: "a1",
+      practitionerId: "pr2",
+      start: "2026-07-06T19:15:00.000Z",
+      end: "2026-07-06T19:45:00.000Z",
+    });
+    render(<ScheduleView {...dayProps} />);
+    const block = primeGeometry();
+    drag(block, 600, 15.25 * 112 + 10);
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 600, clientY: 15.25 * 112 + 10 });
+    fireEvent.click(await screen.findByRole("button", { name: /Undo/ }));
+    await screen.findByText("2 appointments"); // settle
+    expect(calls[1]!.url).toBe("/api/staff/appointments/a1/reschedule");
+    expect(JSON.parse(String(calls[1]!.init?.body))).toEqual({
+      date: "2026-07-06",
+      startTime: "14:00",
+      practitionerId: "pr1",
+    });
+  });
+
+  it("a taken window (409) explains and refreshes instead of clobbering", async () => {
+    stubFetch(409, { error: "conflict", requestId: "r" });
+    render(<ScheduleView {...dayProps} />);
+    const block = primeGeometry();
+    drag(block, 600, 15.25 * 112 + 10);
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 600, clientY: 15.25 * 112 + 10 });
+    expect(await screen.findByText(/That time is taken/)).toBeInTheDocument();
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("Escape cancels the drag with no write", () => {
+    const calls = stubFetch(200, {});
+    render(<ScheduleView {...dayProps} />);
+    const block = primeGeometry();
+    drag(block, 600, 15.25 * 112 + 10);
+    expect(screen.getByTestId("drag-ghost")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByTestId("drag-ghost")).not.toBeInTheDocument();
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 600, clientY: 1718 });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("non-scheduled blocks don't lift (arrived patients are in the building)", () => {
+    stubFetch(200, {});
+    render(<ScheduleView {...dayProps} />);
+    primeGeometry();
+    const arrived = screen.getByText("Aurelia Vandermeer-Castellanos").closest("button")!;
+    fireEvent.pointerDown(arrived, { pointerId: 2, button: 0, clientX: 500, clientY: 100 });
+    fireEvent.pointerMove(window, { pointerId: 2, clientX: 500, clientY: 400 });
+    expect(screen.queryByTestId("drag-ghost")).not.toBeInTheDocument();
+  });
+});
+
 describe("ScheduleView — privacy mask", () => {
   beforeEach(() => {
     vi.unstubAllGlobals();

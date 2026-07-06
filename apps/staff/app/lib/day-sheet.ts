@@ -170,6 +170,30 @@ export function hourOf(iso: string, timeZone: string): number {
   return (Number(parts.hour) % 24) + Number(parts.minute) / 60;
 }
 
+/** Drag-to-reschedule drops snap to this grid (S5.5 interview — matches booking). */
+export const SNAP_MINUTES = 15;
+
+/** Snapped minutes-of-day for a y-offset inside the grid (px from the grid's top),
+ *  clamped so a drop never leaves the day. */
+export function snapMinutes(offsetY: number): number {
+  const raw = Math.round(((offsetY / HOUR_PX) * 60) / SNAP_MINUTES) * SNAP_MINUTES;
+  return Math.max(0, Math.min(24 * 60 - SNAP_MINUTES, raw));
+}
+
+/** Minutes-of-day as the BFF's "HH:mm" wall-time form. */
+export function minutesToWallTime(minutes: number): string {
+  const h = String(Math.floor(minutes / 60)).padStart(2, "0");
+  const m = String(minutes % 60).padStart(2, "0");
+  return `${h}:${m}`;
+}
+
+/** Minutes-of-day as the drag ghost's display label ("2:15 PM"). */
+export function formatMinutesLabel(minutes: number): string {
+  const h24 = Math.floor(minutes / 60);
+  const h = ((h24 + 11) % 12) + 1;
+  return `${h}:${String(minutes % 60).padStart(2, "0")} ${h24 < 12 ? "AM" : "PM"}`;
+}
+
 export type BlockLayout = {
   /** Which sub-column this block occupies within its overlap cluster. */
   readonly lane: number;

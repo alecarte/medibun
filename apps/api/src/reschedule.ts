@@ -1,0 +1,193 @@
+import {
+  isValidDateString,
+  type RescheduleRequest,
+  type RescheduledAppointment,
+} from "@medibun/api-client";
+import {
+  isInternalEvent,
+  listSchedules,
+  practitionerTimezone,
+  readAppointmentById,
+  resolveBookedSlots,
+  SERVICES_CODE_SYSTEM,
+  StatusConflictError,
+  windowIsFree,
+  type AppointmentPatcher,
+  type DaySheetReader,
+  type FhirOpsClient,
+  type ResourceWriter,
+} from "@medibun/medplum-backend";
+import type { Appointment, Slot } from "@medibun/fhir-types";
+
+import {
+  InvalidTransitionError,
+  UnknownAppointmentError,
+  zonedInstant,
+  type SessionUser,
+} from "./staff.js";
+
+/**
+ * Drag-to-reschedule (S5.5). No $reschedule exists at our Medplum pin, so a move is:
+ * validate the target window is free (busy-Slot overlap check — the S4 "re-derive,
+ * never trust the client" defense), create the new busy Slot, patch the Appointment
+ * with a test-and-set on its CURRENT start (a concurrent move loses cleanly), then
+ * delete the old slot. Split principals, same as S5c events: reads and the Appointment
+ * patch run AS THE CALLER (org-scoped policy + audit attribution); only the Slot
+ * writes ride the service client (staff Slot access is readonly by design).
+ *
+ * Deliberately unchecked (S5.5 interview): schedule availability hours — patients
+ * can't book off-hours ($find enforces it), but the front desk placing a deliberate
+ * off-hours squeeze-in is staff judgment. Conflicts are what matter.
+ */
+
+/** Bad reschedule request: malformed date/time, or the target practitioner has no
+ *  schedule for the appointment's service. */
+export class InvalidRescheduleRequestError extends Error {
+  constructor() {
+    super("invalid reschedule request");
+    this.name = "InvalidRescheduleRequestError";
+  }
+}
+
+/** Reads + the Appointment patch — the CALLER's own client. */
+export type RescheduleUserClient = FhirOpsClient & DaySheetReader & AppointmentPatcher;
+
+/** Slot writes — the service client (staff Slot access is readonly). */
+export type RescheduleWriter = ResourceWriter;
+
+export type RescheduleService = {
+  readonly rescheduleAppointment: (
+    user: SessionUser,
+    appointmentId: string,
+    request: RescheduleRequest,
+  ) => Promise<RescheduledAppointment>;
+};
+
+const WALL_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+const scheduleServiceCode = (schedule: {
+  serviceType?: { coding?: { system?: string; code?: string }[] }[];
+}): string | undefined =>
+  schedule.serviceType
+    ?.flatMap((concept) => concept.coding ?? [])
+    .find((coding) => coding.system === SERVICES_CODE_SYSTEM)?.code;
+
+const appointmentServiceCode = (appointment: Appointment): string | undefined =>
+  appointment.serviceType
+    ?.flatMap((concept) => concept.coding ?? [])
+    .find((coding) => coding.system === SERVICES_CODE_SYSTEM)?.code;
+
+export function createRescheduleService(deps: {
+  readonly getFhirClient: () => Promise<RescheduleWriter>;
+  readonly userClient: (accessToken: string) => RescheduleUserClient;
+}): RescheduleService {
+  return {
+    async rescheduleAppointment(user, appointmentId, request) {
+      if (
+        !request.date ||
+        !isValidDateString(request.date) ||
+        typeof request.startTime !== "string" ||
+        !WALL_TIME.test(request.startTime) ||
+        typeof request.practitionerId !== "string" ||
+        request.practitionerId.length === 0
+      ) {
+        throw new InvalidRescheduleRequestError();
+      }
+
+      const caller = deps.userClient(user.accessToken);
+      const appointment = await readAppointmentById(caller, appointmentId);
+      // Internal events have no reschedule (drag their delete/recreate instead); they
+      // and unknown ids answer identically.
+      if (!appointment || isInternalEvent(appointment) || !appointment.start || !appointment.end) {
+        throw new UnknownAppointmentError();
+      }
+      // Scheduled-only (S5.5 interview): arrived/roomed patients are in the building;
+      // completed/no-show are history. Same client recovery as a stale status move.
+      if (appointment.status !== "booked") {
+        throw new InvalidTransitionError();
+      }
+      const serviceCode = appointmentServiceCode(appointment);
+      if (!serviceCode) {
+        // v0 bookings always carry our service code ($book path); without it the
+        // target schedule can't be derived.
+        throw new InvalidRescheduleRequestError();
+      }
+
+      // Schedules read AS THE CALLER: practice timezone + the target's schedule for
+      // this service (no schedule for it = can't perform the service = reject).
+      const schedules = await listSchedules(caller);
+      const timezone =
+        schedules
+          .map(({ practitioner }) => practitioner && practitionerTimezone(practitioner))
+          .find(Boolean) ?? "UTC";
+      const target = schedules.find(
+        ({ schedule }) =>
+          schedule.actor?.[0]?.reference === `Practitioner/${request.practitionerId}` &&
+          scheduleServiceCode(schedule) === serviceCode,
+      );
+      if (!target) {
+        throw new InvalidRescheduleRequestError();
+      }
+
+      const durationMs = Date.parse(appointment.end) - Date.parse(appointment.start);
+      const start = zonedInstant(request.date, request.startTime, timezone);
+      const end = new Date(start.getTime() + durationMs);
+      const window = { start: start.toISOString(), end: end.toISOString() };
+
+      const ownSlots = await resolveBookedSlots(caller, appointment);
+      const free = await windowIsFree(caller, `Schedule/${target.schedule.id}`, window, ownSlots);
+      if (!free) {
+        // Same wire contract as a lost race: 409, the client refetches and re-decides.
+        throw new StatusConflictError();
+      }
+
+      // New protector first (same blocking semantics as $book's busy slot), then the
+      // test-and-set patch; a lost patch compensates by removing the new slot, so a
+      // failed move never leaves the target window blocked.
+      const writer = await deps.getFhirClient();
+      const newSlot = await writer.createResource<Slot>({
+        resourceType: "Slot",
+        schedule: { reference: `Schedule/${target.schedule.id}` },
+        status: "busy",
+        start: window.start,
+        end: window.end,
+      });
+      try {
+        const participants = (appointment.participant ?? []).map((participant) =>
+          participant.actor?.reference?.startsWith("Practitioner/")
+            ? { ...participant, actor: { reference: `Practitioner/${request.practitionerId}` } }
+            : participant,
+        );
+        await caller.patchResource("Appointment", appointmentId, [
+          { op: "test", path: "/start", value: appointment.start },
+          { op: "replace", path: "/start", value: window.start },
+          { op: "replace", path: "/end", value: window.end },
+          { op: "replace", path: "/participant", value: participants },
+          { op: "replace", path: "/slot", value: [{ reference: `Slot/${newSlot.id}` }] },
+        ]);
+      } catch (err) {
+        await writer.deleteResource("Slot", newSlot.id!).catch(() => {
+          console.warn(`reschedule: compensation failed, stranded busy slot Slot/${newSlot.id}`);
+        });
+        throw err;
+      }
+      // Old protectors last: a failure here strands busy slots on the OLD window
+      // (availability loss, never a double-booking) — log ids and move on.
+      for (const ref of ownSlots) {
+        const id = ref.split("/")[1];
+        if (id) {
+          await writer.deleteResource("Slot", id).catch(() => {
+            console.warn(`reschedule: old busy slot not deleted: ${ref}`);
+          });
+        }
+      }
+
+      return {
+        id: appointmentId,
+        practitionerId: request.practitionerId,
+        start: window.start,
+        end: window.end,
+      };
+    },
+  };
+}
