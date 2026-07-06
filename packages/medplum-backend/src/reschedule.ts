@@ -16,13 +16,21 @@ const BLOCKING = new Set<Slot["status"]>(["busy", "busy-unavailable", "busy-tent
 
 /**
  * The busy Slot reference(s) protecting a booking's window. Prefers the appointment's
- * own `slot[]` references; falls back to searching the exact window across schedules
- * (whether `$book` populates `Appointment.slot` is a live-verify item — the fallback
- * makes the reschedule correct either way).
+ * own `slot[]` references; falls back to searching the exact window ON THE
+ * APPOINTMENT'S OWN SCHEDULE (whether `$book` populates `Appointment.slot` is a
+ * live-verify item — the fallback makes the reschedule correct either way).
+ *
+ * The schedule scoping is a security control, not an optimization: an unscoped
+ * same-window search would return ANOTHER booking's protector slot as if it were
+ * ours — defeating the freeness check and deleting a foreign protector after the
+ * move (security review, 2026-07-06). No resolvable own schedule → no fallback:
+ * an empty result fails SAFE (identical-window slots then read as blockers, and
+ * nothing foreign is ever deleted).
  */
 export async function resolveBookedSlots(
   client: FhirOpsClient,
   appointment: Appointment,
+  scheduleReference: string | undefined,
 ): Promise<string[]> {
   const refs = (appointment.slot ?? [])
     .map((s) => s.reference)
@@ -30,7 +38,11 @@ export async function resolveBookedSlots(
   if (refs.length > 0) {
     return refs;
   }
+  if (!scheduleReference) {
+    return [];
+  }
   const params = new URLSearchParams({
+    schedule: scheduleReference,
     start: appointment.start!,
     _count: "100",
   });
@@ -53,6 +65,10 @@ export async function resolveBookedSlots(
  * but the front desk placing a deliberate off-hours squeeze-in is staff judgment
  * (decided at the S5.5 interview). Conflicts are what matter.
  */
+/** No block we mint outlasts a practice-local day (all-day events) — the overlap
+ *  query's lower bound, so history can't push live conflicts past the page cap. */
+const MAX_BLOCK_MS = 25 * 3600_000; // a DST fall-back all-day block is 25h
+
 export async function windowIsFree(
   client: FhirOpsClient,
   scheduleReference: string,
@@ -61,10 +77,14 @@ export async function windowIsFree(
 ): Promise<boolean> {
   const params = new URLSearchParams({
     schedule: scheduleReference,
-    // Overlap = starts before the window ends AND ends after the window starts.
-    start: `lt${window.end}`,
     _count: "100",
   });
+  // Overlap = starts before the window ends AND ends after the window starts. The
+  // ge-bound keeps the query to slots that can still overlap — without it, a schedule's
+  // whole history matches `lt`, and past the page cap a real conflict could silently
+  // fall off the page (security review, 2026-07-06).
+  params.append("start", `lt${window.end}`);
+  params.append("start", `ge${new Date(Date.parse(window.start) - MAX_BLOCK_MS).toISOString()}`);
   const bundle = (await client.get(`fhir/R4/Slot?${params.toString()}`)) as Bundle;
   const own = new Set(ownSlotRefs);
   return !bundleResources(bundle).some(

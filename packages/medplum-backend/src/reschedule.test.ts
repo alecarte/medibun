@@ -37,22 +37,43 @@ describe("resolveBookedSlots", () => {
     const slots = await resolveBookedSlots(
       { get, post: vi.fn() },
       booking({ slot: [{ reference: "Slot/sl1" }, { reference: "Slot/sl2" }] }),
+      "Schedule/s1",
     );
     expect(slots).toEqual(["Slot/sl1", "Slot/sl2"]);
     expect(get).not.toHaveBeenCalled();
   });
 
-  it("falls back to a busy-slot search on the appointment's exact window", async () => {
+  it("falls back to a busy-slot search SCOPED to the appointment's own schedule", async () => {
     const get = vi
       .fn()
       .mockResolvedValue(
         slotBundle([busySlot("sl9", "2026-07-06T18:00:00.000Z", "2026-07-06T18:30:00.000Z")]),
       );
-    const slots = await resolveBookedSlots({ get, post: vi.fn() }, booking());
+    const slots = await resolveBookedSlots({ get, post: vi.fn() }, booking(), "Schedule/s1");
     expect(slots).toEqual(["Slot/sl9"]);
     const url = get.mock.calls[0]![0] as string;
     expect(url).toContain("fhir/R4/Slot?");
+    // The schedule filter is the security control: an unscoped same-window search
+    // would claim ANOTHER booking's protector slot as ours (review finding, HIGH).
+    expect(url).toContain("schedule=Schedule%2Fs1");
     expect(url).toContain("start=2026-07-06T18%3A00%3A00.000Z");
+  });
+
+  it("does NOT fall back without a resolvable own schedule — fails safe, never claims foreign slots", async () => {
+    const get = vi.fn();
+    const slots = await resolveBookedSlots({ get, post: vi.fn() }, booking(), undefined);
+    expect(slots).toEqual([]);
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it("excludes same-start slots whose end differs (not this booking's window)", async () => {
+    const get = vi
+      .fn()
+      .mockResolvedValue(
+        slotBundle([busySlot("sl-longer", "2026-07-06T18:00:00.000Z", "2026-07-06T19:30:00.000Z")]),
+      );
+    const slots = await resolveBookedSlots({ get, post: vi.fn() }, booking(), "Schedule/s1");
+    expect(slots).toEqual([]);
   });
 });
 
@@ -65,9 +86,12 @@ describe("windowIsFree", () => {
       true,
     );
     const url = get.mock.calls[0]![0] as string;
-    // Overlap query: starts before the window ends AND ends after the window starts.
+    // Overlap query: starts before the window ends AND ends after the window starts,
+    // with a ge-bound so a schedule's history can't push a live conflict past the
+    // page cap (review finding, MEDIUM). 25h = the longest block we mint (DST all-day).
     expect(url).toContain("schedule=Schedule%2Fs1");
     expect(url).toContain("start=lt2026-07-06T19%3A30%3A00.000Z");
+    expect(url).toContain("start=ge2026-07-05T18%3A00%3A00.000Z");
   });
 
   it("is taken when a busy slot overlaps", async () => {

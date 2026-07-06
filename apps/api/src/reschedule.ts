@@ -116,15 +116,22 @@ export function createRescheduleService(deps: {
       // Schedules read AS THE CALLER: practice timezone + the target's schedule for
       // this service (no schedule for it = can't perform the service = reject).
       const schedules = await listSchedules(caller);
-      const timezone =
-        schedules
-          .map(({ practitioner }) => practitioner && practitionerTimezone(practitioner))
-          .find(Boolean) ?? "UTC";
-      const target = schedules.find(
-        ({ schedule }) =>
-          schedule.actor?.[0]?.reference === `Practitioner/${request.practitionerId}` &&
-          scheduleServiceCode(schedule) === serviceCode,
-      );
+      const timezone = schedules
+        .map(({ practitioner }) => practitioner && practitionerTimezone(practitioner))
+        .find(Boolean);
+      if (!timezone) {
+        // Same posture as $find/$book: a missing practice timezone is a stack
+        // misconfiguration — never a silent UTC guess that lands the move hours off
+        // (security review, LOW).
+        throw new Error("no practice timezone on any schedule actor — cannot derive instants");
+      }
+      const scheduleFor = (practitionerId: string) =>
+        schedules.find(
+          ({ schedule }) =>
+            schedule.actor?.[0]?.reference === `Practitioner/${practitionerId}` &&
+            scheduleServiceCode(schedule) === serviceCode,
+        );
+      const target = scheduleFor(request.practitionerId);
       if (!target) {
         throw new InvalidRescheduleRequestError();
       }
@@ -134,7 +141,22 @@ export function createRescheduleService(deps: {
       const end = new Date(start.getTime() + durationMs);
       const window = { start: start.toISOString(), end: end.toISOString() };
 
-      const ownSlots = await resolveBookedSlots(caller, appointment);
+      // Own-slot resolution is SCOPED to the appointment's current schedule — the
+      // security control that keeps another booking's identical-window protector from
+      // being treated as ours (and later deleted). No resolvable current schedule →
+      // no fallback, which fails safe: identical windows then read as conflicts.
+      const currentPractitionerId = (appointment.participant ?? [])
+        .map((p) => p.actor?.reference)
+        .find((r) => r?.startsWith("Practitioner/"))
+        ?.split("/")[1];
+      const currentSchedule = currentPractitionerId
+        ? scheduleFor(currentPractitionerId)
+        : undefined;
+      const ownSlots = await resolveBookedSlots(
+        caller,
+        appointment,
+        currentSchedule ? `Schedule/${currentSchedule.schedule.id}` : undefined,
+      );
       const free = await windowIsFree(caller, `Schedule/${target.schedule.id}`, window, ownSlots);
       if (!free) {
         // Same wire contract as a lost race: 409, the client refetches and re-decides.

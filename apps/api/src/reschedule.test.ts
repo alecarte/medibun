@@ -60,6 +60,7 @@ function fakeClients(opts?: {
   appointment?: Appointment | undefined;
   busy?: boolean;
   patchFails?: boolean;
+  timezoneless?: boolean;
 }) {
   const created: Resource[] = [];
   const deleted: string[] = [];
@@ -67,6 +68,16 @@ function fakeClients(opts?: {
   const userClient = {
     get: vi.fn().mockImplementation((url: string) => {
       if (url.startsWith("fhir/R4/Schedule?")) {
+        if (opts?.timezoneless) {
+          return Promise.resolve({
+            ...schedulesBundle,
+            entry: schedulesBundle.entry.map((e) =>
+              e.resource.resourceType === "Practitioner"
+                ? { resource: { ...e.resource, extension: [] } }
+                : e,
+            ),
+          });
+        }
         return Promise.resolve(schedulesBundle);
       }
       if (url.startsWith("fhir/R4/Slot?")) {
@@ -201,6 +212,38 @@ describe("rescheduleAppointment", () => {
     ).rejects.toBeInstanceOf(StatusConflictError);
     expect(created).toHaveLength(1);
     expect(deleted).toEqual(["Slot/sl-new"]); // compensation, old slot untouched
+  });
+
+  it("fallback own-slot resolution never claims a foreign identical-window slot (HIGH regression)", async () => {
+    // No slot refs on the appointment (the $book live-verify unknown) AND another
+    // booking's protector occupies the exact target window on the target schedule.
+    // Before the fix, the unscoped fallback claimed that slot as "ours": the freeness
+    // check passed and the foreign protector was deleted after the move. Now it must
+    // 409 and delete nothing.
+    const { service, created, deleted } = fakeClients({
+      appointment: booking({ slot: undefined }),
+      busy: true,
+    });
+    await expect(
+      service.rescheduleAppointment(user, "a1", {
+        date: "2026-07-06",
+        startTime: "15:00", // exactly the foreign slot's 19:00Z window
+        practitionerId: "pr2",
+      }),
+    ).rejects.toBeInstanceOf(StatusConflictError);
+    expect(created).toHaveLength(0);
+    expect(deleted).toHaveLength(0);
+  });
+
+  it("refuses to guess UTC when no schedule actor carries the practice timezone", async () => {
+    const { service } = fakeClients({ timezoneless: true });
+    await expect(
+      service.rescheduleAppointment(user, "a1", {
+        date: "2026-07-06",
+        startTime: "15:15",
+        practitionerId: "pr2",
+      }),
+    ).rejects.toThrow(/timezone/);
   });
 
   it("refuses to move a checked-in patient (scheduled-only, decided at the interview)", async () => {
