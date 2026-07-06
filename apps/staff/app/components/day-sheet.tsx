@@ -683,7 +683,9 @@ export function ScheduleView({
                   className="absolute right-0 left-0 border-t-2 border-brand-primary"
                   style={{ top: nowTop }}
                 >
-                  <span className="absolute -top-1 -left-1 h-2 w-2 rounded-full bg-brand-primary" />
+                  {/* Flush left (not overhanging): anything left of the line slides
+                      UNDER the sticky time gutter's opaque surface and looks clipped. */}
+                  <span className="absolute -top-[3px] left-0 h-2 w-2 rounded-full bg-brand-primary" />
                 </div>
               )}
             </div>
