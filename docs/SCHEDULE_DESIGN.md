@@ -65,6 +65,12 @@ creation from the calendar (staff booking arrives with S11's assistant, or its o
 
 ## Review log
 
+- 2026-07-06 — **Built** on the S5a branch: `ScheduleView` client component (viewport-fit card,
+  internal 24 h scroll with sticky header + gutter, auto-scroll to now/first appointment),
+  card toolbar (‹ Today › · date button → `MiniCalendar` popover · count · practitioner filter ·
+  Day/Week dropdown with Month "Soon" · keyboard icon → `ShortcutsPopover`), week view (Mon–Sun ×
+  one practitioner, compact dot blocks, client-side filter), full key set, and hover `Tooltip`s.
+  BFF `GET /staff/schedule?days=1|7` Monday-aligns the week. Screenshot-reviewed at 1280 + tablet.
 - 2026-07-06 — Interview-approved (Alec): viewport-fit 24 h internal scroll with auto-scroll;
   popover mini-calendar; Day + Week now with Month honestly "Soon"; week = 7 days × one
   practitioner, Monday start; toolbar on the card; tooltips + shortcuts popover with the

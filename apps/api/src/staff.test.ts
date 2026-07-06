@@ -277,6 +277,21 @@ describe("getDaySheet", () => {
     expect(apptUrl).toContain(encodeURIComponent("2026-07-06T04:00:00.000Z"));
   });
 
+  it("fetches a DST-safe 7-day window for the week view (days=7)", async () => {
+    const { client, get } = fakeClient({
+      schedules: schedulesBundle,
+      appointments: { resourceType: "Bundle", type: "searchset" },
+    });
+    // Mon 2026-10-26 .. Sun 2026-11-01: the fall-back day ends the range, so the
+    // window closes at EST midnight (05:00Z), not a naive start+7*24h (04:00Z).
+    const sheet = await service(client).getDaySheet(user, "2026-10-26", 7);
+    expect(sheet.date).toBe("2026-10-26");
+    expect(sheet.days).toBe(7);
+    const apptUrl = get.mock.calls.map((c) => String(c[0])).find((u) => APPOINTMENTS_URL.test(u))!;
+    expect(apptUrl).toContain(encodeURIComponent("2026-10-26T04:00:00.000Z"));
+    expect(apptUrl).toContain(encodeURIComponent("2026-11-02T05:00:00.000Z"));
+  });
+
   it("adds a column for a practitioner with appointments but no schedule", async () => {
     const { client } = fakeClient({
       schedules: { resourceType: "Bundle", type: "searchset" },

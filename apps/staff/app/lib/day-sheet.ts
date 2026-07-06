@@ -9,6 +9,44 @@ import type { AppointmentStatus, DaySheetAppointment, ServiceColor } from "@medi
 /** One hour of calendar height, px. 30-minute blocks get two comfortable text lines. */
 export const HOUR_PX = 112;
 
+/** The full grid spans the whole day (00:00–24:00, Google-Calendar model). */
+export const DAY_START_HOUR = 0;
+export const DAY_END_HOUR = 24;
+
+/** The schedule views. Month is reserved (SCHEDULE_DESIGN.md) — dropdown-only for now. */
+export type ScheduleView = "day" | "week";
+
+/** Days each view fetches/renders. */
+export const VIEW_DAYS: Record<ScheduleView, number> = { day: 1, week: 7 };
+
+/** Pure YYYY-MM-DD calendar math (no timezone — these are practice-local date labels). */
+export function shiftYmd(date: string, days: number): string {
+  const [y, m, d] = date.split("-").map(Number);
+  return new Date(Date.UTC(y!, m! - 1, d! + days)).toISOString().slice(0, 10);
+}
+
+/** Monday-of-the-week for a YYYY-MM-DD date (SCHEDULE_DESIGN.md: weeks start Monday). */
+export function weekStart(date: string): string {
+  const [y, m, d] = date.split("-").map(Number);
+  const dow = new Date(Date.UTC(y!, m! - 1, d!)).getUTCDay(); // 0=Sun..6=Sat
+  return shiftYmd(date, -((dow + 6) % 7));
+}
+
+/** The practice-local YYYY-MM-DD of an instant (for bucketing appointments into days). */
+export function ymdOf(iso: string, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(iso));
+}
+
+/** N consecutive YYYY-MM-DD dates from `start`. */
+export function daySpan(start: string, count: number): string[] {
+  return Array.from({ length: count }, (_, i) => shiftYmd(start, i));
+}
+
 /** Forward moves the UI offers per status (undo is the toast's reverse write, not a
  *  menu item). Mirrors the BFF's transition graph — the server still enforces it. */
 export const FORWARD_ACTIONS: Record<
@@ -34,6 +72,16 @@ export const STATUS_CHIP: Record<AppointmentStatus, string> = {
   roomed: "bg-brand-wash text-brand-primary",
   completed: "bg-surface-well text-text-secondary",
   "no-show": "bg-status-danger-wash text-status-danger-text",
+};
+
+/** Solid dot color per status for the compact (week-view) block, where a full chip is
+ *  too wide. Literal classes for the Tailwind scanner. */
+export const STATUS_DOT: Record<AppointmentStatus, string> = {
+  scheduled: "bg-status-info-text",
+  arrived: "bg-status-success-text",
+  roomed: "bg-brand-primary",
+  completed: "bg-text-secondary",
+  "no-show": "bg-status-danger-text",
 };
 
 export const STATUS_LABEL: Record<AppointmentStatus, string> = {
@@ -122,14 +170,55 @@ export function formatHour(hour: number): string {
   return `${h} ${hour < 12 ? "AM" : "PM"}`;
 }
 
+/** A YYYY-MM-DD date as a UTC-noon Date, safe for Intl formatting (no tz drift). */
+function ymdToDate(date: string): Date {
+  const [y, m, d] = date.split("-").map(Number);
+  return new Date(Date.UTC(y!, m! - 1, d!, 12));
+}
+
+const fmt = (date: string, opts: Intl.DateTimeFormatOptions): string =>
+  new Intl.DateTimeFormat("en-US", { timeZone: "UTC", ...opts }).format(ymdToDate(date));
+
 /** "Friday, July 4" from the sheet's practice-local date string (no timezone math —
  *  the BFF already resolved the practice-local day). */
 export function formatDateHeading(date: string): string {
-  const [y, m, d] = date.split("-").map(Number);
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone: "UTC",
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-  }).format(new Date(Date.UTC(y!, m! - 1, d!)));
+  return fmt(date, { weekday: "long", month: "long", day: "numeric" });
+}
+
+/** Toolbar date-button label: "Mon, Jul 6" (day) or "Jul 6 – 12" / "Jun 29 – Jul 5"
+ *  (week — collapses the month when both ends share one). */
+export function formatToolbarDate(start: string, days: number): string {
+  if (days <= 1) {
+    return fmt(start, { weekday: "short", month: "short", day: "numeric" });
+  }
+  const end = shiftYmd(start, days - 1);
+  const left = fmt(start, { month: "short", day: "numeric" });
+  const sameMonth = start.slice(0, 7) === end.slice(0, 7);
+  const right = fmt(end, sameMonth ? { day: "numeric" } : { month: "short", day: "numeric" });
+  return `${left} – ${right}`;
+}
+
+/** Short weekday + day-of-month for a week column header ("Mon 6"). */
+export function formatColumnDay(date: string): { weekday: string; day: string } {
+  return { weekday: fmt(date, { weekday: "short" }), day: fmt(date, { day: "numeric" }) };
+}
+
+/** "July 2026" month/year label for the mini-calendar header. */
+export function formatMonthYear(date: string): string {
+  return fmt(date, { month: "long", year: "numeric" });
+}
+
+/**
+ * The 6-week (42-cell) grid for a month containing `anchor` (YYYY-MM-DD), Monday-first.
+ * Each cell carries its YYYY-MM-DD and whether it belongs to the anchor's month. Stable
+ * 6-row height keeps the popover from resizing as months change.
+ */
+export function monthGrid(anchor: string): { date: string; inMonth: boolean }[] {
+  const month = anchor.slice(0, 7);
+  const first = `${month}-01`;
+  const gridStart = weekStart(first);
+  return Array.from({ length: 42 }, (_, i) => {
+    const date = shiftYmd(gridStart, i);
+    return { date, inMonth: date.slice(0, 7) === month };
+  });
 }

@@ -125,8 +125,10 @@ export type DaySheetAppointment = {
 };
 
 export type DaySheet = {
-  /** The practice-local calendar date (YYYY-MM-DD) the sheet covers. */
+  /** The practice-local calendar date (YYYY-MM-DD) the range STARTS on. */
   readonly date: string;
+  /** How many consecutive practice-local days the sheet covers (1 = day, 7 = week). */
+  readonly days: number;
   /** IANA practice timezone — format all times in it. */
   readonly timezone: string;
   readonly practitioners: readonly DaySheetPractitioner[];
@@ -243,10 +245,13 @@ export type ApiClient = {
    *  (401) or when the session's principal is not staff (404) — both benign
    *  signed-out-equivalent states for a UI, never crashes. */
   readonly getStaffProfile: (auth?: SessionAuth) => Promise<StaffProfile | undefined>;
-  /** The schedule day sheet (practitioner columns + appointments) for one
-   *  practice-local date (YYYY-MM-DD; omit for today). Staff session required.
-   *  Throws StaffError. */
-  readonly getDaySheet: (date?: string, auth?: SessionAuth) => Promise<DaySheet>;
+  /** The schedule sheet (practitioners + appointments) for a practice-local range:
+   *  `date` (YYYY-MM-DD; omit for today) + `days` (1 = day view, 7 = week; default 1).
+   *  Staff session required. Throws StaffError. */
+  readonly getDaySheet: (
+    range?: { readonly date?: string; readonly days?: number },
+    auth?: SessionAuth,
+  ) => Promise<DaySheet>;
   /** Moves an appointment through the status workflow (check-in, undo, roomed, …).
    *  Throws StaffError — "conflict" when the appointment changed under you (refetch). */
   readonly setAppointmentStatus: (
@@ -363,8 +368,15 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
       return (await res.json()) as StaffProfile;
     },
 
-    async getDaySheet(date, auth) {
-      const query = date ? `?date=${encodeURIComponent(date)}` : "";
+    async getDaySheet(range, auth) {
+      const params = new URLSearchParams();
+      if (range?.date) {
+        params.set("date", range.date);
+      }
+      if (range?.days !== undefined) {
+        params.set("days", String(range.days));
+      }
+      const query = params.size > 0 ? `?${params}` : "";
       const res = await fetchImpl(`${baseUrl}/staff/schedule${query}`, {
         headers: authHeaders(auth),
       });

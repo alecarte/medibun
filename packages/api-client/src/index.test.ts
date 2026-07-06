@@ -236,6 +236,7 @@ describe("getMyProfile — benign not-found states", () => {
 describe("staff endpoints", () => {
   const sheet: DaySheet = {
     date: "2026-07-04",
+    days: 1,
     timezone: "America/New_York",
     practitioners: [{ practitionerId: "pr1", practitionerName: "Riley Reyes" }],
     appointments: [
@@ -279,11 +280,11 @@ describe("staff endpoints", () => {
     expect((calls[0]!.init?.headers as Record<string, string>).authorization).toBe("Bearer tok");
   });
 
-  it("getDaySheet passes an explicit date as the query param", async () => {
+  it("getDaySheet passes date and days as query params (week view)", async () => {
     const { fetchImpl, calls } = stubFetch(200, sheet);
     const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
-    await client.getDaySheet("2026-07-06", { sessionToken: "tok" });
-    expect(calls[0]!.url).toBe("https://api.example.test/staff/schedule?date=2026-07-06");
+    await client.getDaySheet({ date: "2026-07-06", days: 7 }, { sessionToken: "tok" });
+    expect(calls[0]!.url).toBe("https://api.example.test/staff/schedule?date=2026-07-06&days=7");
   });
 
   it("getDaySheet throws a typed StaffError with the backend code", async () => {

@@ -93,6 +93,7 @@ export type StaffDeps = {
   readonly getDaySheet: (
     user: { profileReference: string; accessToken: string },
     date?: string,
+    days?: number,
   ) => Promise<DaySheet>;
   /** Throws InvalidTransitionError / UnknownAppointmentError / StatusConflictError. */
   readonly setAppointmentStatus: (
@@ -417,8 +418,8 @@ export function createApp(deps: AppDeps): Hono<Env> {
         }
       });
 
-      // The schedule for one practice-local date; no date = today. A date is calendar
-      // navigation state, not PHI — the one query param this surface carries.
+      // The schedule range: `date` (default today) + `days` (1 = day view, 7 = week).
+      // Calendar navigation state, not PHI — the only query params this surface carries.
       app.get("/staff/schedule", async (c) => {
         const gate = await staffUser(c);
         if (!gate.user) {
@@ -428,8 +429,14 @@ export function createApp(deps: AppDeps): Hono<Env> {
         if (date !== undefined && !isValidDateString(date)) {
           return fail(c, "invalid_request", 400);
         }
+        const daysParam = c.req.query("days");
+        if (daysParam !== undefined && daysParam !== "1" && daysParam !== "7") {
+          return fail(c, "invalid_request", 400);
+        }
         try {
-          return c.json(await staff.getDaySheet(gate.user, date));
+          return c.json(
+            await staff.getDaySheet(gate.user, date, daysParam ? Number(daysParam) : 1),
+          );
         } catch (err) {
           return staffFailure(c, err);
         }

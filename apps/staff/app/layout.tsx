@@ -31,9 +31,11 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
       <body className="antialiased">
         {/* Mobile-first: the shell stacks (top bar over content) below md and becomes
             rail + content beside each other from md up. */}
-        <div className="flex min-h-screen flex-col md:flex-row">
+        {/* h-screen (not min-h): the schedule fills the viewport and scrolls INTERNALLY,
+            so `main` must be a bounded, min-h-0 flex child. Shorter pages still fill it. */}
+        <div className="flex h-screen flex-col overflow-hidden md:flex-row">
           <Sidebar staffName={staff?.name} initialCollapsed={collapsed} />
-          <main className="flex-1">{children}</main>
+          <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
         </div>
       </body>
     </html>

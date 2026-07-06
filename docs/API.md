@@ -159,15 +159,17 @@ both into `undefined`.
 
 ### `GET /staff/schedule`
 
-The schedule day sheet for ONE practice-local date: one column per practitioner, every
-appointment in that day's window (resolved in the practice timezone, DST-safe). Optional
-`?date=YYYY-MM-DD` (a real calendar date — anything else is `400 invalid_request`); omitted =
-today. A calendar date is navigation state, not PHI — the only query parameter this surface
-carries. Weekly/monthly ranges are a future slice. Returns a `DaySheet`:
+The schedule sheet for a practice-local range: `?date=YYYY-MM-DD` (range start; a real
+calendar date — anything else is `400 invalid_request`; omitted = today) and `?days=1|7`
+(1 = day view, 7 = week view; anything else is `400`; omitted = 1). The window is resolved
+in the practice timezone, DST-safe per day. Calendar navigation state, not PHI — the only
+query parameters this surface carries. A month range is a future slice
+(`docs/SCHEDULE_DESIGN.md`). Returns a `DaySheet`:
 
 ```json
 {
   "date": "2026-07-04",
+  "days": 1,
   "timezone": "America/New_York",
   "practitioners": [{ "practitionerId": "…", "practitionerName": "Riley Reyes" }],
   "appointments": [
@@ -196,7 +198,7 @@ by the BFF to FHIR `Appointment.status` (`booked | arrived | checked-in | fulfil
 Appointments in unmapped FHIR statuses (cancelled, entered-in-error, …) are not day-sheet rows.
 Contact/service fields are optional; `firstVisit` means no prior non-cancelled appointment.
 
-`400 invalid_request` (malformed/impossible date) · `401 unauthorized` · `403 forbidden`
+`400 invalid_request` (malformed/impossible date, or days ∉ {1,7}) · `401 unauthorized` · `403 forbidden`
 (non-staff principal).
 
 ### `POST /staff/appointments/:id/status`

@@ -348,6 +348,7 @@ describe("api-client ⇄ BFF staff contract (real staff service, stubbed FHIR wi
     const sheet = await client.getDaySheet(undefined, auth);
     expect(sheet).toEqual({
       date: "2026-07-06",
+      days: 1,
       timezone: "America/New_York",
       practitioners: [{ practitionerId: "prac-1", practitionerName: "Riley Reyes" }],
       appointments: [

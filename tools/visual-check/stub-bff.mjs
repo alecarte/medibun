@@ -101,14 +101,38 @@ createServer((req, res) => {
   }
   if (!signedIn) return json(res, 401, { error: "unauthorized", requestId: "stub" });
   if (url.pathname === "/staff/schedule") {
+    const requested = url.searchParams.get("date") ?? new Date().toISOString().slice(0, 10);
+    const days = Number(url.searchParams.get("days") ?? "1");
+    // Week view snaps to the week's Monday, exactly like the real BFF (mondayOf).
+    const mondayOf = (ymd) => {
+      const [y, m, d] = ymd.split("-").map(Number);
+      const base = Date.UTC(y, m - 1, d);
+      const dow = new Date(base).getUTCDay(); // 0=Sun..6=Sat
+      return new Date(base - ((dow + 6) % 7) * 86400000).toISOString().slice(0, 10);
+    };
+    const date = days === 7 ? mondayOf(requested) : requested;
+    // Re-anchor the synthetic day onto the range start; for a week, spread the
+    // appointments across the days so every column has content to review.
+    const rangeStart = Date.parse(`${date}T13:00:00Z`); // 9:00 AM EDT
+    const shift = rangeStart - dayStart.getTime();
+    const appointments = STAFF_APPOINTMENTS.map((a, i) => {
+      const dayOffset = (days > 1 ? i % days : 0) * 86400000;
+      return {
+        ...a,
+        start: new Date(Date.parse(a.start) + shift + dayOffset).toISOString(),
+        end: new Date(Date.parse(a.end) + shift + dayOffset).toISOString(),
+        status: staffStatuses.get(a.id),
+      };
+    });
     return json(res, 200, {
-      date: url.searchParams.get("date") ?? new Date().toISOString().slice(0, 10),
+      date,
+      days,
       timezone: "America/New_York",
       practitioners: [
         { practitionerId: "prac-maya", practitionerName: "Maya Chen" },
         { practitionerId: "prac-riley", practitionerName: "Riley Reyes" },
       ],
-      appointments: STAFF_APPOINTMENTS.map((a) => ({ ...a, status: staffStatuses.get(a.id) })),
+      appointments,
     });
   }
   const statusMatch = url.pathname.match(/^\/staff\/appointments\/([^/]+)\/status$/);

@@ -59,6 +59,7 @@ function makeApp(
         getDaySheet: () =>
           Promise.resolve({
             date: "2026-07-04",
+            days: 1,
             timezone: "America/New_York",
             practitioners: [],
             appointments: [],
@@ -665,6 +666,7 @@ describe("GET /health/medplum", () => {
 describe("staff routes", () => {
   const sheet = {
     date: "2026-07-04",
+    days: 1,
     timezone: "America/New_York",
     practitioners: [{ practitionerId: "pr1", practitionerName: "Riley Reyes" }],
     appointments: [],
@@ -736,13 +738,13 @@ describe("staff routes", () => {
       expect(await res.json()).toEqual(sheet);
     });
 
-    it("passes a valid date param through and 400s malformed or impossible dates", async () => {
-      const dates: (string | undefined)[] = [];
+    it("passes valid date/days params through and 400s malformed ones", async () => {
+      const calls: [string | undefined, number | undefined][] = [];
       const { app } = makeApp({
         auth: staffSession,
         staff: {
-          getDaySheet: (_user, date) => {
-            dates.push(date);
+          getDaySheet: (_user, date, days) => {
+            calls.push([date, days]);
             return Promise.resolve(sheet);
           },
         },
@@ -750,10 +752,15 @@ describe("staff routes", () => {
       const get = (qs: string) =>
         app.request(`/staff/schedule${qs}`, { headers: { Authorization: "Bearer tok" } });
       expect((await get("?date=2026-07-06")).status).toBe(200);
-      expect(dates).toEqual(["2026-07-06"]);
+      expect((await get("?date=2026-07-06&days=7")).status).toBe(200);
+      expect(calls).toEqual([
+        ["2026-07-06", 1],
+        ["2026-07-06", 7],
+      ]);
       expect((await get("?date=tomorrow")).status).toBe(400);
       expect((await get("?date=2026-02-31")).status).toBe(400);
-      expect(dates).toEqual(["2026-07-06"]); // rejected dates never reach the service
+      expect((await get("?days=3")).status).toBe(400); // only 1 or 7 exist as views
+      expect(calls).toHaveLength(2); // rejected params never reach the service
     });
   });
 

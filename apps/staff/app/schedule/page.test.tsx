@@ -22,7 +22,8 @@ vi.mock("next/navigation", () => ({
 import SchedulePage from "./page";
 
 const sheet: DaySheet = {
-  date: "2026-07-04",
+  date: "2026-07-06",
+  days: 1,
   timezone: "America/New_York",
   practitioners: [{ practitionerId: "pr1", practitionerName: "Riley Reyes" }],
   appointments: [
@@ -31,15 +32,17 @@ const sheet: DaySheet = {
       practitionerId: "pr1",
       patientId: "pt1",
       patientName: "Synthia Loginsmith",
-      start: "2026-07-04T18:00:00.000Z",
-      end: "2026-07-04T18:30:00.000Z",
+      start: "2026-07-06T18:00:00.000Z",
+      end: "2026-07-06T18:30:00.000Z",
       status: "scheduled",
       firstVisit: true,
     },
   ],
 };
 
-const props = (date?: string) => ({ searchParams: Promise.resolve(date ? { date } : {}) });
+const props = (params: { view?: string; date?: string; practitioner?: string } = {}) => ({
+  searchParams: Promise.resolve(params),
+});
 
 describe("Schedule page", () => {
   beforeEach(() => {
@@ -53,44 +56,39 @@ describe("Schedule page", () => {
     await expect(SchedulePage(props())).rejects.toThrow("REDIRECT:/login");
   });
 
-  it("renders the sheet with the practice-local date, count, and day switcher", async () => {
+  it("fetches today's day view by default and renders the sheet", async () => {
     getSessionStaff.mockResolvedValue({ id: "pr-noor", name: "Noor Haddad" });
     getDaySheet.mockResolvedValue(sheet);
     render(await SchedulePage(props()));
     expect(screen.getByRole("heading", { name: "Schedule" })).toBeInTheDocument();
-    expect(screen.getByText(/Saturday, July 4/)).toBeInTheDocument();
-    expect(screen.getByText(/1 appointment/)).toBeInTheDocument();
     expect(screen.getByText("Synthia Loginsmith")).toBeInTheDocument();
-    // Day switching is plain calendar math on the sheet's date.
-    expect(screen.getByRole("link", { name: "Previous day" })).toHaveAttribute(
-      "href",
-      "/schedule?date=2026-07-03",
+    expect(getDaySheet).toHaveBeenCalledWith(
+      { date: undefined, days: 1 },
+      { cookie: "medibun_session=x" },
     );
-    expect(screen.getByRole("link", { name: "Next day" })).toHaveAttribute(
-      "href",
-      "/schedule?date=2026-07-05",
-    );
-    // No date param = already today: no Today link.
-    expect(screen.queryByRole("link", { name: "Today" })).not.toBeInTheDocument();
-    expect(getDaySheet).toHaveBeenCalledWith(undefined, { cookie: "medibun_session=x" });
   });
 
-  it("passes a valid ?date through to the BFF and offers the way back to Today", async () => {
+  it("requests a 7-day range for the week view", async () => {
     getSessionStaff.mockResolvedValue({ id: "pr-noor", name: "Noor Haddad" });
-    getDaySheet.mockResolvedValue({ ...sheet, date: "2026-07-06", appointments: [] });
-    render(await SchedulePage(props("2026-07-06")));
-    expect(getDaySheet).toHaveBeenCalledWith("2026-07-06", { cookie: "medibun_session=x" });
-    expect(screen.getByRole("link", { name: "Today" })).toHaveAttribute("href", "/schedule");
+    getDaySheet.mockResolvedValue({ ...sheet, days: 7 });
+    render(await SchedulePage(props({ view: "week", date: "2026-07-06" })));
+    expect(getDaySheet).toHaveBeenCalledWith(
+      { date: "2026-07-06", days: 7 },
+      { cookie: "medibun_session=x" },
+    );
   });
 
   it("ignores a malformed ?date instead of forwarding it", async () => {
     getSessionStaff.mockResolvedValue({ id: "pr-noor", name: "Noor Haddad" });
     getDaySheet.mockResolvedValue(sheet);
-    render(await SchedulePage(props("next-tuesday")));
-    expect(getDaySheet).toHaveBeenCalledWith(undefined, { cookie: "medibun_session=x" });
+    render(await SchedulePage(props({ date: "next-tuesday" })));
+    expect(getDaySheet).toHaveBeenCalledWith(
+      { date: undefined, days: 1 },
+      { cookie: "medibun_session=x" },
+    );
   });
 
-  it("shows the designed error state when the BFF is unreachable (shell keeps working)", async () => {
+  it("shows the designed error state when the BFF is unreachable", async () => {
     getSessionStaff.mockResolvedValue({ id: "pr-noor", name: "Noor Haddad" });
     getDaySheet.mockRejectedValue(new Error("connect ECONNREFUSED"));
     render(await SchedulePage(props()));

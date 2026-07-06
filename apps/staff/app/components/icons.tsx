@@ -85,6 +85,23 @@ export function PanelIcon({ className }: { className?: string }) {
   );
 }
 
+export function KeyboardIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <rect x="3" y="6.5" width="18" height="11" rx="2" />
+      <path d="M7 10h.01M10.5 10h.01M14 10h.01M17 10h.01M8.5 13.5h7" />
+    </Icon>
+  );
+}
+
+export function ChevronDownIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <path d="M6 9.5l6 6 6-6" />
+    </Icon>
+  );
+}
+
 export function MenuIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>

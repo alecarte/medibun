@@ -104,6 +104,16 @@ function tzOffsetMs(instantMs: number, timeZone: string): number {
   return asUtc - instantMs;
 }
 
+/** Monday-of-the-week for a YYYY-MM-DD date (SCHEDULE_DESIGN.md: weeks start Monday).
+ *  The BFF owns week alignment so `sheet.date` is always the week's Monday, regardless
+ *  of which day the client asked for. */
+export function mondayOf(date: string): string {
+  const [y, m, d] = date.split("-").map(Number);
+  const base = Date.UTC(y!, m! - 1, d!);
+  const dow = new Date(base).getUTCDay(); // 0=Sun..6=Sat
+  return new Date(base - ((dow + 6) % 7) * 86400000).toISOString().slice(0, 10);
+}
+
 /** A real calendar date in YYYY-MM-DD form (2026-02-31 round-trips false). */
 export function isValidDateString(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -174,9 +184,10 @@ export type SessionUser = { profileReference: string; accessToken: string };
 export type StaffService = {
   /** The staff member's own profile, or undefined for non-Practitioner principals. */
   readonly getStaffProfile: (user: SessionUser) => Promise<StaffProfile | undefined>;
-  /** The practitioner-column day sheet for one practice-local date (default: today).
-   *  `date` must be pre-validated (isValidDateString) by the route. */
-  readonly getDaySheet: (user: SessionUser, date?: string) => Promise<DaySheet>;
+  /** The schedule sheet for `days` consecutive practice-local days starting at `date`
+   *  (default: today, 1 day; week view fetches 7). `date`/`days` are pre-validated
+   *  (isValidDateString, days ∈ {1,7}) by the route. */
+  readonly getDaySheet: (user: SessionUser, date?: string, days?: number) => Promise<DaySheet>;
   /** Moves an appointment through the workflow. Throws InvalidTransitionError /
    *  UnknownAppointmentError (plus the medplum-backend auth/conflict errors). */
   readonly setAppointmentStatus: (
@@ -210,7 +221,7 @@ export function createStaffService(deps: {
       return practitioner && { id, name: humanNameDisplay(practitioner.name?.[0]) };
     },
 
-    async getDaySheet(user, date) {
+    async getDaySheet(user, date, days = 1) {
       const client = deps.userClient(user.accessToken);
       // Columns + practice timezone come from the Schedules (one actor each, S3 seed);
       // the catalog resolves service names/colors. Independent reads — run together.
@@ -223,10 +234,22 @@ export function createStaffService(deps: {
         schedules
           .map(({ practitioner }) => practitioner && practitionerTimezone(practitioner))
           .find(Boolean) ?? "UTC";
-      const bounds = date ? dayBoundsFor(date, timezone) : zonedDayBounds(now(), timezone);
+      // Range start: the requested date (or today). Week view (days=7) snaps to the
+      // week's Monday HERE — the BFF is the practice-timezone authority, so the client
+      // never has to know "today" to land on a Monday.
+      const rawStart = date ?? zonedDayBounds(now(), timezone).date;
+      const startYmd = days === 7 ? mondayOf(rawStart) : rawStart;
+      const bounds = dayBoundsFor(startYmd, timezone);
+      // Range end: the LAST day's own bounds, so DST days inside a week keep their true
+      // lengths (a naive start + days*24h drifts across a transition).
+      const lastYmd = (() => {
+        const [y, m, d] = bounds.date.split("-").map(Number);
+        return new Date(Date.UTC(y!, m! - 1, d! + (days - 1))).toISOString().slice(0, 10);
+      })();
+      const end = days === 1 ? bounds.end : dayBoundsFor(lastYmd, timezone).end;
       const day = await listDayAppointments(client, {
         start: bounds.start.toISOString(),
-        end: bounds.end.toISOString(),
+        end: end.toISOString(),
       });
 
       // Columns: schedule actors first, then any practitioner an appointment references
@@ -305,6 +328,7 @@ export function createStaffService(deps: {
 
       return {
         date: bounds.date,
+        days,
         timezone,
         practitioners,
         appointments: appointments.sort((a, b) => a.start.localeCompare(b.start)),
