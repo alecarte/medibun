@@ -46,7 +46,7 @@ describe("blockGeometry", () => {
     expect(g.height).toBe(28);
   });
 
-  it("spans the full grid for an all-day window (day off, S5c regression)", () => {
+  it("spans the full grid for an all-day window (S5c regression)", () => {
     // Midnight → next-day midnight EDT: hourOf(end) is 0 again, so an end-minus-start
     // hour subtraction collapses the block to a sliver — height must come from the
     // real duration.
@@ -57,6 +57,23 @@ describe("blockGeometry", () => {
     );
     expect(g.top).toBe(0);
     expect(g.height).toBe(24 * HOUR_PX);
+  });
+});
+
+describe("isAllDayEvent", () => {
+  it("recognizes a whole practice-local day (both edges at local midnight), DST-proof", async () => {
+    const { isAllDayEvent } = await import("./day-sheet");
+    // Regular 24h day and the 25h fall-back day both read as all-day.
+    expect(
+      isAllDayEvent({ start: "2026-07-06T04:00:00.000Z", end: "2026-07-07T04:00:00.000Z" }, TZ),
+    ).toBe(true);
+    expect(
+      isAllDayEvent({ start: "2026-11-01T04:00:00.000Z", end: "2026-11-02T05:00:00.000Z" }, TZ),
+    ).toBe(true);
+    // A timed block is not all-day, even at 24h across midday.
+    expect(
+      isAllDayEvent({ start: "2026-07-06T16:00:00.000Z", end: "2026-07-07T16:00:00.000Z" }, TZ),
+    ).toBe(false);
   });
 });
 

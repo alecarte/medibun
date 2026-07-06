@@ -86,18 +86,24 @@ booking arrives with S11's assistant, or its own slice). ~~Live updates & privac
   SSE/Subscriptions push for v0 (no new infra, reads stay on the staff user's own
   principal); the Subscriptions-driven upgrade is the documented seam.
 
-## 8. S5c — internal events (APPROVED Alec 2026-07-06, shipped)
+## 8. S5c — internal events (APPROVED Alec 2026-07-06, shipped; amended same day)
 
-- **Three types**: day off (all-day, one practitioner) · meeting (time-boxed, 1+
-  practitioners) · misc block (time-boxed, one practitioner, optional title). Recurrence
-  and weekly templates stay post-v0.
-- **Create**: toolbar **New** button or **`N`** → a quiet form popover (type · practitioner
-  pick · date · times · optional title). Everything practice-local; the BFF owns timezone
-  math. Title microcopy states the non-PHI rule (titles render unmasked).
+- **Two types**: meeting (1+ practitioners) · misc block (one practitioner). **Time off
+  is not a category** (amendment, Alec 2026-07-06): it's a **titled block** — "PTO",
+  "Time away" — either **all-day** or **timed (half-days)**. Any event can be all-day.
+  Recurrence and weekly templates stay post-v0.
+- **Create**: toolbar **New** button or **`N`** → a quiet form popover (type · title —
+  the PTO tag lives here, placeholder suggests it · practitioner pick · date · **All day
+  toggle** or times). Everything practice-local; the BFF owns timezone math. Title
+  microcopy states the non-PHI rule (titles render unmasked). Every disabled-Add reason
+  is said out loud: no schedules yet → explanatory panel; nothing picked → "Pick at
+  least one practitioner."; inverted times → "End time must be after the start."
+  (front-desk feedback 2026-07-06 — a greyed button with no explanation is a dead end).
 - **Render**: muted dashed blocks (surface-well wash, secondary text) behind appointment
-  blocks in every affected column; day-offs read "All day". Events don't join the
-  appointment count or the arrow-key cursor, and they stay visible under the privacy mask
-  (no PHI by construction).
+  blocks in every affected column; a full-practice-day window reads "All day" (detected
+  from wall times — no flag on the wire). Events don't join the appointment count or the
+  arrow-key cursor, and they stay visible under the privacy mask (no PHI by
+  construction).
 - **Delete**: from the event's detail card, immediate with the standard ~10s undo; undo of
   a create deletes, undo of a delete recreates (compensating, like the status workflow).
   No editing-in-place — delete + recreate.
@@ -105,6 +111,12 @@ booking arrives with S11's assistant, or its own slice). ~~Live updates & privac
 
 ## Review log
 
+- 2026-07-06 — **S5c amended** (Alec, at first hands-on review): the `day-off` category
+  removed — time off is a titled block ("PTO"), all-day OR timed (half-days), via an
+  **All day** toggle available to every event type. Landed before any stack carried a
+  `day-off` code, so the CodeSystem simply shrank to `meeting | block`. Same review:
+  the greyed-out Add dead-end fixed — the form now explains every disabled state
+  (unseeded stack = no practitioner schedules was the trigger).
 - 2026-07-06 — **S5c shipped** (§8): internal events end to end — FHIR representation
   (patient-less Appointment + busy-unavailable Slots, DATA_MODEL.md), BFF
   `POST/DELETE /staff/events` under the service client + `events[]` on the day sheet,

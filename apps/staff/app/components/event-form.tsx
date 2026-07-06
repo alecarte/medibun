@@ -1,21 +1,22 @@
 "use client";
 
-import type {
-  CreateInternalEventRequest,
-  DaySheetPractitioner,
-  InternalEventType,
+import {
+  INTERNAL_EVENT_TYPES,
+  type CreateInternalEventRequest,
+  type DaySheetPractitioner,
+  type InternalEventType,
 } from "@medibun/api-client";
 import { useState } from "react";
 
 import { EVENT_TYPE_LABEL } from "../lib/day-sheet";
 
 /**
- * The "New event" form (S5c): day off / meeting / misc block. Everything is sent
- * practice-local (date + wall times) — the BFF owns timezone math. Titles are NON-PHI
- * BY RULE: they render unmasked under the privacy glance mask, so the form says so.
+ * The "New event" form (S5c): staff meeting or misc time block. Time off is NOT a
+ * category (amendment, Alec 2026-07-06) — it's a titled block ("PTO", "Time away"),
+ * either all-day or timed (half-days). Everything is sent practice-local (date + wall
+ * times or an all-day flag) — the BFF owns timezone math. Titles are NON-PHI BY RULE:
+ * they render unmasked under the privacy glance mask, so the form says so.
  */
-
-const TYPES: readonly InternalEventType[] = ["day-off", "meeting", "block"];
 
 const inputClass =
   "rounded-control border border-border-interactive bg-surface-card px-2 py-1 text-sm text-text-primary";
@@ -43,11 +44,39 @@ export function EventForm({
         : [],
   );
   const [date, setDate] = useState(defaultDate);
+  const [allDay, setAllDay] = useState(false);
   const [startTime, setStartTime] = useState("12:00");
   const [endTime, setEndTime] = useState("13:00");
   const [title, setTitle] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | undefined>();
+
+  // Nothing to block: no practitioner has a schedule yet (e.g. an unseeded local
+  // stack). Say so instead of dead-ending on a permanently disabled Add.
+  if (practitioners.length === 0) {
+    return (
+      <div
+        role="dialog"
+        aria-label="New event"
+        className="flex w-72 flex-col gap-3 rounded-lg border border-border-hairline bg-surface-card p-4 shadow-lg"
+      >
+        <p className="text-sm font-medium text-text-primary">New event</p>
+        <p className="text-sm text-text-secondary">
+          No practitioner schedules yet, so there&apos;s no time to block. Events can be added once
+          practitioners have schedules.
+        </p>
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-control px-3 py-1.5 text-sm text-text-secondary"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   function pickType(next: InternalEventType) {
     setType(next);
@@ -67,8 +96,7 @@ export function EventForm({
     );
   }
 
-  const timed = type !== "day-off";
-  const timesValid = !timed || endTime > startTime;
+  const timesValid = allDay || endTime > startTime;
   const canSubmit = selected.length > 0 && date.length > 0 && timesValid && !pending;
 
   async function submit(event: React.FormEvent) {
@@ -82,10 +110,10 @@ export function EventForm({
       const trimmed = title.trim();
       await onCreate({
         type,
-        ...(timed && trimmed ? { title: trimmed } : {}),
+        ...(trimmed ? { title: trimmed } : {}),
         practitionerIds: selected,
         date,
-        ...(timed ? { startTime, endTime } : {}),
+        ...(allDay ? { allDay: true } : { startTime, endTime }),
       });
     } catch {
       setError("Couldn't add the event. Try again.");
@@ -103,7 +131,7 @@ export function EventForm({
       <p className="text-sm font-medium text-text-primary">New event</p>
 
       <div className="flex gap-1" role="group" aria-label="Event type">
-        {TYPES.map((t) => (
+        {INTERNAL_EVENT_TYPES.map((t) => (
           <button
             key={t}
             type="button"
@@ -119,6 +147,22 @@ export function EventForm({
           </button>
         ))}
       </div>
+
+      <label className="flex flex-col gap-1 text-sm text-text-secondary">
+        Title (optional)
+        <input
+          type="text"
+          value={title}
+          maxLength={80}
+          placeholder="PTO, training, …"
+          onChange={(e) => setTitle(e.target.value)}
+          className={inputClass}
+        />
+        {/* The mask rule, stated where the text is typed (DATA_MODEL.md). */}
+        <span className="text-xs text-text-secondary">
+          Titles stay visible while the screen is masked — never include patient details.
+        </span>
+      </label>
 
       <div className="flex flex-col gap-1" role="group" aria-label="Practitioners">
         {practitioners.map((p) => (
@@ -148,45 +192,44 @@ export function EventForm({
         />
       </label>
 
-      {timed && (
-        <>
-          <div className="flex items-center gap-2">
-            <label className="flex flex-1 items-center justify-between gap-2 text-sm text-text-secondary">
-              From
-              <input
-                type="time"
-                value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-                className={inputClass}
-              />
-            </label>
-            <label className="flex flex-1 items-center justify-between gap-2 text-sm text-text-secondary">
-              To
-              <input
-                type="time"
-                value={endTime}
-                onChange={(e) => setEndTime(e.target.value)}
-                className={inputClass}
-              />
-            </label>
-          </div>
-          <label className="flex flex-col gap-1 text-sm text-text-secondary">
-            Title (optional)
+      <label className="flex items-center gap-2 text-sm text-text-secondary">
+        <input
+          type="checkbox"
+          checked={allDay}
+          onChange={(e) => setAllDay(e.target.checked)}
+          className="h-4 w-4 accent-action-primary"
+        />
+        All day
+      </label>
+
+      {!allDay && (
+        <div className="flex items-center gap-2">
+          <label className="flex flex-1 items-center justify-between gap-2 text-sm text-text-secondary">
+            From
             <input
-              type="text"
-              value={title}
-              maxLength={80}
-              onChange={(e) => setTitle(e.target.value)}
+              type="time"
+              value={startTime}
+              onChange={(e) => setStartTime(e.target.value)}
               className={inputClass}
             />
-            {/* The mask rule, stated where the text is typed (DATA_MODEL.md). */}
-            <span className="text-xs text-text-secondary">
-              Titles stay visible while the screen is masked — never include patient details.
-            </span>
           </label>
-        </>
+          <label className="flex flex-1 items-center justify-between gap-2 text-sm text-text-secondary">
+            To
+            <input
+              type="time"
+              value={endTime}
+              onChange={(e) => setEndTime(e.target.value)}
+              className={inputClass}
+            />
+          </label>
+        </div>
       )}
 
+      {/* Every disabled-Add reason gets said out loud — a greyed button with no
+          explanation is a dead end (front-desk feedback, 2026-07-06). */}
+      {selected.length === 0 && (
+        <p className="text-sm text-status-danger-text">Pick at least one practitioner.</p>
+      )}
       {!timesValid && (
         <p className="text-sm text-status-danger-text">End time must be after the start.</p>
       )}

@@ -93,8 +93,8 @@ let nextEventId = 1;
 
 // Fixed EDT offset, consistent with the rest of this stub's clock math.
 const stubInstant = (date, time) => new Date(`${date}T${time}:00-04:00`).toISOString();
-const stubEventWindow = ({ type, date, startTime, endTime }) =>
-  type === "day-off"
+const stubEventWindow = ({ allDay, date, startTime, endTime }) =>
+  allDay
     ? {
         start: stubInstant(date, "00:00"),
         end: new Date(Date.parse(stubInstant(date, "00:00")) + 86400000).toISOString(),

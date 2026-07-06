@@ -133,37 +133,61 @@ describe("createEvent", () => {
     expect(userClient.get).toHaveBeenCalled();
   });
 
-  it("derives full practice-local day bounds for a day off (DST-safe BFF ownership)", async () => {
+  it("derives full practice-local day bounds for an all-day event (PTO as a titled block)", async () => {
     const { service, created } = fakeClients();
     const event = await service.createEvent(user, {
-      type: "day-off",
+      type: "block",
+      title: "PTO",
       practitionerIds: ["pr2"],
       date: "2026-07-07",
+      allDay: true,
     });
     // 2026-07-07 EDT: 04:00Z → next-day 04:00Z.
     expect(event.start).toBe("2026-07-07T04:00:00.000Z");
     expect(event.end).toBe("2026-07-08T04:00:00.000Z");
+    expect(event.title).toBe("PTO");
     expect(created.filter((r) => r.resourceType === "Slot")).toHaveLength(1);
+  });
+
+  it("supports half-days: a timed PTO block is just wall times (no all-day requirement)", async () => {
+    const { service } = fakeClients();
+    const event = await service.createEvent(user, {
+      type: "block",
+      title: "PTO — afternoon",
+      practitionerIds: ["pr2"],
+      date: "2026-07-07",
+      startTime: "13:00",
+      endTime: "17:00",
+    });
+    expect(event.start).toBe("2026-07-07T17:00:00.000Z"); // 13:00 EDT
+    expect(event.end).toBe("2026-07-07T21:00:00.000Z");
   });
 
   const rejected: { why: string; request: object }[] = [
     {
-      why: "unknown type",
-      request: { type: "vacation", practitionerIds: ["pr1"], date: "2026-07-07" },
+      why: "unknown type (day-off is not a category anymore)",
+      request: { type: "day-off", practitionerIds: ["pr1"], date: "2026-07-07", allDay: true },
     },
     {
       why: "no practitioners",
-      request: { type: "day-off", practitionerIds: [], date: "2026-07-07" },
+      request: { type: "block", practitionerIds: [], date: "2026-07-07", allDay: true },
     },
     {
-      why: "day off is per-practitioner",
-      request: { type: "day-off", practitionerIds: ["pr1", "pr2"], date: "2026-07-07" },
+      why: "a block is per-practitioner",
+      request: { type: "block", practitionerIds: ["pr1", "pr2"], date: "2026-07-07", allDay: true },
     },
     {
       why: "impossible date",
-      request: { type: "day-off", practitionerIds: ["pr1"], date: "2026-02-31" },
+      request: { type: "block", practitionerIds: ["pr1"], date: "2026-02-31", allDay: true },
     },
-    { why: "day off needs a date", request: { type: "day-off", practitionerIds: ["pr1"] } },
+    {
+      why: "a date is always required",
+      request: { type: "block", practitionerIds: ["pr1"], allDay: true },
+    },
+    {
+      why: "allDay must be a boolean",
+      request: { type: "block", practitionerIds: ["pr1"], date: "2026-07-07", allDay: "yes" },
+    },
     {
       why: "block needs start AND end times",
       request: { type: "block", practitionerIds: ["pr1"], date: "2026-07-06", startTime: "12:00" },
@@ -201,7 +225,7 @@ describe("createEvent", () => {
     },
     {
       why: "unknown practitioner",
-      request: { type: "day-off", practitionerIds: ["nobody"], date: "2026-07-07" },
+      request: { type: "block", practitionerIds: ["nobody"], date: "2026-07-07", allDay: true },
     },
   ];
 

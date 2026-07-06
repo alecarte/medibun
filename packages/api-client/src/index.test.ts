@@ -354,7 +354,12 @@ describe("staff endpoints", () => {
     const { fetchImpl } = stubFetch(400, { error: "invalid_request", requestId: "r" });
     const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
     const err = await client
-      .createInternalEvent({ type: "day-off", practitionerIds: ["pr1"], date: "2026-07-07" })
+      .createInternalEvent({
+        type: "block",
+        practitionerIds: ["pr1"],
+        date: "2026-07-07",
+        allDay: true,
+      })
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(StaffError);
     expect((err as StaffError).code).toBe("invalid_request");

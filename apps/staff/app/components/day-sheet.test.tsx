@@ -397,8 +397,11 @@ describe("ScheduleView — internal events (S5c)", () => {
         end: "2026-07-06T16:30:00.000Z",
       },
       {
+        // Time off is a TITLED BLOCK spanning the practice-local day, not a category
+        // (amendment 2026-07-06). isAllDayEvent reads it back as "All day".
         id: "ev2",
-        type: "day-off",
+        type: "block",
+        title: "PTO",
         practitionerIds: ["pr2"],
         start: "2026-07-06T04:00:00.000Z",
         end: "2026-07-07T04:00:00.000Z",
@@ -415,9 +418,9 @@ describe("ScheduleView — internal events (S5c)", () => {
   it("renders muted event blocks in every affected practitioner column", () => {
     stubFetch(200, {});
     render(<ScheduleView sheet={eventSheet} view="day" />);
-    // The meeting spans both practitioners; the day off shows All day.
+    // The meeting spans both practitioners; the PTO block reads back as All day.
     expect(screen.getAllByText("Team huddle")).toHaveLength(2);
-    expect(screen.getByText("Day off")).toBeInTheDocument();
+    expect(screen.getByText("PTO")).toBeInTheDocument();
     expect(screen.getByText("All day")).toBeInTheDocument();
     // Events never count as appointments.
     expect(screen.getByText("2 appointments")).toBeInTheDocument();
@@ -431,24 +434,28 @@ describe("ScheduleView — internal events (S5c)", () => {
     expect(screen.queryByText("Synthia Loginsmith")).not.toBeInTheDocument();
   });
 
-  it("creates a day off from the New form and offers undo (compensating delete)", async () => {
+  it("creates an all-day PTO block from the New form and offers undo (compensating delete)", async () => {
     const calls = stubFetch(201, {
       id: "ev9",
-      type: "day-off",
+      type: "block",
+      title: "PTO",
       practitionerIds: ["pr1"],
       start: "2026-07-06T04:00:00.000Z",
       end: "2026-07-07T04:00:00.000Z",
     });
     render(<ScheduleView {...dayProps} />);
     fireEvent.click(screen.getByRole("button", { name: "New" }));
-    fireEvent.click(screen.getByRole("button", { name: "Day off" }));
+    fireEvent.change(screen.getByLabelText(/Title/), { target: { value: "PTO" } });
+    fireEvent.click(screen.getByLabelText("All day"));
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
-    expect(await screen.findByText(/Day off added/)).toBeInTheDocument();
+    expect(await screen.findByText(/PTO added/)).toBeInTheDocument();
     expect(calls[0]!.url).toBe("/api/staff/events");
     expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({
-      type: "day-off",
+      type: "block",
+      title: "PTO",
       practitionerIds: ["pr1"],
       date: "2026-07-06",
+      allDay: true,
     });
     expect(refresh).toHaveBeenCalled();
     // Undo compensates with a DELETE of the created event.
@@ -527,9 +534,9 @@ describe("ScheduleView — internal events (S5c)", () => {
         selfPractitionerId="pr1"
       />,
     );
-    // pr1 sees the meeting but not pr2's day off.
+    // pr1 sees the meeting but not pr2's PTO block.
     expect(screen.getByText("Team huddle")).toBeInTheDocument();
-    expect(screen.queryByText("Day off")).not.toBeInTheDocument();
+    expect(screen.queryByText("PTO")).not.toBeInTheDocument();
   });
 });
 

@@ -28,6 +28,7 @@ import {
   FORWARD_ACTIONS,
   HOUR_PX,
   hourOf,
+  isAllDayEvent,
   shiftYmd,
   STATUS_CHIP,
   STATUS_DOT,
@@ -409,9 +410,9 @@ export function ScheduleView({
       ...(event.title ? { title: event.title } : {}),
       practitionerIds: event.practitionerIds,
       date: ymdOf(event.start, tz),
-      ...(event.type !== "day-off"
-        ? { startTime: wallTime(event.start, tz), endTime: wallTime(event.end, tz) }
-        : {}),
+      ...(isAllDayEvent(event, tz)
+        ? { allDay: true }
+        : { startTime: wallTime(event.start, tz), endTime: wallTime(event.end, tz) }),
     };
   }
 
@@ -932,7 +933,7 @@ export function ScheduleView({
                         className="block h-full w-full overflow-hidden rounded-md border border-dashed border-border-interactive bg-surface-well/70 px-2 py-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-action-primary"
                       >
                         <span className="block truncate text-[11px] text-text-secondary tabular-nums">
-                          {e.type === "day-off"
+                          {isAllDayEvent(e, tz)
                             ? "All day"
                             : `${formatTime(e.start, tz)}–${formatTime(e.end, tz)}`}
                         </span>
@@ -1141,7 +1142,7 @@ export function ScheduleView({
           </p>
           <p className="mt-0.5 text-xs text-text-secondary">
             {EVENT_TYPE_LABEL[eventDetail.type]} ·{" "}
-            {eventDetail.type === "day-off"
+            {isAllDayEvent(eventDetail, tz)
               ? "All day"
               : `${formatTime(eventDetail.start, tz)}–${formatTime(eventDetail.end, tz)}`}
           </p>

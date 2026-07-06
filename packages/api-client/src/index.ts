@@ -171,22 +171,25 @@ export type DaySheetAppointment = {
   readonly bookedAt?: string;
 };
 
-/** Internal (non-patient) calendar events — day off, staff meeting, misc time block
- *  (S5c). Represented in FHIR as a patient-less Appointment + busy-unavailable Slots
- *  per overlapping Schedule, so $find can't offer the window (DATA_MODEL.md). */
-export const INTERNAL_EVENT_TYPES = ["day-off", "meeting", "block"] as const;
+/** Internal (non-patient) calendar events — staff meetings and misc time blocks (S5c).
+ *  Time off is NOT a category (design amendment, Alec 2026-07-06): it's a titled block
+ *  ("PTO", "Time away"), all-day or partial (half-days). Represented in FHIR as a
+ *  patient-less Appointment + busy-unavailable Slots per overlapping Schedule, so
+ *  $find can't offer the window (DATA_MODEL.md). */
+export const INTERNAL_EVENT_TYPES = ["meeting", "block"] as const;
 
 export type InternalEventType = (typeof INTERNAL_EVENT_TYPES)[number];
 
 /** An internal event on the day sheet. NO PHI BY CONSTRUCTION: no patient participates,
  *  and titles must never contain patient information — they render unmasked under the
- *  privacy glance mask (the rule is documented at the create UI and in DATA_MODEL.md). */
+ *  privacy glance mask (the rule is documented at the create UI and in DATA_MODEL.md).
+ *  An all-day event's window is the full practice-local day (00:00 → next 00:00). */
 export type InternalEvent = {
   readonly id: string;
   readonly type: InternalEventType;
-  /** Optional display title ("Team huddle"). Non-PHI by rule (above). */
+  /** Optional display title ("Team huddle", "PTO"). Non-PHI by rule (above). */
   readonly title?: string;
-  /** Every practitioner the event blocks (one for day-off/block; 1+ for meetings). */
+  /** Every practitioner the event blocks (one for a block; 1+ for meetings). */
   readonly practitionerIds: readonly string[];
   readonly start: string;
   readonly end: string;
@@ -194,15 +197,16 @@ export type InternalEvent = {
 
 /** What the client sends to create an internal event. Everything is PRACTICE-LOCAL —
  *  the BFF owns all timezone math (it derives the instants, DST-safe), so no client
- *  ever converts wall time to UTC. Day-off covers the whole `date`; meeting/block add
- *  wall-clock times on that date. */
+ *  ever converts wall time to UTC. `allDay: true` covers the whole `date`; otherwise
+ *  `startTime`/`endTime` are wall times on that date (half-days and any other span). */
 export type CreateInternalEventRequest = {
   readonly type: InternalEventType;
   readonly title?: string;
   readonly practitionerIds: readonly string[];
   /** Practice-local calendar date (YYYY-MM-DD). */
   readonly date: string;
-  /** meeting/block only: practice-local wall times ("HH:mm", 24h) on `date`. */
+  readonly allDay?: boolean;
+  /** Ignored when allDay: practice-local wall times ("HH:mm", 24h) on `date`. */
   readonly startTime?: string;
   readonly endTime?: string;
 };

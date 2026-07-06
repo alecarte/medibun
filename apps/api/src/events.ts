@@ -83,7 +83,7 @@ export function createEventsService(deps: {
         !type ||
         ids.length === 0 ||
         !ids.every((id) => typeof id === "string" && id.length > 0) ||
-        // Day off and block are per-practitioner; only meetings span several.
+        // A block is per-practitioner; only meetings span several.
         (type !== "meeting" && ids.length !== 1)
       ) {
         throw new InvalidEventRequestError();
@@ -99,8 +99,14 @@ export function createEventsService(deps: {
       if (!request.date || !isValidDateString(request.date)) {
         throw new InvalidEventRequestError();
       }
+      if (request.allDay !== undefined && typeof request.allDay !== "boolean") {
+        throw new InvalidEventRequestError();
+      }
+      // Not a category: ANY event can be all-day (a whole practice-local day) or timed
+      // ("HH:mm" wall times — half-days and any other span). Amendment, Alec 2026-07-06.
+      const allDay = request.allDay === true;
       if (
-        type !== "day-off" &&
+        !allDay &&
         (typeof request.startTime !== "string" ||
           typeof request.endTime !== "string" ||
           !WALL_TIME.test(request.startTime) ||
@@ -122,14 +128,12 @@ export function createEventsService(deps: {
 
       // The BFF owns ALL wall-time → instant math (DST-safe), same as the day bounds.
       const bounds = dayBoundsFor(request.date, timezone);
-      const start =
-        type === "day-off"
-          ? bounds.start.toISOString()
-          : zonedInstant(request.date, request.startTime!, timezone).toISOString();
-      const end =
-        type === "day-off"
-          ? bounds.end.toISOString()
-          : zonedInstant(request.date, request.endTime!, timezone).toISOString();
+      const start = allDay
+        ? bounds.start.toISOString()
+        : zonedInstant(request.date, request.startTime!, timezone).toISOString();
+      const end = allDay
+        ? bounds.end.toISOString()
+        : zonedInstant(request.date, request.endTime!, timezone).toISOString();
 
       // Block EVERY schedule the chosen practitioners own — a practitioner has one
       // Schedule per service, and $find fans out over all of them. A slot outside a

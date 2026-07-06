@@ -364,7 +364,7 @@ describe("getDaySheet", () => {
         entry: [
           { resource: appointment("a1", "booked") },
           { resource: internalEvent("ev1", "meeting", { title: "Team huddle" }) },
-          { resource: internalEvent("ev2", "day-off") },
+          { resource: internalEvent("ev2", "block", { title: "PTO" }) },
           // Unknown internal code: not renderable, never mistaken for a booking.
           { resource: internalEvent("ev3", "sabbatical") },
           {
@@ -392,7 +392,8 @@ describe("getDaySheet", () => {
       },
       {
         id: "ev2",
-        type: "day-off",
+        type: "block",
+        title: "PTO",
         practitionerIds: ["pr1"],
         start: "2026-07-04T16:00:00.000Z",
         end: "2026-07-04T16:30:00.000Z",

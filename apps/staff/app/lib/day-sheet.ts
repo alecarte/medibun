@@ -3,6 +3,7 @@ import {
   weekStart,
   type AppointmentStatus,
   type DaySheetAppointment,
+  type InternalEvent,
   type InternalEventType,
   type ServiceColor,
 } from "@medibun/api-client";
@@ -103,12 +104,25 @@ export const STATUS_LABEL: Record<AppointmentStatus, string> = {
   "no-show": "No-show",
 };
 
-/** Display label per internal-event type (S5c). */
+/** Display label per internal-event type (S5c). Time off is not a type — it's a
+ *  titled block ("PTO"), all-day or partial (amendment, Alec 2026-07-06). */
 export const EVENT_TYPE_LABEL: Record<InternalEventType, string> = {
-  "day-off": "Day off",
   meeting: "Meeting",
   block: "Blocked time",
 };
+
+/** Whether an event's window is a whole practice-local day (both edges at local
+ *  midnight) — how "all day" reads back off the wire, DST-proof (23/24/25h all work). */
+export function isAllDayEvent(
+  event: Pick<InternalEvent, "start" | "end">,
+  timeZone: string,
+): boolean {
+  return (
+    event.end > event.start &&
+    wallTime(event.start, timeZone) === "00:00" &&
+    wallTime(event.end, timeZone) === "00:00"
+  );
+}
 
 /** Confirmation line for the undo toast (voice: states the outcome, never celebrates). */
 export const ACTION_DONE: Record<AppointmentStatus, string> = {

@@ -68,16 +68,21 @@ later as its own approval-gated design.
   example binding — custom CodeSystem is conformant) and `Procedure.code`. Price never enters
   FHIR; what-was-performed never lives only in the experience DB.
 
-### Internal events (S5c — day off, staff meetings, misc time blocks)
+### Internal events (S5c — staff meetings, misc time blocks, time off as titled blocks)
 
 - An internal event is a **patient-less `Appointment`** (`status: booked`) carrying a coding
   from our CodeSystem `https://medibun.com/fhir/CodeSystem/internal-events` in
-  `appointmentType` (`day-off` | `meeting` | `block`), `description` as the display title,
+  `appointmentType` (`meeting` | `block`), `description` as the display title,
   and one `participant` per affected Practitioner — **plus one `busy-unavailable` Slot per
   Schedule those practitioners own**, referenced from `Appointment.slot[]`. The busy Slots
   are what make `$find` refuse the window to patient booking (the same Appointment+Slot
   pairing `$book` creates); the Appointment is the visible, deletable event. A practitioner
-  has one Schedule per service, so a day off blocks all of them.
+  has one Schedule per service, so a block covers all of them.
+- **Time off is not a code** (amendment, Alec 2026-07-06 — replaced the original `day-off`
+  code before any stack carried one): PTO/time-away is a **titled block**, all-day or
+  partial (half-days). "All day" has no flag in FHIR either — it's simply a window
+  spanning the full practice-local day (00:00 → next 00:00), detected on read from the
+  wall times, which stays true across 23/25-hour DST days.
 - **Titles are non-PHI by rule**: no patient names/details, ever — they render unmasked
   under the staff privacy glance mask and are stated as such at the create UI.
 - **Split principals** (decided 2026-07-06 + security-review remediation, same change):
@@ -92,7 +97,7 @@ later as its own approval-gated design.
 - Race note (v0-accepted): creating the busy Slots doesn't run inside `$book`'s
   serializable transaction, so a patient booking in the same instant as a block creation
   can interleave — the overlap is visible on the calendar and resolved by staff
-  (reschedule lands with S5.5). Existing bookings never block a day off on purpose:
+  (reschedule lands with S5.5). Existing bookings never block time off on purpose:
   marking the day off IS how staff discover who must be called.
 - Recurring events / weekly templates stay post-v0 (COMPETITIVE_NOTES §1).
 
