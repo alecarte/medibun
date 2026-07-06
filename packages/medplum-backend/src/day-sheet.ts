@@ -3,7 +3,7 @@ import type { PatchOperation } from "@medplum/core";
 import type { Appointment, Bundle, Patient, Practitioner } from "@medplum/fhirtypes";
 
 import { SessionExpiredError } from "./patients.js";
-import { schedulesWithActors } from "./scheduling.js";
+import { bundleResources, schedulesWithActors } from "./scheduling.js";
 import type { FhirOpsClient, ScheduleWithActor } from "./scheduling.js";
 
 /**
@@ -42,9 +42,6 @@ function rethrowAuth(err: unknown): never {
   }
   throw err;
 }
-
-const bundleResources = (bundle: Bundle) =>
-  (bundle.entry ?? []).flatMap((e) => (e.resource ? [e.resource] : []));
 
 /** Every Schedule (with its Practitioner actor) the caller's policy lets them see. */
 export async function listSchedules(client: FhirOpsClient): Promise<ScheduleWithActor[]> {

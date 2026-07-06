@@ -1,3 +1,4 @@
+import { notFound, OperationOutcomeError } from "@medplum/core";
 import type { MedplumClient } from "@medplum/core";
 import type { Appointment, Encounter } from "@medplum/fhirtypes";
 import { describe, expect, it, vi } from "vitest";
@@ -15,15 +16,27 @@ const appointment = (status: Appointment["status"]): Appointment => ({
   serviceType: [{ coding: [{ system: "x", code: "svc-botox" }] }],
 });
 
-const fakeMedplum = (existing: Encounter[]) => {
+/** `current` is what the server holds NOW (the bot re-reads); omit to 404 the read. */
+const fakeMedplum = (existing: Encounter[], current?: Appointment) => {
   const searchResources = vi.fn().mockResolvedValue(existing);
   const createResource = vi.fn().mockImplementation((r: Encounter) => Promise.resolve(r));
   const updateResource = vi.fn().mockImplementation((r: Encounter) => Promise.resolve(r));
+  const readResource = vi
+    .fn()
+    .mockImplementation(() =>
+      current ? Promise.resolve(current) : Promise.reject(new OperationOutcomeError(notFound)),
+    );
   return {
-    client: { searchResources, createResource, updateResource } as unknown as MedplumClient,
+    client: {
+      searchResources,
+      createResource,
+      updateResource,
+      readResource,
+    } as unknown as MedplumClient,
     searchResources,
     createResource,
     updateResource,
+    readResource,
   };
 };
 
@@ -31,7 +44,7 @@ const event = (input: Appointment) => ({ input }) as unknown as Parameters<typeo
 
 describe("check-in bot", () => {
   it("creates the Encounter when the appointment arrives (front desk has no Encounter write)", async () => {
-    const { client, searchResources, createResource } = fakeMedplum([]);
+    const { client, searchResources, createResource } = fakeMedplum([], appointment("arrived"));
     await handler(client, event(appointment("arrived")));
     expect(searchResources).toHaveBeenCalledWith("Encounter", {
       appointment: "Appointment/appt-1",
@@ -53,7 +66,7 @@ describe("check-in bot", () => {
       status: "arrived",
       class: { code: "AMB" },
     };
-    const { client, createResource } = fakeMedplum([live]);
+    const { client, createResource } = fakeMedplum([live], appointment("arrived"));
     await handler(client, event(appointment("arrived")));
     expect(createResource).not.toHaveBeenCalled();
   });
@@ -65,14 +78,14 @@ describe("check-in bot", () => {
       status: "arrived",
       class: { code: "AMB" },
     };
-    const { client, updateResource, createResource } = fakeMedplum([live]);
+    const { client, updateResource, createResource } = fakeMedplum([live], appointment("booked"));
     await handler(client, event(appointment("booked")));
     expect(updateResource).toHaveBeenCalledWith({ ...live, status: "entered-in-error" });
     expect(createResource).not.toHaveBeenCalled();
   });
 
   it("treats a fresh booking (no Encounter yet) as a no-op", async () => {
-    const { client, updateResource, createResource } = fakeMedplum([]);
+    const { client, updateResource, createResource } = fakeMedplum([], appointment("booked"));
     await handler(client, event(appointment("booked")));
     expect(updateResource).not.toHaveBeenCalled();
     expect(createResource).not.toHaveBeenCalled();
@@ -85,8 +98,48 @@ describe("check-in bot", () => {
       status: "entered-in-error",
       class: { code: "AMB" },
     };
-    const { client, createResource } = fakeMedplum([voided]);
+    const { client, createResource } = fakeMedplum([voided], appointment("arrived"));
     await handler(client, event(appointment("arrived")));
     expect(createResource).toHaveBeenCalledOnce();
+  });
+
+  it("acts on the CURRENT status, not the event snapshot: stale 'arrived' after an undo", async () => {
+    // Check-in then quick undo — the 'arrived' event delivered LAST must not resurrect
+    // an Encounter for an appointment the server already moved back to 'booked'.
+    const { client, createResource } = fakeMedplum([], appointment("booked"));
+    await handler(client, event(appointment("arrived")));
+    expect(createResource).not.toHaveBeenCalled();
+  });
+
+  it("acts on the CURRENT status, not the event snapshot: stale 'booked' after a re-check-in", async () => {
+    // Undo then re-check-in — the 'booked' event delivered LAST must not void the live
+    // Encounter of an appointment the server already moved back to 'arrived'.
+    const live: Encounter = {
+      resourceType: "Encounter",
+      id: "enc-1",
+      status: "arrived",
+      class: { code: "AMB" },
+    };
+    const { client, updateResource, createResource } = fakeMedplum([live], appointment("arrived"));
+    await handler(client, event(appointment("booked")));
+    expect(updateResource).not.toHaveBeenCalled();
+    expect(createResource).not.toHaveBeenCalled(); // a live Encounter already exists
+  });
+
+  it("does nothing when the appointment no longer exists", async () => {
+    const { client, searchResources, createResource, updateResource } = fakeMedplum([]);
+    await handler(client, event(appointment("arrived")));
+    expect(searchResources).not.toHaveBeenCalled();
+    expect(createResource).not.toHaveBeenCalled();
+    expect(updateResource).not.toHaveBeenCalled();
+  });
+
+  it("rethrows a transient re-read failure so the Subscription retries", async () => {
+    // Only not-found means "deleted". A 5xx/network/policy failure must NOT be treated
+    // as success — swallowing it would silently skip Encounter reconciliation.
+    const { client, readResource, createResource } = fakeMedplum([]);
+    readResource.mockRejectedValueOnce(new Error("connect ETIMEDOUT"));
+    await expect(handler(client, event(appointment("arrived")))).rejects.toThrow("ETIMEDOUT");
+    expect(createResource).not.toHaveBeenCalled();
   });
 });

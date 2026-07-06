@@ -26,24 +26,33 @@ export function MiniCalendar({
   onPick: (date: string) => void;
   onClose: () => void;
 }) {
-  // The month being browsed, and the focused day (keyboard cursor), start at selection.
-  const [monthAnchor, setMonthAnchor] = useState(selected);
+  // ONE cursor drives everything: the keyboard focus, the visible month (its grid), and
+  // the chevrons. A separate month anchor desyncs — chevron then arrow-key snapped the
+  // view back to the old cursor's month.
   const [cursor, setCursor] = useState(selected);
   const gridRef = useRef<HTMLDivElement>(null);
+  const firstFocus = useRef(true);
 
+  // Focus follows the cursor for keyboard moves (and on open); a chevron CLICK keeps its
+  // button focused — yanking focus into the grid would break repeated month paging.
   useEffect(() => {
-    gridRef.current?.querySelector<HTMLButtonElement>('[data-cursor="true"]')?.focus();
+    const grid = gridRef.current;
+    if (firstFocus.current || grid?.contains(document.activeElement)) {
+      grid?.querySelector<HTMLButtonElement>('[data-cursor="true"]')?.focus();
+    }
+    firstFocus.current = false;
   }, [cursor]);
 
   const selectedWeek = weekMode ? weekStart(selected) : undefined;
-  const cells = monthGrid(monthAnchor);
+  const cells = monthGrid(cursor);
 
-  const move = (deltaDays: number) => {
-    const next = shiftYmd(cursor, deltaDays);
-    setCursor(next);
-    if (next.slice(0, 7) !== monthAnchor.slice(0, 7)) {
-      setMonthAnchor(next);
-    }
+  const move = (deltaDays: number) => setCursor(shiftYmd(cursor, deltaDays));
+
+  /** Page the visible month by moving the cursor to the 1st of the prev/next month. */
+  const pageMonth = (delta: -1 | 1) => {
+    const first = `${cursor.slice(0, 7)}-01`;
+    const inTarget = delta === -1 ? shiftYmd(first, -1) : shiftYmd(first, 32);
+    setCursor(`${inTarget.slice(0, 7)}-01`);
   };
 
   const onKeyDown = (event: React.KeyboardEvent) => {
@@ -76,18 +85,16 @@ export function MiniCalendar({
         <button
           type="button"
           aria-label="Previous month"
-          onClick={() => setMonthAnchor(shiftYmd(`${monthAnchor.slice(0, 7)}-01`, -1))}
+          onClick={() => pageMonth(-1)}
           className="rounded-md p-1 text-text-secondary hover:bg-surface-well"
         >
           <ChevronLeftIcon className="h-4 w-4" />
         </button>
-        <span className="text-sm font-medium text-text-primary">
-          {formatMonthYear(monthAnchor)}
-        </span>
+        <span className="text-sm font-medium text-text-primary">{formatMonthYear(cursor)}</span>
         <button
           type="button"
           aria-label="Next month"
-          onClick={() => setMonthAnchor(shiftYmd(`${monthAnchor.slice(0, 7)}-01`, 32))}
+          onClick={() => pageMonth(1)}
           className="rounded-md p-1 text-text-secondary hover:bg-surface-well"
         >
           <ChevronRightIcon className="h-4 w-4" />

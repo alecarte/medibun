@@ -88,6 +88,19 @@ describe("Schedule page", () => {
     );
   });
 
+  it("falls back to today for an impossible calendar ?date — not the outage card", async () => {
+    // 2026-02-31 passes a shape regex but isn't a real date; the BFF would 400 it.
+    getSessionStaff.mockResolvedValue({ id: "pr-noor", name: "Noor Haddad" });
+    getDaySheet.mockResolvedValue(sheet);
+    render(await SchedulePage(props({ date: "2026-02-31" })));
+    expect(getDaySheet).toHaveBeenCalledWith(
+      { date: undefined, days: 1 },
+      { cookie: "medibun_session=x" },
+    );
+    expect(screen.queryByText(/The schedule couldn.t load/)).not.toBeInTheDocument();
+    expect(screen.getByText("Synthia Loginsmith")).toBeInTheDocument();
+  });
+
   it("shows the designed error state when the BFF is unreachable", async () => {
     getSessionStaff.mockResolvedValue({ id: "pr-noor", name: "Noor Haddad" });
     getDaySheet.mockRejectedValue(new Error("connect ECONNREFUSED"));

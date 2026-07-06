@@ -1,4 +1,4 @@
-import { StaffError, type DaySheet } from "@medibun/api-client";
+import { isValidDateString, StaffError, type DaySheet } from "@medibun/api-client";
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
@@ -8,8 +8,6 @@ import { bffClient, sessionCookie } from "../lib/bff";
 import { getSessionStaff } from "../lib/session";
 
 export const metadata: Metadata = { title: "Schedule" };
-
-const DATE_SHAPE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * Schedule (S5, reworked per docs/SCHEDULE_DESIGN.md). Auth-gated RSC: the session
@@ -23,28 +21,42 @@ export default async function SchedulePage({
 }: {
   searchParams: Promise<{ view?: string; date?: string; practitioner?: string }>;
 }) {
-  const staff = await getSessionStaff();
+  const params = await searchParams;
+  const view: View = params.view === "week" ? "week" : "day";
+  // An impossible ?date (hand-edited URL, e.g. 2026-02-31) falls back to today — a bad
+  // URL is not an outage, and the BFF would 400 the raw value.
+  const requestedDate = params.date && isValidDateString(params.date) ? params.date : undefined;
+
+  // The session probe and the sheet fetch are independent BFF calls — run them
+  // together. The sheet's failure is held (not thrown) so the auth redirect still wins.
+  const [staff, sheetResult] = await Promise.all([
+    getSessionStaff(),
+    (async (): Promise<{ sheet: DaySheet } | { error: unknown }> => {
+      try {
+        const cookie = await sessionCookie();
+        return {
+          sheet: await bffClient().getDaySheet(
+            { date: requestedDate, days: VIEW_DAYS[view] },
+            { cookie },
+          ),
+        };
+      } catch (error) {
+        return { error };
+      }
+    })(),
+  ]);
   if (!staff) {
     redirect("/login");
   }
-  const params = await searchParams;
-  const view: View = params.view === "week" ? "week" : "day";
-  const requestedDate = params.date && DATE_SHAPE.test(params.date) ? params.date : undefined;
-
-  let sheet: DaySheet | undefined;
-  let failed = false;
-  try {
-    const cookie = await sessionCookie();
-    sheet = await bffClient().getDaySheet(
-      { date: requestedDate, days: VIEW_DAYS[view] },
-      { cookie },
-    );
-  } catch (err) {
-    if (err instanceof StaffError && err.code === "unauthorized") {
-      redirect("/login");
-    }
-    failed = true;
+  if (
+    "error" in sheetResult &&
+    sheetResult.error instanceof StaffError &&
+    sheetResult.error.code === "unauthorized"
+  ) {
+    redirect("/login");
   }
+  const sheet = "sheet" in sheetResult ? sheetResult.sheet : undefined;
+  const failed = !sheet;
 
   return (
     <div className="mx-auto flex h-full min-h-0 max-w-7xl flex-col px-5 pt-6 pb-4 sm:px-8">

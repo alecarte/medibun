@@ -6,7 +6,6 @@ import {
   createStaffService,
   dayBoundsFor,
   InvalidTransitionError,
-  isValidDateString,
   UnknownAppointmentError,
   zonedDayBounds,
   type StaffUserClient,
@@ -14,15 +13,6 @@ import {
 import type { ServiceRow } from "./services/catalog.js";
 
 const TZ = "America/New_York";
-
-describe("isValidDateString", () => {
-  it("accepts real calendar dates and rejects malformed or impossible ones", () => {
-    expect(isValidDateString("2026-07-06")).toBe(true);
-    expect(isValidDateString("2026-02-31")).toBe(false);
-    expect(isValidDateString("tomorrow")).toBe(false);
-    expect(isValidDateString("2026-7-6")).toBe(false);
-  });
-});
 
 describe("dayBoundsFor", () => {
   it("bounds an explicit practice-local date (the schedule day switcher)", () => {
@@ -290,6 +280,48 @@ describe("getDaySheet", () => {
     const apptUrl = get.mock.calls.map((c) => String(c[0])).find((u) => APPOINTMENTS_URL.test(u))!;
     expect(apptUrl).toContain(encodeURIComponent("2026-10-26T04:00:00.000Z"));
     expect(apptUrl).toContain(encodeURIComponent("2026-11-02T05:00:00.000Z"));
+  });
+
+  it("flags only the patient's EARLIEST in-range appointment as the first visit", async () => {
+    // Two bookings in the same fetched week, no prior history: the Monday one is the
+    // first visit; the Wednesday one must NOT read as "New" (it's their second).
+    const twoSamePatient = {
+      resourceType: "Bundle",
+      type: "searchset",
+      entry: [
+        {
+          resource: {
+            ...appointment("wed", "booked"),
+            start: "2026-07-08T14:00:00.000Z",
+            end: "2026-07-08T14:30:00.000Z",
+          },
+        },
+        {
+          resource: {
+            ...appointment("mon", "booked"),
+            start: "2026-07-06T14:00:00.000Z",
+            end: "2026-07-06T14:30:00.000Z",
+          },
+        },
+        {
+          resource: {
+            resourceType: "Patient",
+            id: "pt1",
+            name: [{ given: ["Synthia"], family: "Loginsmith" }],
+          },
+        },
+        { resource: practitioner("pr1", "Reyes") },
+      ],
+    };
+    const { client } = fakeClient({
+      schedules: schedulesBundle,
+      appointments: twoSamePatient,
+      priorCount: 0,
+    });
+    const sheet = await service(client).getDaySheet(user, "2026-07-06", 7);
+    const firstVisitById = new Map(sheet.appointments.map((a) => [a.id, a.firstVisit]));
+    expect(firstVisitById.get("mon")).toBe(true);
+    expect(firstVisitById.get("wed")).toBe(false);
   });
 
   it("adds a column for a practitioner with appointments but no schedule", async () => {

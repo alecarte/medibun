@@ -1,10 +1,12 @@
-import type {
-  AppointmentStatus,
-  DaySheet,
-  DaySheetAppointment,
-  DaySheetPractitioner,
-  ServiceColor,
-  StaffProfile,
+import {
+  STATUS_TRANSITIONS,
+  weekStart,
+  type AppointmentStatus,
+  type DaySheet,
+  type DaySheetAppointment,
+  type DaySheetPractitioner,
+  type ServiceColor,
+  type StaffProfile,
 } from "@medibun/api-client";
 import {
   hasAppointmentBefore,
@@ -50,16 +52,6 @@ const DOMAIN_BY_FHIR = new Map<Appointment["status"], AppointmentStatus>(
   ),
 );
 
-/** Allowed moves: each forward step plus its exact reverse (the ~10s undo,
- *  DESIGN.md undo-over-confirm). Everything else is a stale-client conflict. */
-const TRANSITIONS: Record<AppointmentStatus, readonly AppointmentStatus[]> = {
-  scheduled: ["arrived", "no-show"],
-  arrived: ["roomed", "scheduled"],
-  roomed: ["completed", "arrived"],
-  completed: ["roomed"],
-  "no-show": ["scheduled"],
-};
-
 /** The requested move isn't legal from the appointment's CURRENT status — almost always
  *  a stale day sheet (another station moved it first). Client refetches. */
 export class InvalidTransitionError extends Error {
@@ -77,10 +69,13 @@ export class UnknownAppointmentError extends Error {
   }
 }
 
-/** Offset between the zone's wall clock and UTC at an instant (DST-aware). */
-function tzOffsetMs(instantMs: number, timeZone: string): number {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat("en-US", {
+/** Per-timezone cached Intl formatters — construction is expensive and the day-bounds
+ *  math calls these several times per request. */
+const wallClockFormatters = new Map<string, Intl.DateTimeFormat>();
+function wallClockFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = wallClockFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
       timeZone,
       hour12: false,
       year: "numeric",
@@ -89,7 +84,32 @@ function tzOffsetMs(instantMs: number, timeZone: string): number {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
-    })
+    });
+    wallClockFormatters.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
+const ymdFormatters = new Map<string, Intl.DateTimeFormat>();
+function ymdFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = ymdFormatters.get(timeZone);
+  if (!formatter) {
+    // en-CA renders YYYY-MM-DD directly.
+    formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    ymdFormatters.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
+/** Offset between the zone's wall clock and UTC at an instant (DST-aware). */
+function tzOffsetMs(instantMs: number, timeZone: string): number {
+  const parts = Object.fromEntries(
+    wallClockFormatter(timeZone)
       .formatToParts(new Date(instantMs))
       .map((p) => [p.type, p.value]),
   );
@@ -102,25 +122,6 @@ function tzOffsetMs(instantMs: number, timeZone: string): number {
     Number(parts.second),
   );
   return asUtc - instantMs;
-}
-
-/** Monday-of-the-week for a YYYY-MM-DD date (SCHEDULE_DESIGN.md: weeks start Monday).
- *  The BFF owns week alignment so `sheet.date` is always the week's Monday, regardless
- *  of which day the client asked for. */
-export function mondayOf(date: string): string {
-  const [y, m, d] = date.split("-").map(Number);
-  const base = Date.UTC(y!, m! - 1, d!);
-  const dow = new Date(base).getUTCDay(); // 0=Sun..6=Sat
-  return new Date(base - ((dow + 6) % 7) * 86400000).toISOString().slice(0, 10);
-}
-
-/** A real calendar date in YYYY-MM-DD form (2026-02-31 round-trips false). */
-export function isValidDateString(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    return false;
-  }
-  const [y, m, d] = value.split("-").map(Number);
-  return new Date(Date.UTC(y!, m! - 1, d!)).toISOString().slice(0, 10) === value;
 }
 
 /**
@@ -148,14 +149,7 @@ export function zonedDayBounds(
   now: Date,
   timeZone: string,
 ): { date: string; start: Date; end: Date } {
-  // en-CA renders YYYY-MM-DD directly.
-  const date = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now);
-  return dayBoundsFor(date, timeZone);
+  return dayBoundsFor(ymdFormatter(timeZone).format(now), timeZone);
 }
 
 const telecomValue = (patient: Patient, system: "phone" | "email"): string | undefined =>
@@ -238,7 +232,7 @@ export function createStaffService(deps: {
       // week's Monday HERE — the BFF is the practice-timezone authority, so the client
       // never has to know "today" to land on a Monday.
       const rawStart = date ?? zonedDayBounds(now(), timezone).date;
-      const startYmd = days === 7 ? mondayOf(rawStart) : rawStart;
+      const startYmd = days === 7 ? weekStart(rawStart) : rawStart;
       const bounds = dayBoundsFor(startYmd, timezone);
       // Range end: the LAST day's own bounds, so DST days inside a week keep their true
       // lengths (a naive start + days*24h drifts across a transition).
@@ -278,18 +272,38 @@ export function createStaffService(deps: {
           : [];
       });
 
-      // First-visit lookups, once per unique patient (the new-patient marker).
+      // First-visit lookups, once per unique patient (the new-patient marker) — in
+      // bounded batches, not one burst: a week sheet can carry dozens of patients and
+      // each lookup is its own FHIR search (the N+1 stays, its concurrency is capped).
       const uniquePatients = [...new Set(mappable.map((m) => m.patientRef))];
-      const knownFace = new Map(
-        await Promise.all(
-          uniquePatients.map(
-            async (ref): Promise<[string, boolean]> => [
-              ref,
-              await hasAppointmentBefore(client, ref, bounds.start.toISOString()),
-            ],
-          ),
-        ),
-      );
+      const knownFace = new Map<string, boolean>();
+      const FIRST_VISIT_BATCH = 10;
+      for (let i = 0; i < uniquePatients.length; i += FIRST_VISIT_BATCH) {
+        const batch = await Promise.all(
+          uniquePatients
+            .slice(i, i + FIRST_VISIT_BATCH)
+            .map(
+              async (ref): Promise<[string, boolean]> => [
+                ref,
+                await hasAppointmentBefore(client, ref, bounds.start.toISOString()),
+              ],
+            ),
+        );
+        for (const [ref, known] of batch) {
+          knownFace.set(ref, known);
+        }
+      }
+
+      // The patient's EARLIEST appointment in the fetched range: only that one can be
+      // the first visit — a second booking inside the same week must not read as "New"
+      // merely because both fall after the range start.
+      const earliestInRange = new Map<string, { start: string; id: string }>();
+      for (const m of mappable) {
+        const current = earliestInRange.get(m.patientRef);
+        if (!current || m.appointment.start! < current.start) {
+          earliestInRange.set(m.patientRef, { start: m.appointment.start!, id: m.appointment.id! });
+        }
+      }
 
       const appointments: DaySheetAppointment[] = mappable.map(
         ({ appointment, status, patientRef, practitionerRef }) => {
@@ -313,7 +327,9 @@ export function createStaffService(deps: {
             start: appointment.start!,
             end: appointment.end!,
             status,
-            firstVisit: !(knownFace.get(patientRef) ?? false),
+            firstVisit:
+              !(knownFace.get(patientRef) ?? false) &&
+              earliestInRange.get(patientRef)?.id === appointment.id,
             ...(appointment.created ? { bookedAt: appointment.created } : {}),
           };
         },
@@ -342,7 +358,7 @@ export function createStaffService(deps: {
         throw new UnknownAppointmentError();
       }
       const current = DOMAIN_BY_FHIR.get(appointment.status);
-      if (!current || !TRANSITIONS[current].includes(to)) {
+      if (!current || !STATUS_TRANSITIONS[current].includes(to)) {
         throw new InvalidTransitionError();
       }
       // Atomic test-and-set on the CURRENT status: a concurrent move at another

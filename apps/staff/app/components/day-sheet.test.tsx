@@ -172,6 +172,80 @@ describe("ScheduleView — day view", () => {
     await screen.findByText(/Checked in — Synthia Loginsmith/);
     expect(calls).toHaveLength(1);
   });
+
+  it("shows an em dash, never a blank, for missing contact details", () => {
+    stubFetch(200, {});
+    render(<ScheduleView {...dayProps} />);
+    fireEvent.click(screen.getByText("Aurelia Vandermeer-Castellanos"));
+    const dialog = screen.getByRole("dialog", { name: /Aurelia/ });
+    expect(within(dialog).getAllByText("—").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("arrow keys move focus across to the nearest block in the next column", () => {
+    stubFetch(200, {});
+    render(<ScheduleView {...dayProps} />);
+    const first = screen.getByText("Synthia Loginsmith").closest("button")!;
+    fireEvent.focus(first);
+    fireEvent.keyDown(first, { key: "ArrowRight" });
+    expect(screen.getByText("Aurelia Vandermeer-Castellanos").closest("button")).toHaveFocus();
+  });
+
+  it("labels each column list and renders its appointments in start order", () => {
+    stubFetch(200, {});
+    const outOfOrder: DaySheet = {
+      ...daySheet,
+      appointments: [
+        {
+          ...daySheet.appointments[0]!,
+          id: "late",
+          patientName: "Later Patient",
+          start: "2026-07-06T20:00:00.000Z",
+          end: "2026-07-06T20:30:00.000Z",
+        },
+        daySheet.appointments[0]!, // 2:00 PM — earlier, but listed second on the wire
+      ],
+    };
+    render(<ScheduleView sheet={outOfOrder} view="day" />);
+    const column = screen.getByRole("list", { name: "Riley Reyes appointments" });
+    const names = within(column)
+      .getAllByRole("listitem")
+      .map((li) => li.textContent);
+    expect(names[0]).toContain("Synthia Loginsmith");
+    expect(names[1]).toContain("Later Patient");
+  });
+
+  it("undo still lands after navigating away (the toast carries the appointment)", async () => {
+    const calls = stubFetch(200, { id: "a1", status: "arrived" });
+    const { rerender } = render(<ScheduleView {...dayProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Check in Synthia Loginsmith" }));
+    await screen.findByText(/Checked in — Synthia Loginsmith/);
+    // Navigate to another day: a fresh sheet without a1 replaces the current one.
+    rerender(
+      <ScheduleView
+        sheet={{ ...daySheet, date: "2026-07-07", appointments: [daySheet.appointments[1]!] }}
+        view="day"
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Undo/ }));
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.url).toBe("/api/staff/appointments/a1/status");
+    expect(JSON.parse(String(calls[1]!.init?.body))).toEqual({ status: "scheduled" });
+  });
+
+  it("resets a stale keyboard cursor when the sheet changes (keyboard must not die)", () => {
+    stubFetch(200, {});
+    const { rerender } = render(<ScheduleView {...dayProps} />);
+    fireEvent.focus(screen.getByText("Synthia Loginsmith").closest("button")!);
+    // The new sheet no longer contains the focused appointment.
+    rerender(
+      <ScheduleView
+        sheet={{ ...daySheet, date: "2026-07-07", appointments: [daySheet.appointments[1]!] }}
+        view="day"
+      />,
+    );
+    const remaining = screen.getByText("Aurelia Vandermeer-Castellanos").closest("button")!;
+    expect(remaining).toHaveAttribute("tabindex", "0");
+  });
 });
 
 describe("ScheduleView — toolbar navigation", () => {
@@ -233,6 +307,38 @@ describe("ScheduleView — toolbar navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Keyboard shortcuts" }));
     expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeInTheDocument();
     expect(screen.getByText("Check in the focused appointment")).toBeInTheDocument();
+  });
+
+  it("? opens the shortcuts popover from the keyboard", () => {
+    render(<ScheduleView {...dayProps} />);
+    fireEvent.keyDown(window, { key: "?" });
+    expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeInTheDocument();
+  });
+
+  it("suppresses page shortcuts while a dialog is open (detail card)", () => {
+    render(<ScheduleView {...dayProps} />);
+    fireEvent.click(screen.getByText("Synthia Loginsmith"));
+    expect(screen.getByRole("dialog", { name: /Synthia Loginsmith/ })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "[" });
+    fireEvent.keyDown(window, { key: "t" });
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("suppresses page shortcuts while a plain dropdown is open (view switcher)", () => {
+    render(<ScheduleView {...dayProps} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Day/ }));
+    fireEvent.keyDown(window, { key: "w" });
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("Z undoes globally, wherever focus sits", async () => {
+    const calls = stubFetch(200, { id: "a1", status: "arrived" });
+    render(<ScheduleView {...dayProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Check in Synthia Loginsmith" }));
+    await screen.findByText(/Checked in — Synthia Loginsmith/);
+    fireEvent.keyDown(window, { key: "z" });
+    expect(calls).toHaveLength(2);
+    expect(JSON.parse(String(calls[1]!.init?.body))).toEqual({ status: "scheduled" });
   });
 });
 

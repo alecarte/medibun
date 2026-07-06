@@ -1,9 +1,14 @@
 import { describe, it, expect } from "vitest";
 import {
+  APPOINTMENT_STATUSES,
   BookingError,
   createApiClient,
+  FORWARD_TRANSITIONS,
+  isValidDateString,
   LoginError,
   StaffError,
+  STATUS_TRANSITIONS,
+  weekStart,
   type DaySheet,
   type BookedAppointment,
   type PatientProfile,
@@ -313,5 +318,35 @@ describe("staff endpoints", () => {
     const err = await client.setAppointmentStatus("a1", "arrived").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(StaffError);
     expect((err as StaffError).code).toBe("conflict");
+  });
+});
+
+describe("schedule contract helpers (shared by BFF and staff app)", () => {
+  it("weekStart snaps to the Monday of the week", () => {
+    expect(weekStart("2026-07-08")).toBe("2026-07-06"); // Wed → Mon
+    expect(weekStart("2026-07-06")).toBe("2026-07-06"); // Mon → itself
+    expect(weekStart("2026-07-05")).toBe("2026-06-29"); // Sun → prior Mon
+    expect(weekStart("2026-01-01")).toBe("2025-12-29"); // across a year boundary
+  });
+
+  it("isValidDateString accepts real calendar dates and rejects malformed or impossible ones", () => {
+    expect(isValidDateString("2026-07-06")).toBe(true);
+    expect(isValidDateString("2026-02-31")).toBe(false);
+    expect(isValidDateString("tomorrow")).toBe(false);
+    expect(isValidDateString("2026-7-6")).toBe(false);
+  });
+
+  it("STATUS_TRANSITIONS is the forward graph plus each move's exact reverse (undo)", () => {
+    expect(STATUS_TRANSITIONS.scheduled).toEqual(["arrived", "no-show"]);
+    expect(STATUS_TRANSITIONS.arrived).toEqual(["roomed", "scheduled"]);
+    expect(STATUS_TRANSITIONS.roomed).toEqual(["completed", "arrived"]);
+    expect(STATUS_TRANSITIONS.completed).toEqual(["roomed"]);
+    expect(STATUS_TRANSITIONS["no-show"]).toEqual(["scheduled"]);
+  });
+
+  it("FORWARD_TRANSITIONS covers every status and never moves backward", () => {
+    expect(Object.keys(FORWARD_TRANSITIONS).sort()).toEqual([...APPOINTMENT_STATUSES].sort());
+    expect(FORWARD_TRANSITIONS.completed).toEqual([]);
+    expect(FORWARD_TRANSITIONS["no-show"]).toEqual([]);
   });
 });

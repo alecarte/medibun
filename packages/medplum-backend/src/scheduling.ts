@@ -1,5 +1,12 @@
 import { isConflict, OperationOutcomeError } from "@medplum/core";
-import type { Bundle, HealthcareService, Practitioner, Schedule, Slot } from "@medplum/fhirtypes";
+import type {
+  Bundle,
+  HealthcareService,
+  Practitioner,
+  Resource,
+  Schedule,
+  Slot,
+} from "@medplum/fhirtypes";
 
 /**
  * Medplum scheduling ($find/$book) — wire contracts verified against the v5.1.9 server
@@ -21,6 +28,12 @@ export const SERVICES_CODE_SYSTEM = "https://medibun.com/fhir/CodeSystem/service
 /** Medplum's own extension on Schedule.serviceType[] that $find's "scheduleable" gate
  *  matches against (v5.1.9 servicetype.ts) — distinct from SCHEDULING_PARAMETERS_URL. */
 export const SERVICE_TYPE_REFERENCE_URL = "https://medplum.com/fhir/service-type-reference";
+
+/** Every resource in a searchset Bundle's entries — the one bundle-unpacking helper
+ *  (shared with day-sheet.ts; was copy-pasted four times before). */
+export function bundleResources<T extends Resource>(bundle: Bundle<T>): T[] {
+  return (bundle.entry ?? []).flatMap((e) => (e.resource ? [e.resource] : []));
+}
 
 type MinutesDuration = {
   value: number;
@@ -171,7 +184,7 @@ export type ScheduleWithActor = {
 
 /** Map a `Schedule?_include=Schedule:actor` searchset to schedules with their actors. */
 export function schedulesWithActors(bundle: Bundle): ScheduleWithActor[] {
-  const resources = (bundle.entry ?? []).flatMap((e) => (e.resource ? [e.resource] : []));
+  const resources = bundleResources(bundle);
   const practitioners = new Map(
     resources
       .filter((r): r is Practitioner => r.resourceType === "Practitioner" && Boolean(r.id))
@@ -230,7 +243,7 @@ export async function findSlots(
   const bundle = (await client.get(
     `fhir/R4/Schedule/${encodeURIComponent(opts.scheduleId)}/$find?${params.toString()}`,
   )) as Bundle<Slot>;
-  return (bundle.entry ?? []).flatMap((e) => (e.resource ? [e.resource] : []));
+  return bundleResources(bundle);
 }
 
 /** Book a found window. Resolves the created Appointment; throws SlotTakenError on 409. */
@@ -269,9 +282,7 @@ export async function bookAppointment(
     }
     throw err;
   }
-  const appointment = (bundle.entry ?? [])
-    .map((e) => e.resource)
-    .find((r) => r?.resourceType === "Appointment");
+  const appointment = bundleResources(bundle).find((r) => r.resourceType === "Appointment");
   if (!appointment?.id || appointment.resourceType !== "Appointment") {
     throw new Error("$book returned no Appointment");
   }

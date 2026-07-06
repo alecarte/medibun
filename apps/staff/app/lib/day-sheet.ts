@@ -1,4 +1,14 @@
-import type { AppointmentStatus, DaySheetAppointment, ServiceColor } from "@medibun/api-client";
+import {
+  FORWARD_TRANSITIONS,
+  weekStart,
+  type AppointmentStatus,
+  type DaySheetAppointment,
+  type ServiceColor,
+} from "@medibun/api-client";
+
+// Shared calendar math (also the BFF's week-snap authority) — re-exported so every
+// staff-app consumer keeps importing calendar helpers from this one module.
+export { weekStart };
 
 /**
  * Pure day-sheet logic: grid geometry, practice-timezone formatting, the status
@@ -25,16 +35,9 @@ export function shiftYmd(date: string, days: number): string {
   return new Date(Date.UTC(y!, m! - 1, d! + days)).toISOString().slice(0, 10);
 }
 
-/** Monday-of-the-week for a YYYY-MM-DD date (SCHEDULE_DESIGN.md: weeks start Monday). */
-export function weekStart(date: string): string {
-  const [y, m, d] = date.split("-").map(Number);
-  const dow = new Date(Date.UTC(y!, m! - 1, d!)).getUTCDay(); // 0=Sun..6=Sat
-  return shiftYmd(date, -((dow + 6) % 7));
-}
-
 /** The practice-local YYYY-MM-DD of an instant (for bucketing appointments into days). */
 export function ymdOf(iso: string, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-CA", {
+  return cachedFormatter("en-CA", {
     timeZone,
     year: "numeric",
     month: "2-digit",
@@ -47,20 +50,27 @@ export function daySpan(start: string, count: number): string[] {
   return Array.from({ length: count }, (_, i) => shiftYmd(start, i));
 }
 
-/** Forward moves the UI offers per status (undo is the toast's reverse write, not a
- *  menu item). Mirrors the BFF's transition graph — the server still enforces it. */
-export const FORWARD_ACTIONS: Record<
-  AppointmentStatus,
-  readonly { to: AppointmentStatus; label: string }[]
-> = {
-  scheduled: [
-    { to: "arrived", label: "Check in" },
-    { to: "no-show", label: "Mark no-show" },
-  ],
-  arrived: [{ to: "roomed", label: "Room" }],
-  roomed: [{ to: "completed", label: "Complete" }],
-  completed: [],
-  "no-show": [],
+/** UI copy per forward target (undo is the toast's reverse write, not a menu item). */
+const ACTION_LABEL: Partial<Record<AppointmentStatus, string>> = {
+  arrived: "Check in",
+  "no-show": "Mark no-show",
+  roomed: "Room",
+  completed: "Complete",
+};
+
+const actionsFor = (status: AppointmentStatus): readonly Action[] =>
+  FORWARD_TRANSITIONS[status].map((to) => ({ to, label: ACTION_LABEL[to]! }));
+
+type Action = { readonly to: AppointmentStatus; readonly label: string };
+
+/** Forward moves the UI offers per status — built ON the shared transition graph
+ *  (@medibun/api-client), so the menu and the BFF's enforcement can never drift. */
+export const FORWARD_ACTIONS: Record<AppointmentStatus, readonly Action[]> = {
+  scheduled: actionsFor("scheduled"),
+  arrived: actionsFor("arrived"),
+  roomed: actionsFor("roomed"),
+  completed: actionsFor("completed"),
+  "no-show": actionsFor("no-show"),
 };
 
 /** Chip styling per status: wash + text (+ the ::before dot via currentColor). Written
@@ -111,33 +121,31 @@ export const CATEGORY_EDGE: Record<ServiceColor, string> = {
   slate: "border-l-category-slate-text",
 };
 
+/** Cached Intl formatters — constructing one per call is expensive and the grid
+ *  formats hundreds of instants per render. Keyed by locale + options. */
+const formatterCache = new Map<string, Intl.DateTimeFormat>();
+function cachedFormatter(locale: string, opts: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+  const key = `${locale}|${JSON.stringify(opts)}`;
+  let formatter = formatterCache.get(key);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locale, opts);
+    formatterCache.set(key, formatter);
+  }
+  return formatter;
+}
+
+/** Newer ICU separates time from AM/PM with U+202F (narrow no-break space); normalize
+ *  to a plain space so rendered copy — and tests — agree across runtimes. */
+const normalizeSpaces = (value: string): string => value.replace(/\u202f/g, " ");
+
 /** Fractional hour-of-day of an instant in the practice timezone (e.g. 14.5). */
 export function hourOf(iso: string, timeZone: string): number {
   const parts = Object.fromEntries(
-    new Intl.DateTimeFormat("en-US", {
-      timeZone,
-      hour12: false,
-      hour: "2-digit",
-      minute: "2-digit",
-    })
+    cachedFormatter("en-US", { timeZone, hour12: false, hour: "2-digit", minute: "2-digit" })
       .formatToParts(new Date(iso))
       .map((p) => [p.type, p.value]),
   );
   return (Number(parts.hour) % 24) + Number(parts.minute) / 60;
-}
-
-/** The visible hour range: practice hours (9–17) stretched to fit every appointment. */
-export function hourRange(
-  appointments: readonly DaySheetAppointment[],
-  timeZone: string,
-): { startHour: number; endHour: number } {
-  let startHour = 9;
-  let endHour = 17;
-  for (const appointment of appointments) {
-    startHour = Math.min(startHour, Math.floor(hourOf(appointment.start, timeZone)));
-    endHour = Math.max(endHour, Math.ceil(hourOf(appointment.end, timeZone)));
-  }
-  return { startHour, endHour };
 }
 
 /** A block's position inside its column, px from the grid top. */
@@ -157,11 +165,24 @@ export function blockGeometry(
 
 /** "2:00 PM" in the practice timezone. */
 export function formatTime(iso: string, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(iso));
+  return normalizeSpaces(
+    cachedFormatter("en-US", { timeZone, hour: "numeric", minute: "2-digit" }).format(
+      new Date(iso),
+    ),
+  );
+}
+
+/** "Jul 1, 3:00 PM" booked-at line (detail card) in the practice timezone. */
+export function formatBookedAt(iso: string, timeZone: string): string {
+  return normalizeSpaces(
+    cachedFormatter("en-US", {
+      timeZone,
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(new Date(iso)),
+  );
 }
 
 /** "9 AM" gutter label. */
@@ -177,13 +198,7 @@ function ymdToDate(date: string): Date {
 }
 
 const fmt = (date: string, opts: Intl.DateTimeFormatOptions): string =>
-  new Intl.DateTimeFormat("en-US", { timeZone: "UTC", ...opts }).format(ymdToDate(date));
-
-/** "Friday, July 4" from the sheet's practice-local date string (no timezone math —
- *  the BFF already resolved the practice-local day). */
-export function formatDateHeading(date: string): string {
-  return fmt(date, { weekday: "long", month: "long", day: "numeric" });
-}
+  cachedFormatter("en-US", { timeZone: "UTC", ...opts }).format(ymdToDate(date));
 
 /** Toolbar date-button label: "Mon, Jul 6" (day) or "Jul 6 – 12" / "Jun 29 – Jul 5"
  *  (week — collapses the month when both ends share one). */

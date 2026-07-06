@@ -12,6 +12,8 @@ export function Popover({
   trigger,
   align = "start",
   children,
+  open: openProp,
+  onOpenChange,
 }: {
   /** Renders the trigger; spread `props` onto the button (adds aria + ref wiring). */
   trigger: (props: {
@@ -23,11 +25,20 @@ export function Popover({
   align?: "start" | "end";
   /** Panel content; call `close` to dismiss (e.g. after a pick). */
   children: (close: () => void) => React.ReactNode;
+  /** Controlled open state (pass both) — lets a keyboard shortcut open the panel. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = openProp ?? uncontrolledOpen;
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const id = useId();
+
+  const setOpen = (next: boolean) => {
+    setUncontrolledOpen(next);
+    onOpenChange?.(next);
+  };
 
   const close = () => {
     setOpen(false);
@@ -63,13 +74,16 @@ export function Popover({
       {trigger({
         "aria-haspopup": "dialog",
         "aria-expanded": open,
-        onClick: () => setOpen((v) => !v),
+        onClick: () => setOpen(!open),
         ref: triggerRef,
       })}
       {open && (
         <div
           ref={panelRef}
           id={id}
+          // Marker for the schedule's global key handler: an open panel (even a plain
+          // dropdown with no dialog role) owns the keyboard — page shortcuts hold off.
+          data-popover-panel=""
           className={`absolute top-full z-50 mt-1.5 ${align === "end" ? "right-0" : "left-0"}`}
         >
           {children(close)}

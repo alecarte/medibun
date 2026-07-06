@@ -17,6 +17,7 @@ import {
   daySpan,
   DAY_END_HOUR,
   DAY_START_HOUR,
+  formatBookedAt,
   formatColumnDay,
   formatHour,
   formatTime,
@@ -52,10 +53,11 @@ const UNDO_WINDOW_MS = 10_000;
 const GRID_HEIGHT = (DAY_END_HOUR - DAY_START_HOUR) * HOUR_PX;
 
 type Undo = {
-  readonly appointmentId: string;
+  /** The full appointment, not just its id — the undo must keep working after a
+   *  navigation swaps the sheet out from under the toast. */
+  readonly appointment: DaySheetAppointment;
   readonly from: AppointmentStatus;
   readonly to: AppointmentStatus;
-  readonly patientName: string;
   readonly expiresAt: number;
 };
 
@@ -64,7 +66,13 @@ type Column = {
   readonly key: string;
   readonly appointments: DaySheetAppointment[];
   readonly header: React.ReactNode;
+  /** Accessible name for the column's appointment list. */
+  readonly label: string;
 };
+
+/** Column order is time order — arrow-key movement and screen-reader reading depend on
+ *  it, so sort here instead of trusting the wire order. */
+const byStart = (x: DaySheetAppointment, y: DaySheetAppointment) => x.start.localeCompare(y.start);
 
 function StatusChip({ status, compact }: { status: AppointmentStatus; compact?: boolean }) {
   return (
@@ -101,38 +109,48 @@ export function ScheduleView({
   const tz = sheet.timezone;
   const isWeek = view === "week";
 
-  // Optimistic status per appointment; a refreshed sheet (server truth) resets it.
-  const [statuses, setStatuses] = useState<Record<string, AppointmentStatus>>({});
-  useEffect(() => {
-    setStatuses(Object.fromEntries(sheet.appointments.map((a) => [a.id, a.status])));
-  }, [sheet]);
+  // Optimistic status OVERRIDES on top of the sheet (never a mirror of it in state);
+  // a refreshed sheet is server truth and clears them (below).
+  const [overrides, setOverrides] = useState<Record<string, AppointmentStatus>>({});
+  const statusOf = (a: DaySheetAppointment) => overrides[a.id] ?? a.status;
 
-  // Default the week filter to the signed-in practitioner (if they have appointments/a
-  // column here), else the first practitioner. URL param wins when valid.
+  // Week filter: an in-page pick (replaceState, no refetch) wins while valid, else the
+  // URL param, else the signed-in practitioner (when they have a column), else column 1.
   const practitionerIds = useMemo(() => sheet.practitioners.map((p) => p.practitionerId), [sheet]);
   const defaultPractitioner =
     (selfPractitionerId && practitionerIds.includes(selfPractitionerId)
       ? selfPractitionerId
       : undefined) ?? practitionerIds[0];
-  const [selectedPractitioner, setSelectedPractitioner] = useState<string | undefined>(
-    practitionerId && practitionerIds.includes(practitionerId)
+  const [picked, setPicked] = useState<string | undefined>();
+  const selectedPractitioner =
+    (picked && practitionerIds.includes(picked) ? picked : undefined) ??
+    (practitionerId && practitionerIds.includes(practitionerId)
       ? practitionerId
-      : defaultPractitioner,
-  );
-  useEffect(() => {
-    setSelectedPractitioner(
-      practitionerId && practitionerIds.includes(practitionerId)
-        ? practitionerId
-        : defaultPractitioner,
-    );
-  }, [practitionerId, defaultPractitioner, practitionerIds]);
+      : defaultPractitioner);
 
   const [focusedId, setFocusedId] = useState<string | undefined>();
   const [detailId, setDetailId] = useState<string | undefined>();
+  const [shortcutsOpen, setShortcutsOpen] = useState(false); // controlled: "?" opens it
   const [undo, setUndo] = useState<Undo | undefined>();
   const [undoSecondsLeft, setUndoSecondsLeft] = useState(0);
   const [notice, setNotice] = useState<string | undefined>();
   const [nowMs, setNowMs] = useState<number | undefined>(); // client clock, set after mount
+
+  // A new sheet (refresh/navigation) is server truth arriving: drop the optimistic
+  // overrides, drop a keyboard cursor pointing at an appointment that no longer exists
+  // (a stale focusedId leaves NO block tabbable — the keyboard dies), and let a real
+  // navigation's URL param beat an in-page pick. Adjusted during render, not an effect.
+  const [prev, setPrev] = useState({ sheet, practitionerId });
+  if (prev.sheet !== sheet || prev.practitionerId !== practitionerId) {
+    setPrev({ sheet, practitionerId });
+    setOverrides({});
+    if (prev.practitionerId !== practitionerId) {
+      setPicked(undefined);
+    }
+    if (focusedId && !sheet.appointments.some((a) => a.id === focusedId)) {
+      setFocusedId(undefined);
+    }
+  }
 
   const blockRefs = useRef(new Map<string, HTMLButtonElement>());
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -146,20 +164,24 @@ export function ScheduleView({
         const { weekday, day } = formatColumnDay(ymd);
         return {
           key: ymd,
-          appointments: mine.filter((a) => ymdOf(a.start, tz) === ymd),
+          appointments: mine.filter((a) => ymdOf(a.start, tz) === ymd).sort(byStart),
           header: (
             <span className="flex items-baseline gap-1.5">
               <span className="text-sm font-medium text-text-primary">{weekday}</span>
               <span className="text-sm text-text-secondary tabular-nums">{day}</span>
             </span>
           ),
+          label: `${weekday} ${day} appointments`,
         };
       });
     }
     return sheet.practitioners.map((p) => ({
       key: p.practitionerId,
-      appointments: sheet.appointments.filter((a) => a.practitionerId === p.practitionerId),
+      appointments: sheet.appointments
+        .filter((a) => a.practitionerId === p.practitionerId)
+        .sort(byStart),
       header: <span className="text-sm font-medium text-text-primary">{p.practitionerName}</span>,
+      label: `${p.practitionerName} appointments`,
     }));
   }, [sheet, isWeek, selectedPractitioner, tz]);
 
@@ -239,21 +261,15 @@ export function ScheduleView({
     to: AppointmentStatus,
     withUndo: boolean,
   ) {
-    setStatuses((s) => ({ ...s, [appointment.id]: to }));
+    setOverrides((s) => ({ ...s, [appointment.id]: to }));
     setDetailId(undefined);
     try {
       await api.setAppointmentStatus(appointment.id, to);
       if (withUndo) {
-        setUndo({
-          appointmentId: appointment.id,
-          from,
-          to,
-          patientName: appointment.patientName,
-          expiresAt: Date.now() + UNDO_WINDOW_MS,
-        });
+        setUndo({ appointment, from, to, expiresAt: Date.now() + UNDO_WINDOW_MS });
       }
     } catch (err) {
-      setStatuses((s) => ({ ...s, [appointment.id]: from }));
+      setOverrides((s) => ({ ...s, [appointment.id]: from }));
       if (err instanceof StaffError && err.code === "conflict") {
         setNotice("That appointment changed on another station. Refreshing the schedule.");
         router.refresh();
@@ -264,8 +280,8 @@ export function ScheduleView({
   }
 
   function act(appointment: DaySheetAppointment, to: AppointmentStatus) {
-    const from = statuses[appointment.id];
-    if (!from || from === to) {
+    const from = statusOf(appointment);
+    if (from === to) {
       return;
     }
     void writeStatus(appointment, from, to, true);
@@ -275,11 +291,10 @@ export function ScheduleView({
     if (!undo) {
       return;
     }
-    const appointment = appointmentById.get(undo.appointmentId);
     setUndo(undefined);
-    if (appointment) {
-      void writeStatus(appointment, undo.to, undo.from, false);
-    }
+    // The toast carries the appointment itself, so undo works even after the sheet
+    // navigated away from the day it lives on.
+    void writeStatus(undo.appointment, undo.to, undo.from, false);
   }
 
   // ---- Navigation (URL is the state) -----------------------------------------
@@ -315,7 +330,7 @@ export function ScheduleView({
   }
 
   function selectPractitioner(id: string) {
-    setSelectedPractitioner(id);
+    setPicked(id);
     // Reflect to the URL for shareability WITHOUT a refetch (data already covers the week).
     window.history.replaceState(null, "", hrefFor({ practitioner: id }));
   }
@@ -357,6 +372,11 @@ export function ScheduleView({
       ) {
         return;
       }
+      // An open panel owns the keyboard: T in the date picker or D under the detail
+      // card must not yank the page to another day/view (panels close on Escape).
+      if (document.querySelector('[role="dialog"], [data-popover-panel]')) {
+        return;
+      }
       switch (event.key.toLowerCase()) {
         case "t":
           event.preventDefault();
@@ -377,6 +397,17 @@ export function ScheduleView({
         case "w":
           event.preventDefault();
           if (!isWeek) setView("week");
+          break;
+        case "z":
+          // Global, not grid-only: the undo toast must answer Z wherever focus sits.
+          if (undo) {
+            event.preventDefault();
+            undoNow();
+          }
+          break;
+        case "?":
+          event.preventDefault();
+          setShortcutsOpen(true);
           break;
       }
     };
@@ -403,14 +434,14 @@ export function ScheduleView({
       moveFocus(current, event.key);
       return;
     }
-    if (event.key.toLowerCase() === "c" && statuses[current.id] === "scheduled") {
+    if (event.key.toLowerCase() === "c" && statusOf(current) === "scheduled") {
       event.preventDefault();
       act(current, "arrived");
     }
   }
 
   const detail = detailId ? appointmentById.get(detailId) : undefined;
-  const detailStatus = detail ? statuses[detail.id] : undefined;
+  const detailStatus = detail ? statusOf(detail) : undefined;
   const hours = Array.from({ length: DAY_END_HOUR - DAY_START_HOUR }, (_, i) => DAY_START_HOUR + i);
   const nowTop =
     nowInView && nowHour !== undefined ? (nowHour - DAY_START_HOUR) * HOUR_PX : undefined;
@@ -575,6 +606,8 @@ export function ScheduleView({
 
           <Popover
             align="end"
+            open={shortcutsOpen}
+            onOpenChange={setShortcutsOpen}
             trigger={(props) => (
               <Tooltip label="Keyboard shortcuts" shortcut="?">
                 <button
@@ -660,10 +693,11 @@ export function ScheduleView({
               <div
                 key={c.key}
                 role="list"
+                aria-label={c.label}
                 className="relative min-w-40 flex-1 border-l border-border-hairline"
               >
                 {c.appointments.map((a) => {
-                  const status = statuses[a.id] ?? a.status;
+                  const status = statusOf(a);
                   const { top, height } = blockGeometry(a, tz, DAY_START_HOUR);
                   const edge = a.serviceColor
                     ? CATEGORY_EDGE[a.serviceColor]
@@ -800,17 +834,7 @@ export function ScheduleView({
             <DetailRow label="Email" value={detail.patientEmail} />
             <DetailRow
               label="Booked"
-              value={
-                detail.bookedAt
-                  ? new Intl.DateTimeFormat("en-US", {
-                      timeZone: tz,
-                      month: "short",
-                      day: "numeric",
-                      hour: "numeric",
-                      minute: "2-digit",
-                    }).format(new Date(detail.bookedAt))
-                  : undefined
-              }
+              value={detail.bookedAt ? formatBookedAt(detail.bookedAt, tz) : undefined}
             />
           </dl>
           <div className="mt-3 flex items-center justify-between gap-2">
@@ -851,7 +875,7 @@ export function ScheduleView({
           className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-border-hairline bg-surface-card px-4 py-2.5 shadow-lg"
         >
           <span className="text-sm text-text-primary">
-            {ACTION_DONE[undo.to]} — {undo.patientName}
+            {ACTION_DONE[undo.to]} — {undo.appointment.patientName}
           </span>
           <button
             type="button"

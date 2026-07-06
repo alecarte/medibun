@@ -2,6 +2,9 @@
 // The real BFF booking chain is unit/contract-tested; live FHIR verify runs on the
 // real stack. This exists because this container's network policy blocks Docker pulls.
 import { createServer } from "node:http";
+// The shared week-snap (same function the real BFF uses). Needs the package built:
+// `pnpm --filter @medibun/api-client build`.
+import { weekStart } from "../../packages/api-client/dist/index.js";
 
 const SERVICES = [
   {
@@ -52,6 +55,7 @@ const PRACTITIONER = {
 };
 
 let failNextBook = false;
+let failNextStatus = false;
 
 // ---- Staff day sheet (S5) — synthetic, realistic-density day (DESIGN.md tenet 5:
 // long names, every workflow status, missing contact edge, first visits). Times are
@@ -103,14 +107,8 @@ createServer((req, res) => {
   if (url.pathname === "/staff/schedule") {
     const requested = url.searchParams.get("date") ?? new Date().toISOString().slice(0, 10);
     const days = Number(url.searchParams.get("days") ?? "1");
-    // Week view snaps to the week's Monday, exactly like the real BFF (mondayOf).
-    const mondayOf = (ymd) => {
-      const [y, m, d] = ymd.split("-").map(Number);
-      const base = Date.UTC(y, m - 1, d);
-      const dow = new Date(base).getUTCDay(); // 0=Sun..6=Sat
-      return new Date(base - ((dow + 6) % 7) * 86400000).toISOString().slice(0, 10);
-    };
-    const date = days === 7 ? mondayOf(requested) : requested;
+    // Week view snaps to the week's Monday via the same shared weekStart as the real BFF.
+    const date = days === 7 ? weekStart(requested) : requested;
     // Re-anchor the synthetic day onto the range start; for a week, spread the
     // appointments across the days so every column has content to review.
     const rangeStart = Date.parse(`${date}T13:00:00Z`); // 9:00 AM EDT
@@ -139,6 +137,12 @@ createServer((req, res) => {
   if (req.method === "POST" && statusMatch) {
     const id = decodeURIComponent(statusMatch[1]);
     if (!staffStatuses.has(id)) return json(res, 404, { error: "not_found", requestId: "stub" });
+    if (failNextStatus) {
+      // Cross-station conflict path (the real BFF's 409 contract) — arm via
+      // POST /stub/fail-next-status to review the conflict notice + refresh flow.
+      failNextStatus = false;
+      return json(res, 409, { error: "conflict", requestId: "stub" });
+    }
     let body = "";
     req.on("data", (c) => (body += c));
     req.on("end", () => {
@@ -185,6 +189,10 @@ createServer((req, res) => {
   }
   if (req.method === "POST" && url.pathname === "/stub/fail-next-book") {
     failNextBook = true;
+    return json(res, 200, { ok: true });
+  }
+  if (req.method === "POST" && url.pathname === "/stub/fail-next-status") {
+    failNextStatus = true;
     return json(res, 200, { ok: true });
   }
   json(res, 404, { error: "not_found", requestId: "stub" });

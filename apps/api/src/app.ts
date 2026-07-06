@@ -1,4 +1,4 @@
-import { APPOINTMENT_STATUSES, SESSION_COOKIE_NAME } from "@medibun/api-client";
+import { APPOINTMENT_STATUSES, isValidDateString, SESSION_COOKIE_NAME } from "@medibun/api-client";
 import type {
   AppointmentStatus,
   BookedAppointment,
@@ -23,7 +23,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 
 import { InvalidSlotError, UnknownScheduleError, UnknownServiceError } from "./booking.js";
-import { InvalidTransitionError, isValidDateString, UnknownAppointmentError } from "./staff.js";
+import { InvalidTransitionError, UnknownAppointmentError } from "./staff.js";
 
 /**
  * @medibun/api — the BFF (ADR-0001). The only consumer of @medibun/medplum-backend;

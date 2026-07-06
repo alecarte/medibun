@@ -1,3 +1,4 @@
+import { isGone, isNotFound, OperationOutcomeError } from "@medplum/core";
 import type { BotEvent, MedplumClient } from "@medplum/core";
 import type { Appointment, Encounter } from "@medplum/fhirtypes";
 
@@ -21,9 +22,24 @@ import type { Appointment, Encounter } from "@medplum/fhirtypes";
 const LIVE_ENCOUNTER_STATUSES: Encounter["status"][] = ["arrived", "triaged", "in-progress"];
 
 export async function handler(medplum: MedplumClient, event: BotEvent<Appointment>): Promise<void> {
-  const appointment = event.input;
-  if (appointment.resourceType !== "Appointment" || !appointment.id) {
+  const delivered = event.input;
+  if (delivered.resourceType !== "Appointment" || !delivered.id) {
     return;
+  }
+  // Subscriptions deliver a SNAPSHOT and can arrive late, twice, or out of order (a
+  // check-in undone inside the window fires `arrived` then `booked` — reversed delivery
+  // would orphan an Encounter). Act only on the appointment's CURRENT server status.
+  let appointment: Appointment;
+  try {
+    appointment = await medplum.readResource("Appointment", delivered.id);
+  } catch (err) {
+    // Only not-found/gone means "deleted since the event fired — nothing to reconcile".
+    // Anything else (transient failure, a policy denial) must THROW so the Subscription
+    // retries instead of silently skipping Encounter reconciliation.
+    if (err instanceof OperationOutcomeError && (isNotFound(err.outcome) || isGone(err.outcome))) {
+      return;
+    }
+    throw err;
   }
   const appointmentReference = `Appointment/${appointment.id}`;
   const encounters = await medplum.searchResources("Encounter", {

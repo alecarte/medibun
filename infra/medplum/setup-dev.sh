@@ -143,34 +143,42 @@ BID="$(printf '%s' "$BOT" | jq -r '.id')"
 [ -n "$BID" ] && [ "$BID" != "null" ] || { echo "✗ bot create failed: $BOT"; exit 1; }
 echo "  ✓ bot: $BID"
 
+# Upsert an AccessPolicy from policies/<file>; echoes the policy id. Read-back asserts
+# entry count AND criteria-bearing count (the server silently drops malformed criteria).
+upsert_policy() { # <file>
+  local src name pid_existing pid back total want_total crit want_crit
+  src="$(cat "$HERE/policies/$1")"
+  name="$(printf '%s' "$src" | jq -r '.name')"
+  pid_existing="$(curl -s "$BASE/fhir/R4/AccessPolicy?name=$name" \
+    -H "Authorization: Bearer $ACCESS" | jq -r '.entry[0].resource.id // empty')"
+  if [ -n "$pid_existing" ]; then
+    pid="$pid_existing"
+    curl -s -X PUT "$BASE/fhir/R4/AccessPolicy/$pid" -H "Authorization: Bearer $ACCESS" \
+      -H 'Content-Type: application/fhir+json' \
+      -d "$(printf '%s' "$src" | jq --arg id "$pid" '. + {id: $id}')" | jq -e '.id' >/dev/null \
+      || { echo "✗ policy update failed: $name" >&2; exit 1; }
+  else
+    pid="$(curl -s -X POST "$BASE/fhir/R4/AccessPolicy" -H "Authorization: Bearer $ACCESS" \
+      -H 'Content-Type: application/fhir+json' -d "$src" | jq -r '.id')"
+    [ -n "$pid" ] && [ "$pid" != "null" ] || { echo "✗ policy create failed: $name" >&2; exit 1; }
+  fi
+  back="$(curl -s "$BASE/fhir/R4/AccessPolicy/$pid" -H "Authorization: Bearer $ACCESS")"
+  total="$(printf '%s' "$back" | jq '[.resource[]?] | length')"
+  want_total="$(printf '%s' "$src" | jq '[.resource[]?] | length')"
+  crit="$(printf '%s' "$back" | jq '[.resource[]? | select((.criteria // "") != "")] | length')"
+  want_crit="$(printf '%s' "$src" | jq '[.resource[]? | select((.criteria // "") != "")] | length')"
+  { [ "$total" = "$want_total" ] && [ "$crit" = "$want_crit" ]; } \
+    || { echo "✗ policy read-back mismatch for $name ($total/$want_total entries, $crit/$want_crit criteria)" >&2; exit 1; }
+  echo "$pid"
+}
+
 # Upsert the patient-compartment AccessPolicy template (docs/DATA_MODEL.md matrix; approved
 # via docs/V0_PROPOSAL.md A3). Policies land via reviewed code only — never the admin UI.
+# upsert_policy's read-back covers the trust-but-verify assertion (security-reviewer
+# 2026-07-02): every entry survives with its criteria, or the script fails loud.
 echo "→ upserting AccessPolicy 'patient-self-v1'…"
-POLICY_SRC="$(cat "$HERE/policies/patient-self.json")"
-EXISTING_POLICY_ID="$(curl -s "$BASE/fhir/R4/AccessPolicy?name=patient-self-v1" \
-  -H "Authorization: Bearer $ACCESS" | jq -r '.entry[0].resource.id // empty')"
-if [ -n "$EXISTING_POLICY_ID" ]; then
-  POLICY_ID="$EXISTING_POLICY_ID"
-  curl -s -X PUT "$BASE/fhir/R4/AccessPolicy/$POLICY_ID" -H "Authorization: Bearer $ACCESS" \
-    -H 'Content-Type: application/fhir+json' \
-    -d "$(printf '%s' "$POLICY_SRC" | jq --arg id "$POLICY_ID" '. + {id: $id}')" \
-    | jq -e '.id' >/dev/null || { echo "✗ policy update failed"; exit 1; }
-else
-  POLICY_ID="$(curl -s -X POST "$BASE/fhir/R4/AccessPolicy" -H "Authorization: Bearer $ACCESS" \
-    -H 'Content-Type: application/fhir+json' -d "$POLICY_SRC" | jq -r '.id')"
-  [ -n "$POLICY_ID" ] && [ "$POLICY_ID" != "null" ] || { echo "✗ policy create failed"; exit 1; }
-fi
+POLICY_ID="$(upsert_policy patient-self.json)"
 echo "  ✓ policy: $POLICY_ID"
-
-# Trust-but-verify part 1 (security-reviewer 2026-07-02): read the policy BACK and assert
-# all 8 resource entries survived with non-empty criteria — the server silently drops
-# malformed criteria, which would fail open. Fail here, not in prod.
-POLICY_BACK="$(curl -s "$BASE/fhir/R4/AccessPolicy/$POLICY_ID" -H "Authorization: Bearer $ACCESS")"
-ENTRY_COUNT="$(printf '%s' "$POLICY_BACK" | jq '[.resource[]? | select((.criteria // "") != "")] | length')"
-WANT_COUNT="$(printf '%s' "$POLICY_SRC" | jq '[.resource[]?] | length')"
-[ "$ENTRY_COUNT" = "$WANT_COUNT" ] \
-  && echo "  ✓ policy read-back: $ENTRY_COUNT/$WANT_COUNT resource entries, all with criteria" \
-  || { echo "  ✗ policy read-back has $ENTRY_COUNT criteria-bearing entries (want $WANT_COUNT) — criteria dropped?"; exit 1; }
 
 # Invite a SYNTHETIC patient user so the brokered-login flow is exercisable out of the box.
 # Synthetic, non-PHI; LOCAL DEV ONLY. On some existing dev projects the invite 409s with an
@@ -235,35 +243,6 @@ MEMBERSHIP_POLICY="$(printf '%s' "$MEMBERSHIP_BACK" | jq -r '.accessPolicy.refer
 ############################################################
 
 SEED_SYS="https://medibun.com/fhir/identifiers/demo-seed"
-
-# Upsert an AccessPolicy from policies/<file>; echoes the policy id. Read-back asserts
-# entry count AND criteria-bearing count (the server silently drops malformed criteria).
-upsert_policy() { # <file>
-  local src name pid_existing pid back total want_total crit want_crit
-  src="$(cat "$HERE/policies/$1")"
-  name="$(printf '%s' "$src" | jq -r '.name')"
-  pid_existing="$(curl -s "$BASE/fhir/R4/AccessPolicy?name=$name" \
-    -H "Authorization: Bearer $ACCESS" | jq -r '.entry[0].resource.id // empty')"
-  if [ -n "$pid_existing" ]; then
-    pid="$pid_existing"
-    curl -s -X PUT "$BASE/fhir/R4/AccessPolicy/$pid" -H "Authorization: Bearer $ACCESS" \
-      -H 'Content-Type: application/fhir+json' \
-      -d "$(printf '%s' "$src" | jq --arg id "$pid" '. + {id: $id}')" | jq -e '.id' >/dev/null \
-      || { echo "✗ policy update failed: $name" >&2; exit 1; }
-  else
-    pid="$(curl -s -X POST "$BASE/fhir/R4/AccessPolicy" -H "Authorization: Bearer $ACCESS" \
-      -H 'Content-Type: application/fhir+json' -d "$src" | jq -r '.id')"
-    [ -n "$pid" ] && [ "$pid" != "null" ] || { echo "✗ policy create failed: $name" >&2; exit 1; }
-  fi
-  back="$(curl -s "$BASE/fhir/R4/AccessPolicy/$pid" -H "Authorization: Bearer $ACCESS")"
-  total="$(printf '%s' "$back" | jq '[.resource[]?] | length')"
-  want_total="$(printf '%s' "$src" | jq '[.resource[]?] | length')"
-  crit="$(printf '%s' "$back" | jq '[.resource[]? | select((.criteria // "") != "")] | length')"
-  want_crit="$(printf '%s' "$src" | jq '[.resource[]? | select((.criteria // "") != "")] | length')"
-  { [ "$total" = "$want_total" ] && [ "$crit" = "$want_crit" ]; } \
-    || { echo "✗ policy read-back mismatch for $name ($total/$want_total entries, $crit/$want_crit criteria)" >&2; exit 1; }
-  echo "$pid"
-}
 
 echo "→ upserting staff AccessPolicies (A3)…"
 FD_POLICY_ID="$(upsert_policy staff-front-desk.json)"

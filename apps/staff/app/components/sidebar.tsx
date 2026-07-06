@@ -269,7 +269,7 @@ export function Sidebar({
         // Sticky full-viewport rail (differs from the portal shell deliberately): the
         // day sheet is viewport-tall by nature, and identity/sign-out must stay
         // reachable without scrolling past the whole calendar.
-        className={`sticky top-0 hidden h-screen shrink-0 flex-col overflow-hidden border-r border-border-hairline px-3 py-5 md:flex ${ANIM} ${collapsed ? "w-16" : "w-56"}`}
+        className={`sticky top-0 hidden h-dvh shrink-0 flex-col overflow-hidden border-r border-border-hairline px-3 py-5 md:flex ${ANIM} ${collapsed ? "w-16" : "w-56"}`}
       >
         <div className={`relative shrink-0 ${ANIM} ${collapsed ? "h-[5.25rem]" : "h-10"}`}>
           <span className="flex h-10 items-center">

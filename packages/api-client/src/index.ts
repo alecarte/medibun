@@ -96,6 +96,53 @@ export const APPOINTMENT_STATUSES = [
 
 export type AppointmentStatus = (typeof APPOINTMENT_STATUSES)[number];
 
+/** Forward workflow moves per status. ONE source of truth for the transition graph:
+ *  the BFF enforces it (forward + exact reverse, below) and the staff UI offers it —
+ *  both import from here so the two can never drift. */
+export const FORWARD_TRANSITIONS: Record<AppointmentStatus, readonly AppointmentStatus[]> = {
+  scheduled: ["arrived", "no-show"],
+  arrived: ["roomed"],
+  roomed: ["completed"],
+  completed: [],
+  "no-show": [],
+};
+
+/** The forward moves plus each move's exact reverse (the ~10s compensating undo,
+ *  DESIGN.md undo-over-confirm) — derived from FORWARD_TRANSITIONS, never drifts. */
+const withUndo = (status: AppointmentStatus): readonly AppointmentStatus[] => [
+  ...FORWARD_TRANSITIONS[status],
+  ...APPOINTMENT_STATUSES.filter((from) => FORWARD_TRANSITIONS[from].includes(status)),
+];
+
+/** Every allowed move per status — what the BFF enforces server-side. */
+export const STATUS_TRANSITIONS: Record<AppointmentStatus, readonly AppointmentStatus[]> = {
+  scheduled: withUndo("scheduled"),
+  arrived: withUndo("arrived"),
+  roomed: withUndo("roomed"),
+  completed: withUndo("completed"),
+  "no-show": withUndo("no-show"),
+};
+
+/** A real calendar date in YYYY-MM-DD form (2026-02-31 round-trips false). Shared by
+ *  the BFF's `?date=` validation and the staff app's URL fallback — same judgment. */
+export function isValidDateString(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+  const [y, m, d] = value.split("-").map(Number);
+  return new Date(Date.UTC(y!, m! - 1, d!)).toISOString().slice(0, 10) === value;
+}
+
+/** Monday-of-the-week for a YYYY-MM-DD date (SCHEDULE_DESIGN.md: weeks start Monday).
+ *  Pure calendar math, no timezone — these are practice-local date labels. The BFF
+ *  snaps week ranges with this; the staff app pre-aligns URLs with the same function. */
+export function weekStart(date: string): string {
+  const [y, m, d] = date.split("-").map(Number);
+  const base = Date.UTC(y!, m! - 1, d!);
+  const dow = new Date(base).getUTCDay(); // 0=Sun..6=Sat
+  return new Date(base - ((dow + 6) % 7) * 86400000).toISOString().slice(0, 10);
+}
+
 /** One column of the Today day sheet. */
 export type DaySheetPractitioner = {
   readonly practitionerId: string;

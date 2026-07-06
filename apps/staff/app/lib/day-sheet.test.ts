@@ -4,7 +4,6 @@ import {
   blockGeometry,
   daySpan,
   formatColumnDay,
-  formatDateHeading,
   formatHour,
   formatMonthYear,
   formatTime,
@@ -12,10 +11,8 @@ import {
   FORWARD_ACTIONS,
   HOUR_PX,
   hourOf,
-  hourRange,
   monthGrid,
   shiftYmd,
-  weekStart,
   ymdOf,
 } from "./day-sheet";
 
@@ -25,20 +22,6 @@ describe("hourOf", () => {
   it("converts an instant to a fractional practice-local hour", () => {
     // 18:30Z = 14:30 EDT
     expect(hourOf("2026-07-04T18:30:00.000Z", TZ)).toBe(14.5);
-  });
-});
-
-describe("hourRange", () => {
-  it("defaults to practice hours 9–17 with no appointments", () => {
-    expect(hourRange([], TZ)).toEqual({ startHour: 9, endHour: 17 });
-  });
-
-  it("stretches to fit early and late appointments", () => {
-    const appts = [
-      { start: "2026-07-04T11:30:00.000Z", end: "2026-07-04T12:00:00.000Z" }, // 7:30 EDT
-      { start: "2026-07-04T22:30:00.000Z", end: "2026-07-04T23:15:00.000Z" }, // ends 19:15
-    ] as never[];
-    expect(hourRange(appts, TZ)).toEqual({ startHour: 7, endHour: 20 });
   });
 });
 
@@ -74,10 +57,6 @@ describe("formatting", () => {
     expect(formatHour(12)).toBe("12 PM");
     expect(formatHour(17)).toBe("5 PM");
   });
-
-  it("renders the date heading from the practice-local date string", () => {
-    expect(formatDateHeading("2026-07-04")).toBe("Saturday, July 4");
-  });
 });
 
 describe("calendar math", () => {
@@ -86,12 +65,6 @@ describe("calendar math", () => {
     expect(shiftYmd("2026-07-31", 1)).toBe("2026-08-01");
     expect(shiftYmd("2026-01-01", -1)).toBe("2025-12-31");
     expect(shiftYmd("2026-07-06", 7)).toBe("2026-07-13");
-  });
-
-  it("weekStart snaps to the Monday of the week", () => {
-    expect(weekStart("2026-07-08")).toBe("2026-07-06"); // Wed → Mon
-    expect(weekStart("2026-07-06")).toBe("2026-07-06"); // Mon → itself
-    expect(weekStart("2026-07-05")).toBe("2026-06-29"); // Sun → prior Mon
   });
 
   it("daySpan lists N consecutive dates", () => {

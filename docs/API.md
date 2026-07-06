@@ -161,9 +161,14 @@ both into `undefined`.
 
 The schedule sheet for a practice-local range: `?date=YYYY-MM-DD` (range start; a real
 calendar date — anything else is `400 invalid_request`; omitted = today) and `?days=1|7`
-(1 = day view, 7 = week view; anything else is `400`; omitted = 1). The window is resolved
-in the practice timezone, DST-safe per day. Calendar navigation state, not PHI — the only
-query parameters this surface carries. A month range is a future slice
+(1 = day view, 7 = week view; anything else is `400`; omitted = 1). **Week ranges snap to
+Monday**: with `days=7` the BFF aligns the range start to the Monday of the requested
+date's week (weeks start Monday, `docs/SCHEDULE_DESIGN.md`), so the returned `date` may
+be earlier than the one requested — clients render the returned range, never the request.
+The shared `weekStart` helper in `@medibun/api-client` is the single source of that
+alignment (BFF and staff app both import it). The window is resolved in the practice
+timezone, DST-safe per day. Calendar navigation state, not PHI — the only query
+parameters this surface carries. A month range is a future slice
 (`docs/SCHEDULE_DESIGN.md`). Returns a `DaySheet`:
 
 ```json
