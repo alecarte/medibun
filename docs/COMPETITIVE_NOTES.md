@@ -95,8 +95,9 @@ recurring set (per-vendor citations in the research transcript):
 - **Waitlists are smarter than expected**: Mangomint's "Intelligent Waitlist" auto-matches
   cancellations to waitlisted clients; Boulevard requires a card to join (anti-spam). Good
   Phase-2 growth-engine material (event-driven fits our Bots architecture).
-- Confirmed by the sweep: **no vendor documents any screen-privacy/PHI-masking feature** —
-  privacy glance mode stays a genuine differentiator.
+- The sweep found **no vendor documenting a screen-privacy/PHI-masking feature** — but see
+  the §2 correction: 4D EMR ships one undocumented (Alec's screenshot, 2026-07-06). The
+  differentiator is execution, not existence.
 
 ## 3.5 Patient-facing booking conversion (added 2026-07-03 — second research pass)
 
