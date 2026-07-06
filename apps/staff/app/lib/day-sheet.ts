@@ -3,6 +3,8 @@ import {
   weekStart,
   type AppointmentStatus,
   type DaySheetAppointment,
+  type InternalEvent,
+  type InternalEventType,
   type ServiceColor,
 } from "@medibun/api-client";
 
@@ -102,6 +104,26 @@ export const STATUS_LABEL: Record<AppointmentStatus, string> = {
   "no-show": "No-show",
 };
 
+/** Display label per internal-event type (S5c). Time off is not a type — it's a
+ *  titled block ("PTO"), all-day or partial (amendment, Alec 2026-07-06). */
+export const EVENT_TYPE_LABEL: Record<InternalEventType, string> = {
+  meeting: "Meeting",
+  block: "Blocked time",
+};
+
+/** Whether an event's window is a whole practice-local day (both edges at local
+ *  midnight) — how "all day" reads back off the wire, DST-proof (23/24/25h all work). */
+export function isAllDayEvent(
+  event: Pick<InternalEvent, "start" | "end">,
+  timeZone: string,
+): boolean {
+  return (
+    event.end > event.start &&
+    wallTime(event.start, timeZone) === "00:00" &&
+    wallTime(event.end, timeZone) === "00:00"
+  );
+}
+
 /** Confirmation line for the undo toast (voice: states the outcome, never celebrates). */
 export const ACTION_DONE: Record<AppointmentStatus, string> = {
   scheduled: "Moved back to scheduled",
@@ -148,6 +170,60 @@ export function hourOf(iso: string, timeZone: string): number {
   return (Number(parts.hour) % 24) + Number(parts.minute) / 60;
 }
 
+export type BlockLayout = {
+  /** Which sub-column this block occupies within its overlap cluster. */
+  readonly lane: number;
+  /** How many sub-columns the cluster needs (1 = the full column, as before). */
+  readonly lanes: number;
+};
+
+/**
+ * Side-by-side lanes for overlapping blocks in one column (the 4D-study defect-class
+ * fix: absolutely-positioned blocks used to overlay on overlap, hiding one another).
+ * Blocks are clustered by transitive overlap; within a cluster, each takes the first
+ * lane that has ended by its start (greedy reuse), and every member shares the
+ * cluster's lane count. Input must be sorted by start (column order already is).
+ */
+export function columnLayout(
+  blocks: readonly Pick<DaySheetAppointment, "id" | "start" | "end">[],
+): Map<string, BlockLayout> {
+  const layout = new Map<string, BlockLayout>();
+  let members: string[] = [];
+  let laneOf = new Map<string, number>();
+  let laneEnds: number[] = []; // per-lane end of its latest block, ms
+  let clusterEnd = -Infinity;
+
+  const flush = () => {
+    for (const id of members) {
+      layout.set(id, { lane: laneOf.get(id)!, lanes: laneEnds.length });
+    }
+    members = [];
+    laneOf = new Map();
+    laneEnds = [];
+    clusterEnd = -Infinity;
+  };
+
+  for (const block of blocks) {
+    const start = Date.parse(block.start);
+    const end = Date.parse(block.end);
+    if (members.length > 0 && start >= clusterEnd) {
+      flush();
+    }
+    let lane = laneEnds.findIndex((laneEnd) => laneEnd <= start);
+    if (lane === -1) {
+      lane = laneEnds.length;
+      laneEnds.push(end);
+    } else {
+      laneEnds[lane] = end;
+    }
+    laneOf.set(block.id, lane);
+    members.push(block.id);
+    clusterEnd = Math.max(clusterEnd, end);
+  }
+  flush();
+  return layout;
+}
+
 /** A block's position inside its column, px from the grid top. */
 export function blockGeometry(
   appointment: Pick<DaySheetAppointment, "start" | "end">,
@@ -155,12 +231,27 @@ export function blockGeometry(
   startHour: number,
 ): { top: number; height: number } {
   const start = hourOf(appointment.start, timeZone);
-  const end = hourOf(appointment.end, timeZone);
+  // Height comes from the REAL duration, not end-hour minus start-hour: an all-day
+  // window (day off) ends at next-midnight, where hourOf is 0 again and a subtraction
+  // collapses the block to a sliver. Clamped to the grid so a DST 25h day can't overflow.
+  const durationHours = (Date.parse(appointment.end) - Date.parse(appointment.start)) / 3600_000;
+  const clamped = Math.min(durationHours, DAY_END_HOUR - start);
   return {
     top: (start - startHour) * HOUR_PX,
     // Never render a sliver: even a zero-length window stays clickable.
-    height: Math.max((end - start) * HOUR_PX, 28),
+    height: Math.max(clamped * HOUR_PX, 28),
   };
+}
+
+/** "14:30" — the practice-local wall time of an instant, in the 24h form the BFF's
+ *  event contract expects (undo-recreate sends an event back as wall times). */
+export function wallTime(iso: string, timeZone: string): string {
+  const parts = Object.fromEntries(
+    cachedFormatter("en-US", { timeZone, hour12: false, hour: "2-digit", minute: "2-digit" })
+      .formatToParts(new Date(iso))
+      .map((p) => [p.type, p.value]),
+  );
+  return `${String(Number(parts.hour) % 24).padStart(2, "0")}:${parts.minute}`;
 }
 
 /** "2:00 PM" in the practice timezone. */

@@ -3,7 +3,9 @@ import type {
   AppointmentStatus,
   BookedAppointment,
   BookingRequest,
+  CreateInternalEventRequest,
   DaySheet,
+  InternalEvent,
   PatientProfile,
   ServiceAvailability,
   ServiceSummary,
@@ -23,6 +25,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 
 import { InvalidSlotError, UnknownScheduleError, UnknownServiceError } from "./booking.js";
+import { InvalidEventRequestError, UnknownEventError } from "./events.js";
 import { InvalidTransitionError, UnknownAppointmentError } from "./staff.js";
 
 /**
@@ -103,6 +106,23 @@ export type StaffDeps = {
   ) => Promise<{ id: string; status: AppointmentStatus }>;
 };
 
+/** Internal events (S5c): reads run AS THE CALLER (their AccessPolicy scopes which
+ *  practitioners/events they can touch); only the Slot/Appointment writes run under the
+ *  BFF service client (staff Slot access stays readonly). No PHI on this path by
+ *  construction. */
+export type EventsDeps = {
+  /** Throws InvalidEventRequestError. */
+  readonly createEvent: (
+    user: { profileReference: string; accessToken: string },
+    request: CreateInternalEventRequest,
+  ) => Promise<InternalEvent>;
+  /** Throws UnknownEventError (also for patient appointments — unenumerable here). */
+  readonly deleteEvent: (
+    user: { profileReference: string; accessToken: string },
+    eventId: string,
+  ) => Promise<void>;
+};
+
 export type AppDeps = {
   readonly log: (entry: LogEntry) => void;
   /** Resolves true when Medplum is reachable and credentials are valid. */
@@ -113,6 +133,8 @@ export type AppDeps = {
   readonly booking?: BookingDeps;
   /** Staff routes mount only when provided ALONG WITH auth (sessions gate them). */
   readonly staff?: StaffDeps;
+  /** Internal-event routes mount only when provided ALONG WITH auth + staff. */
+  readonly events?: EventsDeps;
 };
 
 type Env = { Variables: { requestId: string; logDetail?: string } };
@@ -468,6 +490,49 @@ export function createApp(deps: AppDeps): Hono<Env> {
           return staffFailure(c, err);
         }
       });
+
+      // Internal events (S5c): the staff session gates the routes; the writes run
+      // under the service client inside the events service (see src/events.ts).
+      const events = deps.events;
+      if (events) {
+        app.post("/staff/events", async (c) => {
+          const gate = await staffUser(c);
+          if (!gate.user) {
+            return gate.fail;
+          }
+          const body = (await c.req.json().catch(() => undefined)) as unknown;
+          if (!body || typeof body !== "object") {
+            return fail(c, "invalid_request", 400);
+          }
+          try {
+            return c.json(
+              await events.createEvent(gate.user, body as CreateInternalEventRequest),
+              201,
+            );
+          } catch (err) {
+            if (err instanceof InvalidEventRequestError) {
+              return fail(c, "invalid_request", 400);
+            }
+            return staffFailure(c, err);
+          }
+        });
+
+        app.delete("/staff/events/:id", async (c) => {
+          const gate = await staffUser(c);
+          if (!gate.user) {
+            return gate.fail;
+          }
+          try {
+            await events.deleteEvent(gate.user, c.req.param("id"));
+            return c.body(null, 204);
+          } catch (err) {
+            if (err instanceof UnknownEventError) {
+              return fail(c, "not_found", 404);
+            }
+            return staffFailure(c, err);
+          }
+        });
+      }
     }
   }
 

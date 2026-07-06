@@ -171,6 +171,46 @@ export type DaySheetAppointment = {
   readonly bookedAt?: string;
 };
 
+/** Internal (non-patient) calendar events — staff meetings and misc time blocks (S5c).
+ *  Time off is NOT a category (design amendment, Alec 2026-07-06): it's a titled block
+ *  ("PTO", "Time away"), all-day or partial (half-days). Represented in FHIR as a
+ *  patient-less Appointment + busy-unavailable Slots per overlapping Schedule, so
+ *  $find can't offer the window (DATA_MODEL.md). */
+export const INTERNAL_EVENT_TYPES = ["meeting", "block"] as const;
+
+export type InternalEventType = (typeof INTERNAL_EVENT_TYPES)[number];
+
+/** An internal event on the day sheet. NO PHI BY CONSTRUCTION: no patient participates,
+ *  and titles must never contain patient information — they render unmasked under the
+ *  privacy glance mask (the rule is documented at the create UI and in DATA_MODEL.md).
+ *  An all-day event's window is the full practice-local day (00:00 → next 00:00). */
+export type InternalEvent = {
+  readonly id: string;
+  readonly type: InternalEventType;
+  /** Optional display title ("Team huddle", "PTO"). Non-PHI by rule (above). */
+  readonly title?: string;
+  /** Every practitioner the event blocks (one for a block; 1+ for meetings). */
+  readonly practitionerIds: readonly string[];
+  readonly start: string;
+  readonly end: string;
+};
+
+/** What the client sends to create an internal event. Everything is PRACTICE-LOCAL —
+ *  the BFF owns all timezone math (it derives the instants, DST-safe), so no client
+ *  ever converts wall time to UTC. `allDay: true` covers the whole `date`; otherwise
+ *  `startTime`/`endTime` are wall times on that date (half-days and any other span). */
+export type CreateInternalEventRequest = {
+  readonly type: InternalEventType;
+  readonly title?: string;
+  readonly practitionerIds: readonly string[];
+  /** Practice-local calendar date (YYYY-MM-DD). */
+  readonly date: string;
+  readonly allDay?: boolean;
+  /** Ignored when allDay: practice-local wall times ("HH:mm", 24h) on `date`. */
+  readonly startTime?: string;
+  readonly endTime?: string;
+};
+
 export type DaySheet = {
   /** The practice-local calendar date (YYYY-MM-DD) the range STARTS on. */
   readonly date: string;
@@ -180,6 +220,8 @@ export type DaySheet = {
   readonly timezone: string;
   readonly practitioners: readonly DaySheetPractitioner[];
   readonly appointments: readonly DaySheetAppointment[];
+  /** Internal events in the same range (day off, meetings, blocks — no PHI). */
+  readonly events: readonly InternalEvent[];
 };
 
 export type ApiClientConfig = {
@@ -306,6 +348,16 @@ export type ApiClient = {
     status: AppointmentStatus,
     auth?: SessionAuth,
   ) => Promise<{ id: string; status: AppointmentStatus }>;
+  /** Creates an internal event (day off / meeting / block) and its booking-blocking
+   *  slots. Staff session required. Throws StaffError ("invalid_request" for bad
+   *  windows/practitioners). */
+  readonly createInternalEvent: (
+    request: CreateInternalEventRequest,
+    auth?: SessionAuth,
+  ) => Promise<InternalEvent>;
+  /** Deletes an internal event and frees its blocked time. Only internal events —
+   *  patient appointments 404 here by design. Throws StaffError. */
+  readonly deleteInternalEvent: (eventId: string, auth?: SessionAuth) => Promise<void>;
 };
 
 /** The BFF error envelope is `{error: code, requestId}`; parse the code against an
@@ -446,6 +498,28 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
         throw new StaffError(await errorCodeFrom(res, STAFF_CODES), res.status);
       }
       return (await res.json()) as { id: string; status: AppointmentStatus };
+    },
+
+    async createInternalEvent(request, auth) {
+      const res = await fetchImpl(`${baseUrl}/staff/events`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...authHeaders(auth) },
+        body: JSON.stringify(request),
+      });
+      if (!res.ok) {
+        throw new StaffError(await errorCodeFrom(res, STAFF_CODES), res.status);
+      }
+      return (await res.json()) as InternalEvent;
+    },
+
+    async deleteInternalEvent(eventId, auth) {
+      const res = await fetchImpl(`${baseUrl}/staff/events/${encodeURIComponent(eventId)}`, {
+        method: "DELETE",
+        headers: authHeaders(auth),
+      });
+      if (!res.ok) {
+        throw new StaffError(await errorCodeFrom(res, STAFF_CODES), res.status);
+      }
     },
 
     async getMyProfile(auth) {

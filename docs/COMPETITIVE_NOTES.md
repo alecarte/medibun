@@ -45,7 +45,11 @@ a commitment; anything that changes v0 scope is Alec's call (proposal §5).
   mode** (mask names→initials instantly) appears to be genuinely novel as a first-class software
   affordance — and pairs naturally with an **auto-engage on idle** (n minutes → mask engages,
   one click + session re-auth to unmask), which maps directly onto the addressable auto-logoff
-  safeguard.
+  safeguard. **Correction (2026-07-06, from Alec's 4D screenshot — §6):** 4D EMR, Handal's own
+  incumbent, DOES have a calendar privacy mode (blocks render "Privacy Mode Is On" in place of
+  patient names). So the feature isn't novel — it's an incumbent expectation Handal's staff
+  already rely on; our differentiator is the execution (initials keep the desk workable, idle
+  auto-engage, one-keypress unmask) rather than the existence.
 - Kiosk check-in patterns (Phreesia/Clearwave/Epic Welcome): idle timeouts that clear sessions,
   narrow-viewing-angle screens, minimal-data prompts (Epic Welcome asks only last-2-digits of
   birth year). Relevant when we do lobby check-in (Phase 2 QR flow).
@@ -91,8 +95,9 @@ recurring set (per-vendor citations in the research transcript):
 - **Waitlists are smarter than expected**: Mangomint's "Intelligent Waitlist" auto-matches
   cancellations to waitlisted clients; Boulevard requires a card to join (anti-spam). Good
   Phase-2 growth-engine material (event-driven fits our Bots architecture).
-- Confirmed by the sweep: **no vendor documents any screen-privacy/PHI-masking feature** —
-  privacy glance mode stays a genuine differentiator.
+- The sweep found **no vendor documenting a screen-privacy/PHI-masking feature** — but see
+  the §2 correction: 4D EMR ships one undocumented (Alec's screenshot, 2026-07-06). The
+  differentiator is execution, not existence.
 
 ## 3.5 Patient-facing booking conversion (added 2026-07-03 — second research pass)
 
@@ -169,3 +174,36 @@ embed tech + HIPAA/browser constraints). Full synthesis + recommendation:
 3. **S3**: per-service categorical color tokens. (Small add, within token authority.)
 4. **Roadmap**: add GFE/medical-director oversight as a named pre-production item; add
    before/after photos as the first post-spine slice candidate.
+
+## 6. 4D EMR (Handal's incumbent) — schedule study (Alec's screenshot, 2026-07-06)
+
+Alec's read: "this schedule functionally is good, even if the actual UX and flows suck."
+Inventory of what its day view carries, mapped against our plan. The functional bar it sets
+is real — 4D is what Handal's staff use every day, so anything they lean on that we lack is
+a migration blocker, not a nice-to-have.
+
+**Already ours (and better executed):** per-practitioner day columns · day/work-week/week/
+month views · date picker + Today · status/flag signals on blocks · calendar privacy mode
+(see the §2 correction — theirs replaces block text with "Privacy Mode Is On"; ours keeps
+the desk workable with initials, idle auto-engage, one-keypress unmask) · full-day column
+designations like "SURGICAL DAY" (ours: an all-day titled block since the S5c amendment) ·
+live updates (they have a manual **Refresh** button; we poll — a felt win, keep it).
+
+**Genuine gaps, worth planned homes:**
+
+| 4D feature                                                                     | What it is                                                                      | Where it should land with us                                                                                                                                                                                                                |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Resource columns ("OR 2") + Room Manager view**                              | Rooms/ORs are schedulable calendars alongside providers                         | Post-v0 (pre-Handal-migration it's REQUIRED — surgical practices schedule rooms). FHIR fits: a Schedule's single actor can be a Location. Keep the data model non-precluding (existing §1 note stands).                                     |
+| **All-day lane**                                                               | A dedicated strip above the grid for all-day items                              | UX refinement of S5c's all-day wash — candidate for the Month/Today design round rather than a wash spanning 24h of grid.                                                                                                                   |
+| **Side-by-side overlap layout**                                                | Overlapping appointments in one column render in sub-columns, all readable      | **Real defect risk for us today** — our absolute blocks overlay on overlap. Needed before real data (double-booked columns happen: consults during procedures). **Shipped 2026-07-06** (same-day pull-forward, prerequisite for S5.5 drag). |
+| **Calendar visibility toggles + groups**                                       | Left-rail eye toggles hide/show providers; named groups                         | Needed when practitioner count grows (Handal has 6+ columns). Cheap once URL-state practitioner filtering generalizes; post-v0.                                                                                                             |
+| **Find Openings**                                                              | Next-available search from the desk                                             | Planned as S11 assistant capability ("find an opening…"); consider a plain toolbar affordance too when S11 lands — not everyone will ask the assistant.                                                                                     |
+| **Move-up list**                                                               | Waitlist of patients wanting earlier slots; desk works it when time opens       | **Not in our plan anywhere** — the §4 waitlist row was deposits-flavored. This is a scheduling-revenue feature (fills cancellations). Name it as a Phase-2 backlog item with the growth engine.                                             |
+| **Jump ahead (1/2/3/4/6/8 wks, 3/6 mo)**                                       | One-tap relative navigation matching rebooking cadences ("see you in 3 months") | Small, high-leverage for rebooking flows. Candidate for the rebooking/concierge slice (S10) or a toolbar nicety with Month view.                                                                                                            |
+| **Appointment-type filter + appointment search**                               | Filter the grid by type; find a patient's appointment                           | Search belongs to S11 (⌘K); a type filter is a Month/density-pass candidate.                                                                                                                                                                |
+| **Zoom (grid density)**                                                        | Slider scales the hour height                                                   | Nice-to-have; our HOUR_PX is a constant — trivially tokenizable if tablets want denser views. Backlog.                                                                                                                                      |
+| **Block metadata glyphs (H/U/$/✓) + change annotations ("Changed quote on…")** | Hold/unconfirmed/payment/confirmed markers and inline audit notes on blocks     | Confirmation states arrive with reminders/SMS (growth engine); payment flags with commerce; change history exists in FHIR meta — surfacing it is a detail-card candidate, not block chrome (their UX sin).                                  |
+
+**What we deliberately won't copy:** the color chaos (every block shouts), modal-dense
+chrome, manual refresh, and burying patient names under a privacy string that makes blocks
+unreadable — the quiet-tool tenets (DESIGN.md) are the answer to exactly this screen.

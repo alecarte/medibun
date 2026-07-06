@@ -79,8 +79,30 @@ const STAFF_APPOINTMENTS = [
   { id: "sa-8", practitionerId: "prac-maya", patientId: "pt-8", patientName: "Camille Beaumont-Ledoux", patientPhone: "555-010-0151", patientEmail: "camille.bl@example.test", serviceCode: "svc-lip-filler", serviceName: "Lip filler", serviceColor: "plum", ...at(150, 45), status: "arrived", firstVisit: true, bookedAt: new Date(dayStart.getTime() - 86400000).toISOString() },
   { id: "sa-9", practitionerId: "prac-maya", patientId: "pt-9", patientName: "Grace Adeyemi-Thompson", patientPhone: "555-010-0119", patientEmail: "grace.at@example.test", serviceCode: "svc-lip-filler", serviceName: "Lip filler", serviceColor: "plum", ...at(270, 45), status: "scheduled", firstVisit: false, bookedAt: new Date(dayStart.getTime() - 4 * 86400000).toISOString() },
   { id: "sa-10", practitionerId: "prac-maya", patientId: "pt-10", patientName: "Sofia Marchetti", patientPhone: "555-010-0184", patientEmail: "sofia.m@example.test", serviceCode: "svc-lip-filler", serviceName: "Lip filler", serviceColor: "plum", ...at(420, 45), status: "scheduled", firstVisit: false, bookedAt: new Date(dayStart.getTime() - 2 * 86400000).toISOString() },
+  // Deliberate overlap with sa-3 (11:00–11:30): a consult mid-procedure — the S5c
+  // side-by-side lane layout must keep both readable.
+  { id: "sa-11", practitionerId: "prac-riley", patientId: "pt-11", patientName: "Dana Okonkwo", patientPhone: "555-010-0196", patientEmail: "dana.ok@example.test", serviceCode: "svc-dysport", serviceName: "Dysport", serviceColor: "teal", ...at(135, 30), status: "scheduled", firstVisit: true, bookedAt: dayStart.toISOString() },
 ];
 const staffStatuses = new Map(STAFF_APPOINTMENTS.map((a) => [a.id, a.status]));
+
+// ---- Internal events (S5c): one seeded meeting (re-anchored like the appointments);
+// creates/deletes persist in memory so the live-update poll shows them cross-station.
+const SEED_EVENTS = [
+  { id: "se-1", type: "meeting", title: "Team huddle", practitionerIds: ["prac-riley", "prac-maya"], ...at(240, 30) },
+];
+const deletedEventIds = new Set();
+const createdEvents = []; // absolute instants — never re-anchored
+let nextEventId = 1;
+
+// Fixed EDT offset, consistent with the rest of this stub's clock math.
+const stubInstant = (date, time) => new Date(`${date}T${time}:00-04:00`).toISOString();
+const stubEventWindow = ({ allDay, date, startTime, endTime }) =>
+  allDay
+    ? {
+        start: stubInstant(date, "00:00"),
+        end: new Date(Date.parse(stubInstant(date, "00:00")) + 86400000).toISOString(),
+      }
+    : { start: stubInstant(date, startTime), end: stubInstant(date, endTime) };
 
 const json = (res, status, body, headers = {}) => {
   res.writeHead(status, { "content-type": "application/json", ...headers });
@@ -122,6 +144,20 @@ createServer((req, res) => {
         status: staffStatuses.get(a.id),
       };
     });
+    const rangeEnd = rangeStart + days * 86400000;
+    const events = [
+      ...SEED_EVENTS.map((e) => ({
+        ...e,
+        start: new Date(Date.parse(e.start) + shift).toISOString(),
+        end: new Date(Date.parse(e.end) + shift).toISOString(),
+      })),
+      ...createdEvents,
+    ].filter(
+      (e) =>
+        !deletedEventIds.has(e.id) &&
+        Date.parse(e.start) < rangeEnd &&
+        Date.parse(e.end) > rangeStart - 86400000, // day-off starts at local midnight, before 9am rangeStart
+    );
     return json(res, 200, {
       date,
       days,
@@ -131,7 +167,38 @@ createServer((req, res) => {
         { practitionerId: "prac-riley", practitionerName: "Riley Reyes" },
       ],
       appointments,
+      events,
     });
+  }
+  if (req.method === "POST" && url.pathname === "/staff/events") {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      const request = JSON.parse(body);
+      const event = {
+        id: `se-created-${++nextEventId}`,
+        type: request.type,
+        ...(request.title ? { title: request.title } : {}),
+        practitionerIds: request.practitionerIds,
+        ...stubEventWindow(request),
+      };
+      createdEvents.push(event);
+      json(res, 201, event);
+    });
+    return;
+  }
+  const eventMatch = url.pathname.match(/^\/staff\/events\/([^/]+)$/);
+  if (req.method === "DELETE" && eventMatch) {
+    const id = decodeURIComponent(eventMatch[1]);
+    const exists =
+      (SEED_EVENTS.some((e) => e.id === id) && !deletedEventIds.has(id)) ||
+      createdEvents.some((e) => e.id === id);
+    if (!exists) return json(res, 404, { error: "not_found", requestId: "stub" });
+    deletedEventIds.add(id);
+    const created = createdEvents.findIndex((e) => e.id === id);
+    if (created >= 0) createdEvents.splice(created, 1);
+    res.writeHead(204);
+    return res.end();
   }
   const statusMatch = url.pathname.match(/^\/staff\/appointments\/([^/]+)\/status$/);
   if (req.method === "POST" && statusMatch) {

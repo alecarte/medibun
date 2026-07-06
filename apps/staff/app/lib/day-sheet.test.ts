@@ -45,6 +45,81 @@ describe("blockGeometry", () => {
     );
     expect(g.height).toBe(28);
   });
+
+  it("spans the full grid for an all-day window (S5c regression)", () => {
+    // Midnight → next-day midnight EDT: hourOf(end) is 0 again, so an end-minus-start
+    // hour subtraction collapses the block to a sliver — height must come from the
+    // real duration.
+    const g = blockGeometry(
+      { start: "2026-07-06T04:00:00.000Z", end: "2026-07-07T04:00:00.000Z" },
+      TZ,
+      0,
+    );
+    expect(g.top).toBe(0);
+    expect(g.height).toBe(24 * HOUR_PX);
+  });
+});
+
+describe("columnLayout", () => {
+  const block = (id: string, start: string, end: string) => ({
+    id,
+    start: `2026-07-06T${start}:00.000Z`,
+    end: `2026-07-06T${end}:00.000Z`,
+  });
+
+  it("gives non-overlapping blocks the full column", async () => {
+    const { columnLayout } = await import("./day-sheet");
+    const layout = columnLayout([block("a", "13:00", "13:30"), block("b", "14:00", "14:30")]);
+    expect(layout.get("a")).toEqual({ lane: 0, lanes: 1 });
+    expect(layout.get("b")).toEqual({ lane: 0, lanes: 1 });
+  });
+
+  it("lays overlapping blocks side by side (4D study defect-class fix)", async () => {
+    const { columnLayout } = await import("./day-sheet");
+    const layout = columnLayout([block("a", "13:00", "14:00"), block("b", "13:30", "14:30")]);
+    expect(layout.get("a")).toEqual({ lane: 0, lanes: 2 });
+    expect(layout.get("b")).toEqual({ lane: 1, lanes: 2 });
+  });
+
+  it("reuses freed lanes within a cluster (A→B→C chain stays two lanes)", async () => {
+    const { columnLayout } = await import("./day-sheet");
+    const layout = columnLayout([
+      block("a", "13:00", "14:00"),
+      block("b", "13:30", "14:30"),
+      block("c", "14:00", "15:00"), // overlaps b only — reuses a's lane
+    ]);
+    expect(layout.get("a")).toEqual({ lane: 0, lanes: 2 });
+    expect(layout.get("b")).toEqual({ lane: 1, lanes: 2 });
+    expect(layout.get("c")).toEqual({ lane: 0, lanes: 2 });
+  });
+
+  it("keeps clusters independent — a later solo block returns to full width", async () => {
+    const { columnLayout } = await import("./day-sheet");
+    const layout = columnLayout([
+      block("a", "09:00", "10:00"),
+      block("b", "09:30", "10:30"),
+      block("c", "13:00", "13:30"),
+    ]);
+    expect(layout.get("a")!.lanes).toBe(2);
+    expect(layout.get("c")).toEqual({ lane: 0, lanes: 1 });
+  });
+});
+
+describe("isAllDayEvent", () => {
+  it("recognizes a whole practice-local day (both edges at local midnight), DST-proof", async () => {
+    const { isAllDayEvent } = await import("./day-sheet");
+    // Regular 24h day and the 25h fall-back day both read as all-day.
+    expect(
+      isAllDayEvent({ start: "2026-07-06T04:00:00.000Z", end: "2026-07-07T04:00:00.000Z" }, TZ),
+    ).toBe(true);
+    expect(
+      isAllDayEvent({ start: "2026-11-01T04:00:00.000Z", end: "2026-11-02T05:00:00.000Z" }, TZ),
+    ).toBe(true);
+    // A timed block is not all-day, even at 24h across midday.
+    expect(
+      isAllDayEvent({ start: "2026-07-06T16:00:00.000Z", end: "2026-07-07T16:00:00.000Z" }, TZ),
+    ).toBe(false);
+  });
 });
 
 describe("formatting", () => {

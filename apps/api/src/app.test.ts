@@ -12,10 +12,12 @@ import {
   createApp,
   type AuthDeps,
   type BookingDeps,
+  type EventsDeps,
   type LogEntry,
   type StaffDeps,
 } from "./app.js";
 import { InvalidSlotError, UnknownScheduleError, UnknownServiceError } from "./booking.js";
+import { InvalidEventRequestError, UnknownEventError } from "./events.js";
 import { InvalidTransitionError, UnknownAppointmentError } from "./staff.js";
 
 /** Build an app with a captured log sink and a stubbed Medplum check. */
@@ -25,6 +27,7 @@ function makeApp(
     auth?: Partial<AuthDeps>;
     booking?: Partial<BookingDeps>;
     staff?: Partial<StaffDeps>;
+    events?: Partial<EventsDeps>;
   } = {},
 ) {
   const logs: LogEntry[] = [];
@@ -63,9 +66,17 @@ function makeApp(
             timezone: "America/New_York",
             practitioners: [],
             appointments: [],
+            events: [],
           }),
         setAppointmentStatus: () => Promise.reject(new Error("setAppointmentStatus not stubbed")),
         ...opts.staff,
+      }
+    : undefined;
+  const events: EventsDeps | undefined = opts.events
+    ? {
+        createEvent: () => Promise.reject(new Error("createEvent not stubbed")),
+        deleteEvent: () => Promise.reject(new Error("deleteEvent not stubbed")),
+        ...opts.events,
       }
     : undefined;
   const app = createApp({
@@ -74,6 +85,7 @@ function makeApp(
     auth,
     booking,
     staff,
+    events,
   });
   return { app, logs };
 }
@@ -670,6 +682,7 @@ describe("staff routes", () => {
     timezone: "America/New_York",
     practitioners: [{ practitionerId: "pr1", practitionerName: "Riley Reyes" }],
     appointments: [],
+    events: [],
   };
 
   it("staff routes 404 when staff deps are not wired", async () => {
@@ -825,6 +838,93 @@ describe("staff routes", () => {
           Origin: "https://evil.example",
         },
         body: JSON.stringify({ status: "arrived" }),
+      });
+      expect(res.status).toBe(403);
+      expect(((await res.json()) as { error: string }).error).toBe("forbidden_origin");
+    });
+  });
+
+  describe("internal-event routes (S5c)", () => {
+    const event = {
+      id: "ev1",
+      type: "meeting" as const,
+      title: "Team huddle",
+      practitionerIds: ["pr1"],
+      start: "2026-07-06T16:00:00.000Z",
+      end: "2026-07-06T16:30:00.000Z",
+    };
+    const post = (app: ReturnType<typeof makeApp>["app"], body: unknown) =>
+      app.request("/staff/events", {
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: "Bearer tok" },
+        body: JSON.stringify(body),
+      });
+
+    it("404s when events deps are not wired", async () => {
+      const { app } = makeApp({ auth: staffSession, staff: {} });
+      expect((await post(app, {})).status).toBe(404);
+    });
+
+    it("401s without a session and 403s a patient session", async () => {
+      const noSession = makeApp({ auth: {}, staff: {}, events: {} });
+      expect((await post(noSession.app, {})).status).toBe(401);
+      const patient = makeApp({ auth: patientSession, staff: {}, events: {} });
+      expect((await post(patient.app, {})).status).toBe(403);
+      expect(
+        (
+          await patient.app.request("/staff/events/ev1", {
+            method: "DELETE",
+            headers: { Authorization: "Bearer tok" },
+          })
+        ).status,
+      ).toBe(403);
+    });
+
+    it("201s a created event and 400s an invalid request or null body", async () => {
+      const { app } = makeApp({
+        auth: staffSession,
+        staff: {},
+        events: { createEvent: () => Promise.resolve(event) },
+      });
+      const res = await post(app, { type: "meeting", practitionerIds: ["pr1"] });
+      expect(res.status).toBe(201);
+      expect(await res.json()).toEqual(event);
+
+      const invalid = makeApp({
+        auth: staffSession,
+        staff: {},
+        events: { createEvent: () => Promise.reject(new InvalidEventRequestError()) },
+      });
+      expect((await post(invalid.app, { type: "vacation" })).status).toBe(400);
+      expect((await post(invalid.app, null)).status).toBe(400);
+    });
+
+    it("204s a delete and 404s unknown/non-event ids", async () => {
+      const del = (app: ReturnType<typeof makeApp>["app"]) =>
+        app.request("/staff/events/ev1", {
+          method: "DELETE",
+          headers: { Authorization: "Bearer tok" },
+        });
+      const { app } = makeApp({
+        auth: staffSession,
+        staff: {},
+        events: { deleteEvent: () => Promise.resolve() },
+      });
+      expect((await del(app)).status).toBe(204);
+
+      const unknown = makeApp({
+        auth: staffSession,
+        staff: {},
+        events: { deleteEvent: () => Promise.reject(new UnknownEventError()) },
+      });
+      expect((await del(unknown.app)).status).toBe(404);
+    });
+
+    it("keeps event mutations behind the global Origin guard", async () => {
+      const { app } = makeApp({ auth: staffSession, staff: {}, events: {} });
+      const res = await app.request("/staff/events/ev1", {
+        method: "DELETE",
+        headers: { Authorization: "Bearer tok", Origin: "https://evil.example" },
       });
       expect(res.status).toBe(403);
       expect(((await res.json()) as { error: string }).error).toBe("forbidden_origin");

@@ -368,6 +368,7 @@ describe("api-client ⇄ BFF staff contract (real staff service, stubbed FHIR wi
           bookedAt: "2026-07-01T00:00:00.000Z",
         },
       ],
+      events: [],
     });
   });
 
