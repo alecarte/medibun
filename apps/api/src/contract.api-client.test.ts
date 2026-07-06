@@ -1,9 +1,14 @@
-import { createApiClient, BookingError, LoginError } from "@medibun/api-client";
-import { SlotTakenError, TIMEZONE_EXTENSION_URL } from "@medibun/medplum-backend";
+import { createApiClient, BookingError, LoginError, StaffError } from "@medibun/api-client";
+import {
+  SlotTakenError,
+  StatusConflictError,
+  TIMEZONE_EXTENSION_URL,
+} from "@medibun/medplum-backend";
 import { describe, expect, it } from "vitest";
 
 import { createApp, type AuthDeps } from "./app.js";
 import { createBookingService } from "./booking.js";
+import { createStaffService } from "./staff.js";
 import type { ServiceRow } from "./services/catalog.js";
 
 /**
@@ -240,5 +245,154 @@ describe("api-client ⇄ BFF booking contract (real booking service, stubbed FHI
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(BookingError);
     expect((err as BookingError).code).toBe("slot_taken");
+  });
+});
+
+describe("api-client ⇄ BFF staff contract (real staff service, stubbed FHIR wire)", () => {
+  const staffUser = { profileReference: "Practitioner/prac-1", accessToken: "at-staff" };
+  const auth = { cookie: "medibun_session=staff-1" };
+
+  const appointmentsBundle = {
+    resourceType: "Bundle",
+    type: "searchset",
+    entry: [
+      {
+        resource: {
+          resourceType: "Appointment",
+          id: "appt-1",
+          status: "booked",
+          created: "2026-07-01T00:00:00.000Z",
+          serviceType: [
+            {
+              coding: [
+                { system: "https://medibun.com/fhir/CodeSystem/services", code: "svc-botox" },
+              ],
+            },
+          ],
+          start: "2026-07-06T14:00:00.000Z",
+          end: "2026-07-06T14:30:00.000Z",
+          participant: [
+            { actor: { reference: "Patient/pt-1" }, status: "accepted" },
+            { actor: { reference: "Practitioner/prac-1" }, status: "accepted" },
+          ],
+        },
+      },
+      {
+        resource: {
+          resourceType: "Patient",
+          id: "pt-1",
+          name: [{ given: ["Synthia"], family: "Loginsmith" }],
+          telecom: [{ system: "email", value: "synthia.login@example.test" }],
+        },
+      },
+      {
+        resource: {
+          resourceType: "Practitioner",
+          id: "prac-1",
+          name: [{ given: ["Riley"], family: "Reyes" }],
+          extension: [{ url: TIMEZONE_EXTENSION_URL, valueCode: "America/New_York" }],
+        },
+      },
+    ],
+  };
+
+  const emptyBundle = { resourceType: "Bundle", type: "searchset" };
+
+  function makeStaffClient(patchResource?: ReturnType<typeof makePatch>) {
+    const staff = createStaffService({
+      catalog: { listActive: () => Promise.resolve([botoxRow]) },
+      userClient: () => ({
+        get: (url: string) => {
+          if (url.startsWith("fhir/R4/Schedule?")) {
+            return Promise.resolve(scheduleBundle);
+          }
+          if (url.includes("patient=")) {
+            return Promise.resolve(emptyBundle); // no priors → first visit
+          }
+          return Promise.resolve(appointmentsBundle);
+        },
+        post: () => Promise.reject(new Error("unexpected post")),
+        readResource: () => Promise.resolve(appointmentsBundle.entry[0]!.resource as never),
+        patchResource: patchResource ?? makePatch(),
+      }),
+      now: () => NOW,
+    });
+    const app = createApp({
+      log: () => undefined,
+      checkMedplum: () => Promise.resolve(true),
+      auth: {
+        login: () => Promise.resolve({ sessionId: "staff-1" }),
+        logout: () => Promise.resolve(),
+        getUser: (sessionId) => Promise.resolve(sessionId === "staff-1" ? staffUser : null),
+        getMyProfile: () => Promise.resolve(undefined),
+        recordAndCheckRateLimit: () => Promise.resolve(false),
+        cookieSecure: false,
+      },
+      staff,
+    });
+    const fetchImpl = ((input: RequestInfo | URL, init?: RequestInit) =>
+      app.request(input, init)) as typeof fetch;
+    return createApiClient({ baseUrl: "http://bff.test", fetch: fetchImpl });
+  }
+
+  function makePatch() {
+    return () =>
+      Promise.resolve({
+        ...(appointmentsBundle.entry[0]!.resource as object),
+        status: "arrived",
+      } as never);
+  }
+
+  it("round-trips the day sheet DTO (the contract's heart)", async () => {
+    const client = makeStaffClient();
+    const sheet = await client.getDaySheet(undefined, auth);
+    expect(sheet).toEqual({
+      date: "2026-07-06",
+      days: 1,
+      timezone: "America/New_York",
+      practitioners: [{ practitionerId: "prac-1", practitionerName: "Riley Reyes" }],
+      appointments: [
+        {
+          id: "appt-1",
+          practitionerId: "prac-1",
+          patientId: "pt-1",
+          patientName: "Synthia Loginsmith",
+          patientEmail: "synthia.login@example.test",
+          serviceCode: "svc-botox",
+          serviceName: "Botox",
+          serviceColor: "sage",
+          start: "2026-07-06T14:00:00.000Z",
+          end: "2026-07-06T14:30:00.000Z",
+          status: "scheduled",
+          firstVisit: true,
+          bookedAt: "2026-07-01T00:00:00.000Z",
+        },
+      ],
+    });
+  });
+
+  it("checks in through the workflow endpoint and returns the domain status", async () => {
+    const client = makeStaffClient();
+    await expect(client.setAppointmentStatus("appt-1", "arrived", auth)).resolves.toEqual({
+      id: "appt-1",
+      status: "arrived",
+    });
+  });
+
+  it("maps a signed-out day-sheet request to a typed unauthorized StaffError", async () => {
+    const client = makeStaffClient();
+    const err = await client.getDaySheet().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StaffError);
+    expect((err as StaffError).code).toBe("unauthorized");
+  });
+
+  it("maps a raced status move to a typed conflict StaffError", async () => {
+    const client = makeStaffClient((() =>
+      Promise.reject(new StatusConflictError())) as unknown as ReturnType<typeof makePatch>);
+    const err = await client
+      .setAppointmentStatus("appt-1", "arrived", auth)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StaffError);
+    expect((err as StaffError).code).toBe("conflict");
   });
 });

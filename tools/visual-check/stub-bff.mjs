@@ -2,6 +2,9 @@
 // The real BFF booking chain is unit/contract-tested; live FHIR verify runs on the
 // real stack. This exists because this container's network policy blocks Docker pulls.
 import { createServer } from "node:http";
+// The shared week-snap (same function the real BFF uses). Needs the package built:
+// `pnpm --filter @medibun/api-client build`.
+import { weekStart } from "../../packages/api-client/dist/index.js";
 
 const SERVICES = [
   {
@@ -52,6 +55,32 @@ const PRACTITIONER = {
 };
 
 let failNextBook = false;
+let failNextStatus = false;
+
+// ---- Staff day sheet (S5) — synthetic, realistic-density day (DESIGN.md tenet 5:
+// long names, every workflow status, missing contact edge, first visits). Times are
+// minted for "today" so the sheet always looks alive. Statuses persist in memory so
+// check-in / undo round-trips survive a router.refresh.
+const dayStart = new Date();
+dayStart.setUTCHours(13, 0, 0, 0); // 9:00 AM America/New_York (EDT)
+const at = (minutes, durationMin) => ({
+  start: new Date(dayStart.getTime() + minutes * 60000).toISOString(),
+  end: new Date(dayStart.getTime() + (minutes + durationMin) * 60000).toISOString(),
+});
+
+const STAFF_APPOINTMENTS = [
+  { id: "sa-1", practitionerId: "prac-riley", patientId: "pt-1", patientName: "Synthia Loginsmith", patientPhone: "555-010-0100", patientEmail: "synthia.login@example.test", serviceCode: "svc-botox", serviceName: "Botox", serviceColor: "sage", ...at(0, 30), status: "completed", firstVisit: false, bookedAt: new Date(dayStart.getTime() - 3 * 86400000).toISOString() },
+  { id: "sa-2", practitionerId: "prac-riley", patientId: "pt-2", patientName: "Aurelia Vandermeer-Castellanos", patientPhone: "555-010-0135", patientEmail: "aurelia.vc@example.test", serviceCode: "svc-dysport", serviceName: "Dysport", serviceColor: "teal", ...at(45, 30), status: "roomed", firstVisit: false, bookedAt: new Date(dayStart.getTime() - 6 * 86400000).toISOString() },
+  { id: "sa-3", practitionerId: "prac-riley", patientId: "pt-3", patientName: "Mei Nakamura-Okafor", patientPhone: "555-010-0177", patientEmail: "mei.no@example.test", serviceCode: "svc-botox", serviceName: "Botox", serviceColor: "sage", ...at(120, 30), status: "arrived", firstVisit: true, bookedAt: new Date(dayStart.getTime() - 86400000).toISOString() },
+  { id: "sa-4", practitionerId: "prac-riley", patientId: "pt-4", patientName: "Jo Park", serviceCode: "svc-dysport", serviceName: "Dysport", serviceColor: "teal", ...at(210, 30), status: "scheduled", firstVisit: false, bookedAt: new Date(dayStart.getTime() - 2 * 86400000).toISOString() },
+  { id: "sa-5", practitionerId: "prac-riley", patientId: "pt-5", patientName: "Valentina Ruiz de la Torre", patientPhone: "555-010-0142", patientEmail: "valentina.rt@example.test", serviceCode: "svc-botox", serviceName: "Botox", serviceColor: "sage", ...at(300, 30), status: "scheduled", firstVisit: true, bookedAt: dayStart.toISOString() },
+  { id: "sa-6", practitionerId: "prac-riley", patientId: "pt-6", patientName: "Hannah Osei", patientPhone: "555-010-0163", patientEmail: "hannah.osei@example.test", serviceCode: "svc-botox", serviceName: "Botox", serviceColor: "sage", ...at(390, 30), status: "no-show", firstVisit: false, bookedAt: new Date(dayStart.getTime() - 5 * 86400000).toISOString() },
+  { id: "sa-7", practitionerId: "prac-maya", patientId: "pt-7", patientName: "Priya Raghunathan", patientPhone: "555-010-0128", patientEmail: "priya.r@example.test", serviceCode: "svc-lip-filler", serviceName: "Lip filler", serviceColor: "plum", ...at(30, 45), status: "completed", firstVisit: false, bookedAt: new Date(dayStart.getTime() - 8 * 86400000).toISOString() },
+  { id: "sa-8", practitionerId: "prac-maya", patientId: "pt-8", patientName: "Camille Beaumont-Ledoux", patientPhone: "555-010-0151", patientEmail: "camille.bl@example.test", serviceCode: "svc-lip-filler", serviceName: "Lip filler", serviceColor: "plum", ...at(150, 45), status: "arrived", firstVisit: true, bookedAt: new Date(dayStart.getTime() - 86400000).toISOString() },
+  { id: "sa-9", practitionerId: "prac-maya", patientId: "pt-9", patientName: "Grace Adeyemi-Thompson", patientPhone: "555-010-0119", patientEmail: "grace.at@example.test", serviceCode: "svc-lip-filler", serviceName: "Lip filler", serviceColor: "plum", ...at(270, 45), status: "scheduled", firstVisit: false, bookedAt: new Date(dayStart.getTime() - 4 * 86400000).toISOString() },
+  { id: "sa-10", practitionerId: "prac-maya", patientId: "pt-10", patientName: "Sofia Marchetti", patientPhone: "555-010-0184", patientEmail: "sofia.m@example.test", serviceCode: "svc-lip-filler", serviceName: "Lip filler", serviceColor: "plum", ...at(420, 45), status: "scheduled", firstVisit: false, bookedAt: new Date(dayStart.getTime() - 2 * 86400000).toISOString() },
+];
+const staffStatuses = new Map(STAFF_APPOINTMENTS.map((a) => [a.id, a.status]));
 
 const json = (res, status, body, headers = {}) => {
   res.writeHead(status, { "content-type": "application/json", ...headers });
@@ -69,7 +98,60 @@ createServer((req, res) => {
       ? json(res, 200, { id: "synth-1", name: "Synthia Loginsmith", birthDate: "1993-04-12" })
       : json(res, 401, { error: "unauthorized", requestId: "stub" });
   }
+  if (url.pathname === "/staff/me") {
+    return signedIn
+      ? json(res, 200, { id: "prac-noor", name: "Noor Haddad" })
+      : json(res, 401, { error: "unauthorized", requestId: "stub" });
+  }
   if (!signedIn) return json(res, 401, { error: "unauthorized", requestId: "stub" });
+  if (url.pathname === "/staff/schedule") {
+    const requested = url.searchParams.get("date") ?? new Date().toISOString().slice(0, 10);
+    const days = Number(url.searchParams.get("days") ?? "1");
+    // Week view snaps to the week's Monday via the same shared weekStart as the real BFF.
+    const date = days === 7 ? weekStart(requested) : requested;
+    // Re-anchor the synthetic day onto the range start; for a week, spread the
+    // appointments across the days so every column has content to review.
+    const rangeStart = Date.parse(`${date}T13:00:00Z`); // 9:00 AM EDT
+    const shift = rangeStart - dayStart.getTime();
+    const appointments = STAFF_APPOINTMENTS.map((a, i) => {
+      const dayOffset = (days > 1 ? i % days : 0) * 86400000;
+      return {
+        ...a,
+        start: new Date(Date.parse(a.start) + shift + dayOffset).toISOString(),
+        end: new Date(Date.parse(a.end) + shift + dayOffset).toISOString(),
+        status: staffStatuses.get(a.id),
+      };
+    });
+    return json(res, 200, {
+      date,
+      days,
+      timezone: "America/New_York",
+      practitioners: [
+        { practitionerId: "prac-maya", practitionerName: "Maya Chen" },
+        { practitionerId: "prac-riley", practitionerName: "Riley Reyes" },
+      ],
+      appointments,
+    });
+  }
+  const statusMatch = url.pathname.match(/^\/staff\/appointments\/([^/]+)\/status$/);
+  if (req.method === "POST" && statusMatch) {
+    const id = decodeURIComponent(statusMatch[1]);
+    if (!staffStatuses.has(id)) return json(res, 404, { error: "not_found", requestId: "stub" });
+    if (failNextStatus) {
+      // Cross-station conflict path (the real BFF's 409 contract) — arm via
+      // POST /stub/fail-next-status to review the conflict notice + refresh flow.
+      failNextStatus = false;
+      return json(res, 409, { error: "conflict", requestId: "stub" });
+    }
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      const { status } = JSON.parse(body);
+      staffStatuses.set(id, status);
+      json(res, 200, { id, status });
+    });
+    return;
+  }
   if (url.pathname === "/services") return json(res, 200, { services: SERVICES });
   const availability = url.pathname.match(/^\/services\/([^/]+)\/availability$/);
   if (availability) {
@@ -107,6 +189,10 @@ createServer((req, res) => {
   }
   if (req.method === "POST" && url.pathname === "/stub/fail-next-book") {
     failNextBook = true;
+    return json(res, 200, { ok: true });
+  }
+  if (req.method === "POST" && url.pathname === "/stub/fail-next-status") {
+    failNextStatus = true;
     return json(res, 200, { ok: true });
   }
   json(res, 404, { error: "not_found", requestId: "stub" });

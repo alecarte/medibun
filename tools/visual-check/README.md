@@ -26,6 +26,9 @@ cd tools/visual-check && npm install                     # once per machine/cont
 node stub-bff.mjs &                                      # BFF stand-in on :3001
 pnpm --filter @medibun/portal dev &                      # portal on :3100 (talks to :3001)
 node shoot.mjs http://localhost:3100/book book.png 390x844 --signed-in
+# staff app (S5): dev server on :3200, schedule at /schedule — review at 1280x800 AND tablet width
+pnpm --filter @medibun/staff dev &
+node shoot.mjs http://localhost:3200/schedule staff-schedule.png 1280x800 --signed-in
 ```
 
 Then actually LOOK at the output (Claude: Read the PNG). Screenshot review means comparing

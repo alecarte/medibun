@@ -33,6 +33,32 @@ export function CalendarIcon({ className }: { className?: string }) {
   );
 }
 
+export function HomeIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <path d="M4.5 10.5 12 4l7.5 6.5" />
+      <path d="M6.5 9v9.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V9" />
+      <path d="M10 19.5v-5h4v5" />
+    </Icon>
+  );
+}
+
+export function ChevronLeftIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <path d="M14.5 6 8.5 12l6 6" />
+    </Icon>
+  );
+}
+
+export function ChevronRightIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <path d="M9.5 6l6 6-6 6" />
+    </Icon>
+  );
+}
+
 export function UserIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>
@@ -55,6 +81,23 @@ export function PanelIcon({ className }: { className?: string }) {
     <Icon className={className}>
       <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
       <path d="M9.5 4.5v15" />
+    </Icon>
+  );
+}
+
+export function KeyboardIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <rect x="3" y="6.5" width="18" height="11" rx="2" />
+      <path d="M7 10h.01M10.5 10h.01M14 10h.01M17 10h.01M8.5 13.5h7" />
+    </Icon>
+  );
+}
+
+export function ChevronDownIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <path d="M6 9.5l6 6 6-6" />
     </Icon>
   );
 }

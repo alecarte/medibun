@@ -1,0 +1,23 @@
+{
+  "resourceType": "AccessPolicy",
+  "name": "staff-front-desk-v1",
+  "resource": [
+    { "resourceType": "Patient", "criteria": "Patient?_compartment=%organization" },
+    { "resourceType": "Appointment", "criteria": "Appointment?_compartment=%organization" },
+    { "resourceType": "Schedule", "readonly": true },
+    { "resourceType": "Slot", "readonly": true },
+    { "resourceType": "HealthcareService", "readonly": true },
+    { "resourceType": "Practitioner", "readonly": true },
+    { "resourceType": "Location", "readonly": true },
+    {
+      "resourceType": "Consent",
+      "criteria": "Consent?_compartment=%organization",
+      "readonly": true
+    },
+    {
+      "resourceType": "QuestionnaireResponse",
+      "criteria": "QuestionnaireResponse?_compartment=%organization",
+      "readonly": true
+    }
+  ]
+}

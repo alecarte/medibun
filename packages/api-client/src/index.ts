@@ -77,6 +77,111 @@ export type BookedAppointment = {
   readonly end: string;
 };
 
+/** The signed-in staff member's own profile (Practitioner principal). */
+export type StaffProfile = {
+  readonly id: string;
+  /** Display name, already formatted by the backend. */
+  readonly name: string;
+};
+
+/** The staff-facing appointment workflow (V0_PROPOSAL S5). Order = the workflow order;
+ *  the BFF maps these to FHIR Appointment.status server-side. */
+export const APPOINTMENT_STATUSES = [
+  "scheduled",
+  "arrived",
+  "roomed",
+  "completed",
+  "no-show",
+] as const;
+
+export type AppointmentStatus = (typeof APPOINTMENT_STATUSES)[number];
+
+/** Forward workflow moves per status. ONE source of truth for the transition graph:
+ *  the BFF enforces it (forward + exact reverse, below) and the staff UI offers it —
+ *  both import from here so the two can never drift. */
+export const FORWARD_TRANSITIONS: Record<AppointmentStatus, readonly AppointmentStatus[]> = {
+  scheduled: ["arrived", "no-show"],
+  arrived: ["roomed"],
+  roomed: ["completed"],
+  completed: [],
+  "no-show": [],
+};
+
+/** The forward moves plus each move's exact reverse (the ~10s compensating undo,
+ *  DESIGN.md undo-over-confirm) — derived from FORWARD_TRANSITIONS, never drifts. */
+const withUndo = (status: AppointmentStatus): readonly AppointmentStatus[] => [
+  ...FORWARD_TRANSITIONS[status],
+  ...APPOINTMENT_STATUSES.filter((from) => FORWARD_TRANSITIONS[from].includes(status)),
+];
+
+/** Every allowed move per status — what the BFF enforces server-side. */
+export const STATUS_TRANSITIONS: Record<AppointmentStatus, readonly AppointmentStatus[]> = {
+  scheduled: withUndo("scheduled"),
+  arrived: withUndo("arrived"),
+  roomed: withUndo("roomed"),
+  completed: withUndo("completed"),
+  "no-show": withUndo("no-show"),
+};
+
+/** A real calendar date in YYYY-MM-DD form (2026-02-31 round-trips false). Shared by
+ *  the BFF's `?date=` validation and the staff app's URL fallback — same judgment. */
+export function isValidDateString(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+  const [y, m, d] = value.split("-").map(Number);
+  return new Date(Date.UTC(y!, m! - 1, d!)).toISOString().slice(0, 10) === value;
+}
+
+/** Monday-of-the-week for a YYYY-MM-DD date (SCHEDULE_DESIGN.md: weeks start Monday).
+ *  Pure calendar math, no timezone — these are practice-local date labels. The BFF
+ *  snaps week ranges with this; the staff app pre-aligns URLs with the same function. */
+export function weekStart(date: string): string {
+  const [y, m, d] = date.split("-").map(Number);
+  const base = Date.UTC(y!, m! - 1, d!);
+  const dow = new Date(base).getUTCDay(); // 0=Sun..6=Sat
+  return new Date(base - ((dow + 6) % 7) * 86400000).toISOString().slice(0, 10);
+}
+
+/** One column of the Today day sheet. */
+export type DaySheetPractitioner = {
+  readonly practitionerId: string;
+  readonly practitionerName: string;
+};
+
+/** One appointment block on the day sheet. PHI stays inside the authenticated session —
+ *  never in URLs, logs, or client storage (security.md). */
+export type DaySheetAppointment = {
+  readonly id: string;
+  readonly practitionerId: string;
+  readonly patientId: string;
+  readonly patientName: string;
+  readonly patientPhone?: string;
+  readonly patientEmail?: string;
+  /** Service fields resolve from the catalog when the appointment carries our code. */
+  readonly serviceCode?: string;
+  readonly serviceName?: string;
+  readonly serviceColor?: ServiceColor;
+  readonly start: string;
+  readonly end: string;
+  readonly status: AppointmentStatus;
+  /** No prior (non-cancelled) appointment — the front-desk hospitality cue. */
+  readonly firstVisit: boolean;
+  /** When the booking was created, when the record carries it. */
+  readonly bookedAt?: string;
+};
+
+export type DaySheet = {
+  /** The practice-local calendar date (YYYY-MM-DD) the range STARTS on. */
+  readonly date: string;
+  /** How many consecutive practice-local days the sheet covers (1 = day, 7 = week). */
+  readonly days: number;
+  /** IANA practice timezone — format all times in it. */
+  readonly timezone: string;
+  readonly practitioners: readonly DaySheetPractitioner[];
+  readonly appointments: readonly DaySheetAppointment[];
+};
+
 export type ApiClientConfig = {
   /** Base URL of our backend (the BFF). Never a Medplum/EMR URL. */
   readonly baseUrl: string;
@@ -140,6 +245,28 @@ export class BookingError extends Error {
   }
 }
 
+/** Staff endpoint error codes (the BFF's stable, PHI-free error contract). `conflict`
+ *  means the appointment changed under you (another station / stale sheet) — refetch. */
+const STAFF_CODES = [
+  "unauthorized",
+  "forbidden",
+  "not_found",
+  "invalid_request",
+  "conflict",
+] as const;
+
+export type StaffErrorCode = (typeof STAFF_CODES)[number] | "unknown";
+
+/** Staff request failure with the backend's error code. Never carries PHI. */
+export class StaffError extends Error {
+  readonly code: StaffErrorCode;
+  constructor(code: StaffErrorCode, status: number) {
+    super(`api-client: staff request failed (${code}, status ${status})`);
+    this.name = "StaffError";
+    this.code = code;
+  }
+}
+
 export type ApiClient = {
   readonly baseUrl: string;
   /** Brokered login. Resolves the opaque session token (web also gets an HttpOnly cookie). */
@@ -161,6 +288,24 @@ export type ApiClient = {
   /** Books a found slot for the signed-in patient. Throws BookingError — "slot_taken"
    *  when the window was booked between availability and confirm (safe to re-pick). */
   readonly book: (request: BookingRequest, auth?: SessionAuth) => Promise<BookedAppointment>;
+  /** The signed-in staff member's own profile. Resolves undefined when not signed in
+   *  (401) or when the session's principal is not staff (404) — both benign
+   *  signed-out-equivalent states for a UI, never crashes. */
+  readonly getStaffProfile: (auth?: SessionAuth) => Promise<StaffProfile | undefined>;
+  /** The schedule sheet (practitioners + appointments) for a practice-local range:
+   *  `date` (YYYY-MM-DD; omit for today) + `days` (1 = day view, 7 = week; default 1).
+   *  Staff session required. Throws StaffError. */
+  readonly getDaySheet: (
+    range?: { readonly date?: string; readonly days?: number },
+    auth?: SessionAuth,
+  ) => Promise<DaySheet>;
+  /** Moves an appointment through the status workflow (check-in, undo, roomed, …).
+   *  Throws StaffError — "conflict" when the appointment changed under you (refetch). */
+  readonly setAppointmentStatus: (
+    appointmentId: string,
+    status: AppointmentStatus,
+    auth?: SessionAuth,
+  ) => Promise<{ id: string; status: AppointmentStatus }>;
 };
 
 /** The BFF error envelope is `{error: code, requestId}`; parse the code against an
@@ -254,6 +399,53 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
         throw await bookingFailure(res);
       }
       return (await res.json()) as BookedAppointment;
+    },
+
+    async getStaffProfile(auth) {
+      const res = await fetchImpl(`${baseUrl}/staff/me`, { headers: authHeaders(auth) });
+      // 401 = no/expired session; 404 = valid session but not a staff principal (e.g. a
+      // patient session hitting the staff app). Both read as "no staff profile".
+      if (res.status === 401 || res.status === 404) {
+        return undefined;
+      }
+      if (!res.ok) {
+        // Generic by design: response bodies never make it into thrown messages.
+        throw new Error(`api-client: GET /staff/me failed with status ${res.status}`);
+      }
+      return (await res.json()) as StaffProfile;
+    },
+
+    async getDaySheet(range, auth) {
+      const params = new URLSearchParams();
+      if (range?.date) {
+        params.set("date", range.date);
+      }
+      if (range?.days !== undefined) {
+        params.set("days", String(range.days));
+      }
+      const query = params.size > 0 ? `?${params}` : "";
+      const res = await fetchImpl(`${baseUrl}/staff/schedule${query}`, {
+        headers: authHeaders(auth),
+      });
+      if (!res.ok) {
+        throw new StaffError(await errorCodeFrom(res, STAFF_CODES), res.status);
+      }
+      return (await res.json()) as DaySheet;
+    },
+
+    async setAppointmentStatus(appointmentId, status, auth) {
+      const res = await fetchImpl(
+        `${baseUrl}/staff/appointments/${encodeURIComponent(appointmentId)}/status`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", ...authHeaders(auth) },
+          body: JSON.stringify({ status }),
+        },
+      );
+      if (!res.ok) {
+        throw new StaffError(await errorCodeFrom(res, STAFF_CODES), res.status);
+      }
+      return (await res.json()) as { id: string; status: AppointmentStatus };
     },
 
     async getMyProfile(auth) {

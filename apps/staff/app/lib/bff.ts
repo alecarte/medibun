@@ -5,7 +5,7 @@ import { cookies } from "next/headers";
  * Server-side BFF access, in one place: the base-URL decision and the
  * forward-ONLY-the-session-cookie policy (data minimization, security.md) are
  * defined here and nowhere else. RSC-only (uses next/headers).
- * Twin of apps/staff/app/lib/bff.ts — the apps deploy separately, so the file is
+ * Twin of apps/portal/app/lib/bff.ts — the apps deploy separately, so the file is
  * duplicated by design; change both together.
  */
 

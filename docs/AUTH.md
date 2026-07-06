@@ -182,6 +182,19 @@ explicit human approval.
   against a real Medplum — policy read-back 8/8 resource entries, membership-pinned
   `patient-self-v1` binding confirmed by the fail-loud check. The policy path is now
   live-exercised end-to-end.
+- **2026-07-04 — S5 staff login shipped** (v0 proposal S5; gates G1–G4 explicitly approved by
+  Alec in-session before implementation). Staff (Practitioner principals) ride the SAME brokered
+  flow and session store, unchanged — the staff app adds its own same-origin `/api` proxy,
+  login/logout UI, and `GET /staff/me`; staff sessions use the same lifetimes as patients for v0
+  (decided in the S5 interview; shared-workstation idle handling arrives with the S5b privacy
+  mask, real-staff hardening post-v0 with MFA). First org-parameterized AccessPolicies landed:
+  **`staff-front-desk-v1`** (no Encounter/clinical access) and **`staff-clinician-v1`**, bound
+  via `ProjectMembership.access[]` + `organization` parameter (ADR-0003) with fail-loud
+  read-back checks in `setup-dev.sh`; shape-pinned by security regression tests
+  (`policies.test.ts`). Synthetic staff seeded WITHOUT `mfaRequired` per the recorded A4-b
+  exception. Staff FHIR reads/writes run as the end user's own principal (day sheet + status
+  workflow); the check-in Bot (A7) holds the only Encounter write, under its own narrow
+  `bot-check-in-v1` policy.
 - 2026-07-03 — Note for the deferred signup/phone-OTP decision (no change to accepted
   decisions): the booking-conversion research (`BOOKING_DESIGN.md`) strengthens the case for
   **guest-first booking with SMS-code identity** when signup lands — forced account creation

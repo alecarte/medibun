@@ -132,6 +132,14 @@ later as its own approval-gated design.
 | Media (photos)                                 | read own               | —                       | read/write             | AuditEvent on, consent-gated |
 | Consent, QuestionnaireResponse                 | read/create own        | read                    | read/write             | AuditEvent on                |
 
+**Operational directory reads (added with S5, see review log):** both staff roles additionally
+get **read-only** Schedule, Slot, HealthcareService, Practitioner, and Location — non-patient
+operational/directory data the day sheet and scheduling UI require. These entries are currently
+**unscoped** (no org criteria): non-patient-compartment resources don't inherit `meta.accounts`,
+so org-scoping them needs explicit tagging — a recorded follow-up that MUST land before the
+second tenant (Handal) joins the project. Same deadline for the check-in Bot's project-wide
+Encounter write (`bot-check-in-v1`).
+
 Default-deny everything else. Policies are **templates parameterized by Organization** (ADR-0003);
 no hand-rolled per-user policies. Every policy lands via reviewed code (Medplum CLI), never the
 admin UI, and goes through security-reviewer. AuditEvent emission is a deployment setting that
@@ -139,6 +147,17 @@ must be verified per environment — see `docs/AUTH.md` (attribution section).
 
 ### Review log
 
+- **2026-07-04 — S5 staff policies landed (A3 partial; G1/G2 approved by Alec in-session).**
+  First implementations of the table above: `staff-front-desk-v1` and `staff-clinician-v1`
+  (org-parameterized via `ProjectMembership.access[]` + `organization` parameter), plus
+  `bot-check-in-v1` for the A7 check-in Bot. Deviations, all NARROWER than the table except the
+  operational-read note above: front-desk Consent/QR held read-only-as-table; Schedule/Slot held
+  **read-only** for both roles (no schedule-editing surface exists yet); clinician **Media
+  deferred to S7** (lands with photos + consent gating). Org compartment matching runs through
+  `Patient.meta.accounts` (tagged at seed; patient-compartment writes — Appointments, Encounters
+  — inherit it per Medplum account propagation; live-verify item in V0_PROPOSAL §9, with the
+  approved-in-principle `$set-accounts` service-client grant as the fallback). Security-reviewer
+  PASS 2026-07-04; pre-second-tenant follow-ups recorded in the note above.
 - **2026-07-02 — booking amendment (A2, approved in principle via docs/V0_PROPOSAL.md §5;
   landed with S3)**, all verified against the Medplum **v5.1.9 server source** (find.ts,
   book.ts, scheduling-parameters.ts): (i) at our pin the scheduling ops are **`$find` + `$book`

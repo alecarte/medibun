@@ -1,15 +1,16 @@
-import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
-import Home from "./page.js";
+import { describe, it, expect, vi } from "vitest";
+
+const { redirect } = vi.hoisted(() => ({
+  redirect: vi.fn((to: string) => {
+    throw new Error(`REDIRECT:${to}`);
+  }),
+}));
+vi.mock("next/navigation", () => ({ redirect }));
+
+import Home from "./page";
 
 describe("staff home", () => {
-  it("renders the Today heading", () => {
-    render(<Home />);
-    expect(screen.getByRole("heading", { name: "Today" })).toBeInTheDocument();
-  });
-
-  it("shows the empty day sheet with its explanation", () => {
-    render(<Home />);
-    expect(screen.getByText(/No appointments yet/)).toBeInTheDocument();
+  it("lands on the schedule (the / route is reserved for the future Today dashboard)", () => {
+    expect(() => Home()).toThrow("REDIRECT:/schedule");
   });
 });

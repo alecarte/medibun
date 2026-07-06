@@ -18,4 +18,6 @@ export type {
   Slot,
   // Booking (S4): the BFF names the schedule's Practitioner actor in its DTOs.
   Practitioner,
+  // Staff day sheet (S5): the BFF maps Appointments to day-sheet rows.
+  Appointment,
 } from "@medplum/fhirtypes";

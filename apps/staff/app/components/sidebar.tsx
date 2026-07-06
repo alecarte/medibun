@@ -1,10 +1,21 @@
 "use client";
 
+import { createApiClient } from "@medibun/api-client";
 import { tokens } from "@medibun/design-tokens";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { COLLAPSE_COOKIE } from "../lib/prefs";
-import { CalendarIcon, ChatIcon, CloseIcon, MenuIcon, PanelIcon, UserIcon } from "./icons";
+import {
+  CalendarIcon,
+  ChatIcon,
+  CloseIcon,
+  HomeIcon,
+  MenuIcon,
+  PanelIcon,
+  UserIcon,
+} from "./icons";
 
 // The staff shell, in the quiet-tool register — same mechanics as the portal shell
 // (collapsible icon rail, cookie-persisted server-first-paint state, ⌘/Ctrl+B toggle,
@@ -13,10 +24,14 @@ import { CalendarIcon, ChatIcon, CloseIcon, MenuIcon, PanelIcon, UserIcon } from
 //
 // ⌘/Ctrl+K is RESERVED for the staff command palette / assistant (S11).
 
+// "Today" is the future staff DASHBOARD (events, follow-ups, radar — direction from the
+// S5a review); the schedule is its own destination. Items without an href are honest
+// "Soon" placeholders until their slices land (dashboard TBD, patients S7, assistant S11).
 const NAV_ITEMS = [
-  { label: "Today", icon: CalendarIcon, active: true },
-  { label: "Patients", icon: UserIcon, active: false },
-  { label: "Assistant", icon: ChatIcon, active: false },
+  { label: "Today", icon: HomeIcon, href: undefined },
+  { label: "Schedule", icon: CalendarIcon, href: "/schedule" },
+  { label: "Patients", icon: UserIcon, href: undefined },
+  { label: "Assistant", icon: ChatIcon, href: undefined },
 ] as const;
 
 const ANIM =
@@ -47,48 +62,107 @@ function Wordmark() {
   );
 }
 
-/** Items beyond Today activate as their slices land (patients with capture S7,
- *  assistant S11) — shown as "Soon" until then, honestly. */
 function NavItems({ collapsed }: { collapsed: boolean }) {
+  const pathname = usePathname();
   return (
     <nav aria-label="Primary" className="flex flex-1 flex-col gap-1">
-      {NAV_ITEMS.map(({ label, icon: ItemIcon, active }) => (
-        <span
-          key={label}
-          aria-current={active ? "page" : undefined}
-          title={collapsed ? (active ? label : `${label} — soon`) : undefined}
-          className={`flex items-center gap-3 overflow-hidden rounded-md px-2.5 py-2 text-sm ${
-            active
-              ? "bg-brand-wash font-medium text-brand-primary"
-              : "text-text-secondary" + (collapsed ? " opacity-50" : "")
-          }`}
-        >
-          <ItemIcon />
-          <span className={`flex-1 ${labelClass(collapsed)}`}>{label}</span>
-          {!active && (
+      {NAV_ITEMS.map(({ label, icon: ItemIcon, href }) => {
+        const active = href !== undefined && pathname.startsWith(href);
+        const itemClass = `flex items-center gap-3 overflow-hidden rounded-md px-2.5 py-2 text-sm ${
+          active
+            ? "bg-brand-wash font-medium text-brand-primary"
+            : "text-text-secondary" + (collapsed ? " opacity-50" : "")
+        }`;
+        if (href === undefined) {
+          return (
             <span
-              className={`rounded-full bg-surface-well px-2 py-0.5 text-xs ${labelClass(collapsed)}`}
+              key={label}
+              title={collapsed ? `${label} — soon` : undefined}
+              className={itemClass}
             >
-              Soon
+              <ItemIcon />
+              <span className={`flex-1 ${labelClass(collapsed)}`}>{label}</span>
+              <span
+                className={`rounded-full bg-surface-well px-2 py-0.5 text-xs ${labelClass(collapsed)}`}
+              >
+                Soon
+              </span>
             </span>
-          )}
-        </span>
-      ))}
+          );
+        }
+        return (
+          <Link
+            key={label}
+            href={href}
+            aria-current={active ? "page" : undefined}
+            title={collapsed ? label : undefined}
+            className={itemClass}
+          >
+            <ItemIcon />
+            <span className={`flex-1 ${labelClass(collapsed)}`}>{label}</span>
+          </Link>
+        );
+      })}
     </nav>
   );
 }
 
-/** Static until staff auth lands (S5) — then this becomes the login link/identity. */
-function SignInFooter({ collapsed }: { collapsed: boolean }) {
+/** Signed in: the staff member's identity + sign out. Signed out: the login link. */
+function SessionFooter({ collapsed, staffName }: { collapsed: boolean; staffName?: string }) {
+  const router = useRouter();
+  const [pending, setPending] = useState(false);
+
+  if (!staffName) {
+    return (
+      <Link
+        href="/login"
+        className="flex items-center justify-center gap-2 overflow-hidden rounded-control bg-action-primary px-2 py-2 text-sm font-medium text-text-on-accent"
+      >
+        <UserIcon />
+        {!collapsed && <span className="whitespace-nowrap">Sign in</span>}
+      </Link>
+    );
+  }
+
+  async function onSignOut() {
+    setPending(true);
+    try {
+      // Same-origin /api proxy; the BFF revokes the session and clears the cookie.
+      await createApiClient({ baseUrl: "/api" }).logout();
+    } catch {
+      // Never strand the user on a failed logout call — navigate regardless; the
+      // refreshed render reflects the actual session state.
+    } finally {
+      router.push("/login");
+      router.refresh();
+    }
+  }
+
   return (
-    <span className="flex items-center justify-center gap-2 overflow-hidden rounded-control bg-action-primary px-2 py-2 text-sm font-medium text-text-on-accent">
-      <UserIcon />
-      {!collapsed && <span className="whitespace-nowrap">Sign in</span>}
-    </span>
+    <div className="flex flex-col gap-2 overflow-hidden">
+      <span className="flex items-center gap-2 px-2.5 text-sm text-text-primary">
+        <UserIcon />
+        <span className={`min-w-0 truncate font-medium ${labelClass(collapsed)}`}>{staffName}</span>
+      </span>
+      <button
+        type="button"
+        onClick={() => void onSignOut()}
+        disabled={pending}
+        className={`rounded-control border border-border-interactive px-2 py-1.5 text-sm text-text-primary disabled:opacity-60 ${labelClass(collapsed)}`}
+      >
+        {pending ? "Signing out…" : "Sign out"}
+      </button>
+    </div>
   );
 }
 
-export function Sidebar({ initialCollapsed = false }: { initialCollapsed?: boolean }) {
+export function Sidebar({
+  initialCollapsed = false,
+  staffName,
+}: {
+  initialCollapsed?: boolean;
+  staffName?: string;
+}) {
   const [collapsed, setCollapsed] = useState(initialCollapsed);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -185,14 +259,17 @@ export function Sidebar({ initialCollapsed = false }: { initialCollapsed?: boole
               </button>
             </div>
             <NavItems collapsed={false} />
-            <SignInFooter collapsed={false} />
+            <SessionFooter collapsed={false} staffName={staffName} />
           </div>
         </div>
       )}
 
       {/* Desktop shell (md+): the collapsible rail. */}
       <aside
-        className={`hidden shrink-0 flex-col overflow-hidden border-r border-border-hairline px-3 py-5 md:flex ${ANIM} ${collapsed ? "w-16" : "w-56"}`}
+        // Sticky full-viewport rail (differs from the portal shell deliberately): the
+        // day sheet is viewport-tall by nature, and identity/sign-out must stay
+        // reachable without scrolling past the whole calendar.
+        className={`sticky top-0 hidden h-dvh shrink-0 flex-col overflow-hidden border-r border-border-hairline px-3 py-5 md:flex ${ANIM} ${collapsed ? "w-16" : "w-56"}`}
       >
         <div className={`relative shrink-0 ${ANIM} ${collapsed ? "h-[5.25rem]" : "h-10"}`}>
           <span className="flex h-10 items-center">
@@ -220,7 +297,7 @@ export function Sidebar({ initialCollapsed = false }: { initialCollapsed?: boole
           <NavItems collapsed={collapsed} />
         </div>
 
-        <SignInFooter collapsed={collapsed} />
+        <SessionFooter collapsed={collapsed} staffName={staffName} />
       </aside>
     </>
   );

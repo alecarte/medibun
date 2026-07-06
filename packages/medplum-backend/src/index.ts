@@ -17,6 +17,20 @@ export {
   type RefreshedTokens,
 } from "./user-login.js";
 export { revokeLoginById, type LoginRevoker } from "./revoke-login.js";
+export { handler as checkInBot } from "./bots/check-in.bot.js";
+export {
+  ForbiddenError,
+  hasAppointmentBefore,
+  listDayAppointments,
+  listSchedules,
+  readAppointmentById,
+  readPractitionerById,
+  StatusConflictError,
+  updateAppointmentStatus,
+  type AppointmentPatcher,
+  type DayAppointments,
+  type DaySheetReader,
+} from "./day-sheet.js";
 export {
   bookAppointment,
   buildHealthcareService,
