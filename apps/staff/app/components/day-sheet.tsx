@@ -16,6 +16,7 @@ import {
   ACTION_DONE,
   blockGeometry,
   CATEGORY_EDGE,
+  columnLayout,
   daySpan,
   DAY_END_HOUR,
   DAY_START_HOUR,
@@ -910,126 +911,144 @@ export function ScheduleView({
             </div>
 
             {/* Columns */}
-            {columns.map((c) => (
-              <div
-                key={c.key}
-                role="list"
-                aria-label={c.label}
-                className="relative min-w-40 flex-1 border-l border-border-hairline"
-              >
-                {/* Internal events first (DOM order = paint order): appointments
-                    stack above an overlapping day-off wash, never under it. */}
-                {c.events.map((e) => {
-                  const { top, height } = blockGeometry(e, tz, DAY_START_HOUR);
-                  const label = e.title ?? EVENT_TYPE_LABEL[e.type];
-                  return (
-                    <div key={e.id} className="absolute right-1.5 left-1.5" style={{ top, height }}>
-                      <button
-                        type="button"
-                        onClick={() => setEventDetailId(e.id === eventDetailId ? undefined : e.id)}
-                        aria-haspopup="dialog"
-                        aria-expanded={eventDetailId === e.id}
-                        aria-label={`${label} — event details`}
-                        className="block h-full w-full overflow-hidden rounded-md border border-dashed border-border-interactive bg-surface-well/70 px-2 py-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-action-primary"
+            {columns.map((c) => {
+              // Overlapping appointments share the column side by side (4D-study
+              // defect-class fix) — a solo block still spans the full width.
+              const layout = columnLayout(c.appointments);
+              return (
+                <div
+                  key={c.key}
+                  role="list"
+                  aria-label={c.label}
+                  className="relative min-w-40 flex-1 border-l border-border-hairline"
+                >
+                  {/* Internal events first (DOM order = paint order): appointments
+                    stack above an overlapping all-day wash, never under it. */}
+                  {c.events.map((e) => {
+                    const { top, height } = blockGeometry(e, tz, DAY_START_HOUR);
+                    const label = e.title ?? EVENT_TYPE_LABEL[e.type];
+                    return (
+                      <div
+                        key={e.id}
+                        className="absolute right-1.5 left-1.5"
+                        style={{ top, height }}
                       >
-                        <span className="block truncate text-[11px] text-text-secondary tabular-nums">
-                          {isAllDayEvent(e, tz)
-                            ? "All day"
-                            : `${formatTime(e.start, tz)}–${formatTime(e.end, tz)}`}
-                        </span>
-                        <span className="block truncate text-[12px] font-medium text-text-secondary">
-                          {label}
-                        </span>
-                      </button>
-                    </div>
-                  );
-                })}
-                {c.appointments.map((a) => {
-                  const status = statusOf(a);
-                  const { top, height } = blockGeometry(a, tz, DAY_START_HOUR);
-                  const edge = a.serviceColor
-                    ? CATEGORY_EDGE[a.serviceColor]
-                    : "border-l-border-interactive";
-                  const dimmed = status === "completed" || status === "no-show";
-                  return (
-                    <div
-                      key={a.id}
-                      role="listitem"
-                      className="absolute right-1.5 left-1.5"
-                      style={{ top, height }}
-                    >
-                      <button
-                        type="button"
-                        ref={(el) => {
-                          if (el) {
-                            blockRefs.current.set(a.id, el);
-                          } else {
-                            blockRefs.current.delete(a.id);
-                          }
-                        }}
-                        tabIndex={a.id === (focusedId ?? firstFocusableId) ? 0 : -1}
-                        onFocus={() => setFocusedId(a.id)}
-                        onClick={() => setDetailId(a.id === detailId ? undefined : a.id)}
-                        aria-haspopup="dialog"
-                        aria-expanded={detailId === a.id}
-                        className={`block h-full w-full overflow-hidden rounded-md border border-border-hairline border-l-4 bg-surface-card px-2 py-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-action-primary ${edge} ${
-                          dimmed ? "opacity-70" : ""
-                        }`}
-                      >
-                        {isWeek ? (
-                          <span className="flex items-center gap-1.5">
-                            <span
-                              aria-hidden
-                              className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT[status]}`}
-                            />
-                            <span className="truncate text-[12px] text-text-secondary tabular-nums">
-                              {formatTime(a.start, tz)}
-                            </span>
-                            <span className="truncate text-[12px] font-medium text-text-primary">
-                              {displayName(a.patientName)}
-                            </span>
-                            <span className="sr-only">{STATUS_LABEL[status]}</span>
-                          </span>
-                        ) : (
-                          <>
-                            <span className="flex items-center justify-between gap-2">
-                              <span className="truncate text-[11px] text-text-secondary tabular-nums">
-                                {formatTime(a.start, tz)}–{formatTime(a.end, tz)}
-                              </span>
-                              <StatusChip status={status} compact />
-                            </span>
-                            <span className="flex items-center gap-1.5">
-                              <span className="truncate text-[13px] font-medium text-text-primary">
-                                {displayName(a.patientName)}
-                              </span>
-                              {a.firstVisit && (
-                                <span className="shrink-0 rounded-full bg-brand-wash px-1.5 text-[10px] font-medium text-brand-primary">
-                                  New
-                                </span>
-                              )}
-                            </span>
-                            <span className="mt-0.5 block truncate pr-16 text-[11px] text-text-secondary">
-                              {a.serviceName ?? "Appointment"}
-                            </span>
-                          </>
-                        )}
-                      </button>
-                      {!isWeek && status === "scheduled" && (
                         <button
                           type="button"
-                          tabIndex={-1}
-                          aria-label={`Check in ${displayName(a.patientName)}`}
-                          onClick={() => act(a, "arrived")}
-                          className="absolute right-1 bottom-1 rounded-control bg-action-primary px-2 py-0.5 text-[11px] font-medium text-text-on-accent"
+                          onClick={() =>
+                            setEventDetailId(e.id === eventDetailId ? undefined : e.id)
+                          }
+                          aria-haspopup="dialog"
+                          aria-expanded={eventDetailId === e.id}
+                          aria-label={`${label} — event details`}
+                          className="block h-full w-full overflow-hidden rounded-md border border-dashed border-border-interactive bg-surface-well/70 px-2 py-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-action-primary"
                         >
-                          Check in
+                          <span className="block truncate text-[11px] text-text-secondary tabular-nums">
+                            {isAllDayEvent(e, tz)
+                              ? "All day"
+                              : `${formatTime(e.start, tz)}–${formatTime(e.end, tz)}`}
+                          </span>
+                          <span className="block truncate text-[12px] font-medium text-text-secondary">
+                            {label}
+                          </span>
                         </button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            ))}
+                      </div>
+                    );
+                  })}
+                  {c.appointments.map((a) => {
+                    const status = statusOf(a);
+                    const { top, height } = blockGeometry(a, tz, DAY_START_HOUR);
+                    // Lane geometry: lanes=1 reproduces the old full-width insets.
+                    const { lane, lanes } = layout.get(a.id) ?? { lane: 0, lanes: 1 };
+                    const edge = a.serviceColor
+                      ? CATEGORY_EDGE[a.serviceColor]
+                      : "border-l-border-interactive";
+                    const dimmed = status === "completed" || status === "no-show";
+                    return (
+                      <div
+                        key={a.id}
+                        role="listitem"
+                        className="absolute"
+                        style={{
+                          top,
+                          height,
+                          left: `calc(${(lane * 100) / lanes}% + 0.375rem)`,
+                          width: `calc(${100 / lanes}% - 0.75rem)`,
+                        }}
+                      >
+                        <button
+                          type="button"
+                          ref={(el) => {
+                            if (el) {
+                              blockRefs.current.set(a.id, el);
+                            } else {
+                              blockRefs.current.delete(a.id);
+                            }
+                          }}
+                          tabIndex={a.id === (focusedId ?? firstFocusableId) ? 0 : -1}
+                          onFocus={() => setFocusedId(a.id)}
+                          onClick={() => setDetailId(a.id === detailId ? undefined : a.id)}
+                          aria-haspopup="dialog"
+                          aria-expanded={detailId === a.id}
+                          className={`block h-full w-full overflow-hidden rounded-md border border-border-hairline border-l-4 bg-surface-card px-2 py-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-action-primary ${edge} ${
+                            dimmed ? "opacity-70" : ""
+                          }`}
+                        >
+                          {isWeek ? (
+                            <span className="flex items-center gap-1.5">
+                              <span
+                                aria-hidden
+                                className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT[status]}`}
+                              />
+                              <span className="truncate text-[12px] text-text-secondary tabular-nums">
+                                {formatTime(a.start, tz)}
+                              </span>
+                              <span className="truncate text-[12px] font-medium text-text-primary">
+                                {displayName(a.patientName)}
+                              </span>
+                              <span className="sr-only">{STATUS_LABEL[status]}</span>
+                            </span>
+                          ) : (
+                            <>
+                              <span className="flex items-center justify-between gap-2">
+                                <span className="truncate text-[11px] text-text-secondary tabular-nums">
+                                  {formatTime(a.start, tz)}–{formatTime(a.end, tz)}
+                                </span>
+                                <StatusChip status={status} compact />
+                              </span>
+                              <span className="flex items-center gap-1.5">
+                                <span className="truncate text-[13px] font-medium text-text-primary">
+                                  {displayName(a.patientName)}
+                                </span>
+                                {a.firstVisit && (
+                                  <span className="shrink-0 rounded-full bg-brand-wash px-1.5 text-[10px] font-medium text-brand-primary">
+                                    New
+                                  </span>
+                                )}
+                              </span>
+                              <span className="mt-0.5 block truncate pr-16 text-[11px] text-text-secondary">
+                                {a.serviceName ?? "Appointment"}
+                              </span>
+                            </>
+                          )}
+                        </button>
+                        {!isWeek && status === "scheduled" && (
+                          <button
+                            type="button"
+                            tabIndex={-1}
+                            aria-label={`Check in ${displayName(a.patientName)}`}
+                            onClick={() => act(a, "arrived")}
+                            className="absolute right-1 bottom-1 rounded-control bg-action-primary px-2 py-0.5 text-[11px] font-medium text-text-on-accent"
+                          >
+                            Check in
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>

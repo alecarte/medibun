@@ -79,6 +79,9 @@ const STAFF_APPOINTMENTS = [
   { id: "sa-8", practitionerId: "prac-maya", patientId: "pt-8", patientName: "Camille Beaumont-Ledoux", patientPhone: "555-010-0151", patientEmail: "camille.bl@example.test", serviceCode: "svc-lip-filler", serviceName: "Lip filler", serviceColor: "plum", ...at(150, 45), status: "arrived", firstVisit: true, bookedAt: new Date(dayStart.getTime() - 86400000).toISOString() },
   { id: "sa-9", practitionerId: "prac-maya", patientId: "pt-9", patientName: "Grace Adeyemi-Thompson", patientPhone: "555-010-0119", patientEmail: "grace.at@example.test", serviceCode: "svc-lip-filler", serviceName: "Lip filler", serviceColor: "plum", ...at(270, 45), status: "scheduled", firstVisit: false, bookedAt: new Date(dayStart.getTime() - 4 * 86400000).toISOString() },
   { id: "sa-10", practitionerId: "prac-maya", patientId: "pt-10", patientName: "Sofia Marchetti", patientPhone: "555-010-0184", patientEmail: "sofia.m@example.test", serviceCode: "svc-lip-filler", serviceName: "Lip filler", serviceColor: "plum", ...at(420, 45), status: "scheduled", firstVisit: false, bookedAt: new Date(dayStart.getTime() - 2 * 86400000).toISOString() },
+  // Deliberate overlap with sa-3 (11:00–11:30): a consult mid-procedure — the S5c
+  // side-by-side lane layout must keep both readable.
+  { id: "sa-11", practitionerId: "prac-riley", patientId: "pt-11", patientName: "Dana Okonkwo", patientPhone: "555-010-0196", patientEmail: "dana.ok@example.test", serviceCode: "svc-dysport", serviceName: "Dysport", serviceColor: "teal", ...at(135, 30), status: "scheduled", firstVisit: true, bookedAt: dayStart.toISOString() },
 ];
 const staffStatuses = new Map(STAFF_APPOINTMENTS.map((a) => [a.id, a.status]));
 

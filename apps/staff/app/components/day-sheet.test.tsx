@@ -195,6 +195,30 @@ describe("ScheduleView — day view", () => {
     expect(screen.getByText("Aurelia Vandermeer-Castellanos").closest("button")).toHaveFocus();
   });
 
+  it("lays overlapping appointments side by side — neither hides the other (4D fix)", () => {
+    stubFetch(200, {});
+    const overlapping: DaySheet = {
+      ...daySheet,
+      appointments: [
+        daySheet.appointments[0]!, // 2:00–2:30 PM, pr1
+        {
+          ...daySheet.appointments[0]!,
+          id: "a9",
+          patientName: "Noa Feldman-Iwu",
+          start: "2026-07-06T18:15:00.000Z", // 2:15 PM — overlaps a1
+          end: "2026-07-06T18:45:00.000Z",
+        },
+      ],
+    };
+    render(<ScheduleView sheet={overlapping} view="day" />);
+    const first = screen.getByText("Synthia Loginsmith").closest('[role="listitem"]')!;
+    const second = screen.getByText("Noa Feldman-Iwu").closest('[role="listitem"]')!;
+    // Both share the column at half width, in different lanes.
+    expect((first as HTMLElement).style.width).toContain("50%");
+    expect((second as HTMLElement).style.width).toContain("50%");
+    expect((first as HTMLElement).style.left).not.toBe((second as HTMLElement).style.left);
+  });
+
   it("labels each column list and renders its appointments in start order", () => {
     stubFetch(200, {});
     const outOfOrder: DaySheet = {

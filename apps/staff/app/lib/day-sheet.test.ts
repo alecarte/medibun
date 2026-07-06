@@ -60,6 +60,51 @@ describe("blockGeometry", () => {
   });
 });
 
+describe("columnLayout", () => {
+  const block = (id: string, start: string, end: string) => ({
+    id,
+    start: `2026-07-06T${start}:00.000Z`,
+    end: `2026-07-06T${end}:00.000Z`,
+  });
+
+  it("gives non-overlapping blocks the full column", async () => {
+    const { columnLayout } = await import("./day-sheet");
+    const layout = columnLayout([block("a", "13:00", "13:30"), block("b", "14:00", "14:30")]);
+    expect(layout.get("a")).toEqual({ lane: 0, lanes: 1 });
+    expect(layout.get("b")).toEqual({ lane: 0, lanes: 1 });
+  });
+
+  it("lays overlapping blocks side by side (4D study defect-class fix)", async () => {
+    const { columnLayout } = await import("./day-sheet");
+    const layout = columnLayout([block("a", "13:00", "14:00"), block("b", "13:30", "14:30")]);
+    expect(layout.get("a")).toEqual({ lane: 0, lanes: 2 });
+    expect(layout.get("b")).toEqual({ lane: 1, lanes: 2 });
+  });
+
+  it("reuses freed lanes within a cluster (A→B→C chain stays two lanes)", async () => {
+    const { columnLayout } = await import("./day-sheet");
+    const layout = columnLayout([
+      block("a", "13:00", "14:00"),
+      block("b", "13:30", "14:30"),
+      block("c", "14:00", "15:00"), // overlaps b only — reuses a's lane
+    ]);
+    expect(layout.get("a")).toEqual({ lane: 0, lanes: 2 });
+    expect(layout.get("b")).toEqual({ lane: 1, lanes: 2 });
+    expect(layout.get("c")).toEqual({ lane: 0, lanes: 2 });
+  });
+
+  it("keeps clusters independent — a later solo block returns to full width", async () => {
+    const { columnLayout } = await import("./day-sheet");
+    const layout = columnLayout([
+      block("a", "09:00", "10:00"),
+      block("b", "09:30", "10:30"),
+      block("c", "13:00", "13:30"),
+    ]);
+    expect(layout.get("a")!.lanes).toBe(2);
+    expect(layout.get("c")).toEqual({ lane: 0, lanes: 1 });
+  });
+});
+
 describe("isAllDayEvent", () => {
   it("recognizes a whole practice-local day (both edges at local midnight), DST-proof", async () => {
     const { isAllDayEvent } = await import("./day-sheet");

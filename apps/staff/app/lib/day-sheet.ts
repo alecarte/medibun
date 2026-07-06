@@ -170,6 +170,60 @@ export function hourOf(iso: string, timeZone: string): number {
   return (Number(parts.hour) % 24) + Number(parts.minute) / 60;
 }
 
+export type BlockLayout = {
+  /** Which sub-column this block occupies within its overlap cluster. */
+  readonly lane: number;
+  /** How many sub-columns the cluster needs (1 = the full column, as before). */
+  readonly lanes: number;
+};
+
+/**
+ * Side-by-side lanes for overlapping blocks in one column (the 4D-study defect-class
+ * fix: absolutely-positioned blocks used to overlay on overlap, hiding one another).
+ * Blocks are clustered by transitive overlap; within a cluster, each takes the first
+ * lane that has ended by its start (greedy reuse), and every member shares the
+ * cluster's lane count. Input must be sorted by start (column order already is).
+ */
+export function columnLayout(
+  blocks: readonly Pick<DaySheetAppointment, "id" | "start" | "end">[],
+): Map<string, BlockLayout> {
+  const layout = new Map<string, BlockLayout>();
+  let members: string[] = [];
+  let laneOf = new Map<string, number>();
+  let laneEnds: number[] = []; // per-lane end of its latest block, ms
+  let clusterEnd = -Infinity;
+
+  const flush = () => {
+    for (const id of members) {
+      layout.set(id, { lane: laneOf.get(id)!, lanes: laneEnds.length });
+    }
+    members = [];
+    laneOf = new Map();
+    laneEnds = [];
+    clusterEnd = -Infinity;
+  };
+
+  for (const block of blocks) {
+    const start = Date.parse(block.start);
+    const end = Date.parse(block.end);
+    if (members.length > 0 && start >= clusterEnd) {
+      flush();
+    }
+    let lane = laneEnds.findIndex((laneEnd) => laneEnd <= start);
+    if (lane === -1) {
+      lane = laneEnds.length;
+      laneEnds.push(end);
+    } else {
+      laneEnds[lane] = end;
+    }
+    laneOf.set(block.id, lane);
+    members.push(block.id);
+    clusterEnd = Math.max(clusterEnd, end);
+  }
+  flush();
+  return layout;
+}
+
 /** A block's position inside its column, px from the grid top. */
 export function blockGeometry(
   appointment: Pick<DaySheetAppointment, "start" | "end">,
