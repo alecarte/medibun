@@ -195,6 +195,14 @@ explicit human approval.
   exception. Staff FHIR reads/writes run as the end user's own principal (day sheet + status
   workflow); the check-in Bot (A7) holds the only Encounter write, under its own narrow
   `bot-check-in-v1` policy.
+- **2026-07-06 — S5b shared-workstation idle handling shipped as the privacy glance
+  mask** (the item deferred from the S5 interview). After 2 minutes of inactivity the
+  staff Schedule masks patient names to initials and hides contact details — the HIPAA
+  _addressable_ auto-logoff safeguard answered at the display layer for v0. **The
+  session itself is never shortened, locked, or revoked**, and unmasking is one
+  tap/keypress (decided by Alec 2026-07-06 over re-auth-to-unmask, which lands with the
+  post-v0 real-staff hardening alongside MFA and shorter staff sessions). No auth,
+  session, or AccessPolicy code was touched by S5b.
 - 2026-07-03 — Note for the deferred signup/phone-OTP decision (no change to accepted
   decisions): the booking-conversion research (`BOOKING_DESIGN.md`) strengthens the case for
   **guest-first booking with SMS-code identity** when signup lands — forced account creation

@@ -60,11 +60,40 @@ Right side:
 
 ## 6. Non-goals of this pass
 
-Month view · drag-to-reschedule (S5.5) · live updates & privacy mask (S5b) · appointment
-creation from the calendar (staff booking arrives with S11's assistant, or its own slice).
+Month view · drag-to-reschedule (S5.5) · appointment creation from the calendar (staff
+booking arrives with S11's assistant, or its own slice). ~~Live updates & privacy mask~~
+— shipped by S5b, see §7.
+
+## 7. S5b — privacy glance mask + live updates (APPROVED Alec 2026-07-06, shipped)
+
+- **Privacy glance mask**: patient names render as **initials** ("S. L.") in day and week
+  blocks, the detail card, the undo toast, and accessible names; the detail card's
+  phone/email/booked-at read **"Hidden"** while masked (missing values keep their em dash).
+  Practitioners, services, times, statuses, and counts stay visible — the desk still works.
+- Toggle = toolbar **eye button** (active = brand wash, crossed-out eye) or **`P`**. The
+  mask **auto-engages after 2 minutes idle** (`IDLE_MASK_MS`, `lib/privacy.ts`) — the
+  incidental-disclosure safeguard for walk-behind moments (COMPETITIVE_NOTES §2).
+- **Unmasking is one tap / keypress — the session is never touched** (decided over
+  re-auth-to-unmask, which arrives with post-v0 real-staff hardening; see AUTH.md).
+- Seam: the idle auto-engage lives in `ScheduleView` because the Schedule is the only
+  staff PHI surface today — when more land, hoist mask + idle to a shell-level provider
+  rather than re-implementing per page (security-review observation, 2026-07-06).
+- **Live updates**: the schedule reflects other stations' changes with **no manual
+  refresh** — a quiet RSC refetch every 15s (`POLL_INTERVAL_MS`) while the tab is
+  visible, a catch-up refetch when the tab becomes visible again, paused while a status
+  write is in flight (no optimistic flicker). Background refetches keep scroll position;
+  only a real navigation (view/date/filter change) re-runs the auto-scroll. Chosen over
+  SSE/Subscriptions push for v0 (no new infra, reads stay on the staff user's own
+  principal); the Subscriptions-driven upgrade is the documented seam.
 
 ## Review log
 
+- 2026-07-06 — **S5b shipped** (§7): privacy glance mask (initials + hidden contact
+  details, eye toggle + `P`, 2-minute idle auto-engage, one-keypress unmask) and the
+  live-updating calendar (15s visible-tab polling with in-flight pause and scroll
+  preservation). Four design decisions interview-approved by Alec the same day: client
+  polling over SSE for v0, keypress unmask over session re-auth, 2-minute idle window,
+  mask covers initials + contact details.
 - 2026-07-06 — **Built** on the S5a branch: `ScheduleView` client component (viewport-fit card,
   internal 24 h scroll with sticky header + gutter, auto-scroll to now/first appointment),
   card toolbar (‹ Today › · date button → `MiniCalendar` popover · count · practitioner filter ·
