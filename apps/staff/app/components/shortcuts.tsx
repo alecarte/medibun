@@ -15,6 +15,7 @@ export const SHORTCUTS: readonly { keys: string; label: string }[] = [
   { keys: "T", label: "Jump to today" },
   { keys: "[ ]", label: "Previous / next day or week" },
   { keys: "D W", label: "Switch to day / week view" },
+  { keys: "P", label: "Toggle the privacy mask" },
   { keys: "?", label: "Show this shortcuts list" },
   { keys: "Esc", label: "Close a panel" },
 ];

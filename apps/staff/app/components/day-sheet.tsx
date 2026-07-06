@@ -34,7 +34,15 @@ import {
   ymdOf,
   type ScheduleView,
 } from "../lib/day-sheet";
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, KeyboardIcon } from "./icons";
+import { IDLE_MASK_MS, maskName, POLL_INTERVAL_MS } from "../lib/privacy";
+import {
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  EyeIcon,
+  EyeOffIcon,
+  KeyboardIcon,
+} from "./icons";
 import { MiniCalendar } from "./mini-calendar";
 import { Popover } from "./popover";
 import { ShortcutsPopover } from "./shortcuts";
@@ -136,6 +144,12 @@ export function ScheduleView({
   const [notice, setNotice] = useState<string | undefined>();
   const [nowMs, setNowMs] = useState<number | undefined>(); // client clock, set after mount
 
+  // Privacy glance mask (S5b): patient names render as initials and the detail card's
+  // contact details hide — a display-layer safeguard for walk-behind moments; the
+  // session is never touched. One tap / P toggles it; idleness engages it (below).
+  const [masked, setMasked] = useState(false);
+  const displayName = (name: string) => (masked ? maskName(name) : name);
+
   // A new sheet (refresh/navigation) is server truth arriving: drop the optimistic
   // overrides, drop a keyboard cursor pointing at an appointment that no longer exists
   // (a stale focusedId leaves NO block tabbable — the keyboard dies), and let a real
@@ -196,6 +210,50 @@ export function ScheduleView({
     return () => clearInterval(interval);
   }, []);
 
+  // Idle auto-engage (S5b, the HIPAA addressable-safeguard alignment): any
+  // interaction restarts the clock; IDLE_MASK_MS of stillness masks the screen.
+  // Checked on a coarse interval — per-event timer churn buys nothing here.
+  const lastActivityRef = useRef(Date.now());
+  useEffect(() => {
+    const bump = () => {
+      lastActivityRef.current = Date.now();
+    };
+    const events = ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"] as const;
+    for (const event of events) {
+      window.addEventListener(event, bump, { passive: true });
+    }
+    const interval = setInterval(() => {
+      if (Date.now() - lastActivityRef.current >= IDLE_MASK_MS) {
+        setMasked(true);
+      }
+    }, 10_000);
+    return () => {
+      for (const event of events) {
+        window.removeEventListener(event, bump);
+      }
+      clearInterval(interval);
+    };
+  }, []);
+
+  // Live updates (S5b): another station's changes appear without a manual refresh —
+  // a quiet RSC refetch on an interval while the tab is visible, plus a catch-up when
+  // it becomes visible again. Paused while a status write is in flight so an
+  // optimistic chip never flickers back to the pre-write status mid-request.
+  const pendingWrites = useRef(0);
+  useEffect(() => {
+    const refetch = () => {
+      if (!document.hidden && pendingWrites.current === 0) {
+        router.refresh();
+      }
+    };
+    const interval = setInterval(refetch, POLL_INTERVAL_MS);
+    document.addEventListener("visibilitychange", refetch);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", refetch);
+    };
+  }, [router]);
+
   const days = daySpan(sheet.date, sheet.days);
   const nowYmd = nowMs === undefined ? undefined : ymdOf(new Date(nowMs).toISOString(), tz);
   const nowInView = nowYmd !== undefined && days.includes(nowYmd);
@@ -203,12 +261,19 @@ export function ScheduleView({
 
   // Scroll to ~1h before now (today in view) or the first appointment, once per view of
   // the sheet. Reads the clock directly (not the ticking state) so a minute tick never
-  // yanks the scroll back — the deps are the sheet/view/filter identity only.
+  // yanks the scroll back. Keyed on what the user is LOOKING AT (view/date/filter), not
+  // the sheet object — a background live-update refetch must keep their scroll.
+  const scrollKeyRef = useRef<string | undefined>(undefined);
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) {
       return;
     }
+    const key = [view, sheet.date, sheet.days, selectedPractitioner].join("|");
+    if (scrollKeyRef.current === key) {
+      return;
+    }
+    scrollKeyRef.current = key;
     const spanDays = daySpan(sheet.date, sheet.days);
     const todayNow = new Date();
     const todayInView = spanDays.includes(ymdOf(todayNow.toISOString(), tz));
@@ -263,6 +328,7 @@ export function ScheduleView({
   ) {
     setOverrides((s) => ({ ...s, [appointment.id]: to }));
     setDetailId(undefined);
+    pendingWrites.current += 1;
     try {
       await api.setAppointmentStatus(appointment.id, to);
       if (withUndo) {
@@ -276,6 +342,8 @@ export function ScheduleView({
       } else {
         setNotice("Couldn't update the appointment. Try again.");
       }
+    } finally {
+      pendingWrites.current -= 1;
     }
   }
 
@@ -370,6 +438,13 @@ export function ScheduleView({
         target?.isContentEditable ||
         ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName ?? "")
       ) {
+        return;
+      }
+      // The privacy mask outranks the panel guard below: a walk-behind moment can't
+      // wait for whoever left a detail card open to press Escape first.
+      if (event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        setMasked((m) => !m);
         return;
       }
       // An open panel owns the keyboard: T in the date picker or D under the detail
@@ -519,6 +594,22 @@ export function ScheduleView({
         </span>
 
         <div className="ml-auto flex items-center gap-2">
+          <Tooltip label="Privacy mask" shortcut="P">
+            <button
+              type="button"
+              aria-label="Privacy mask"
+              aria-pressed={masked}
+              onClick={() => setMasked((m) => !m)}
+              className={`rounded-md p-1.5 ${
+                masked
+                  ? "bg-brand-wash text-brand-primary"
+                  : "text-text-secondary hover:bg-surface-well"
+              }`}
+            >
+              {masked ? <EyeOffIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
+            </button>
+          </Tooltip>
+
           {isWeek && sheet.practitioners.length > 1 && (
             <Popover
               align="end"
@@ -639,7 +730,12 @@ export function ScheduleView({
       </p>
 
       {/* ---- Scrolling grid ---- */}
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto" onKeyDown={onGridKeyDown}>
+      <div
+        ref={scrollRef}
+        data-testid="schedule-scroll"
+        className="min-h-0 flex-1 overflow-auto"
+        onKeyDown={onGridKeyDown}
+      >
         <div className="min-w-fit">
           {/* Sticky column headers */}
           <div className="sticky top-0 z-20 flex border-b border-border-hairline bg-surface-card">
@@ -743,7 +839,7 @@ export function ScheduleView({
                               {formatTime(a.start, tz)}
                             </span>
                             <span className="truncate text-[12px] font-medium text-text-primary">
-                              {a.patientName}
+                              {displayName(a.patientName)}
                             </span>
                             <span className="sr-only">{STATUS_LABEL[status]}</span>
                           </span>
@@ -757,7 +853,7 @@ export function ScheduleView({
                             </span>
                             <span className="flex items-center gap-1.5">
                               <span className="truncate text-[13px] font-medium text-text-primary">
-                                {a.patientName}
+                                {displayName(a.patientName)}
                               </span>
                               {a.firstVisit && (
                                 <span className="shrink-0 rounded-full bg-brand-wash px-1.5 text-[10px] font-medium text-brand-primary">
@@ -775,7 +871,7 @@ export function ScheduleView({
                         <button
                           type="button"
                           tabIndex={-1}
-                          aria-label={`Check in ${a.patientName}`}
+                          aria-label={`Check in ${displayName(a.patientName)}`}
                           onClick={() => act(a, "arrived")}
                           className="absolute right-1 bottom-1 rounded-control bg-action-primary px-2 py-0.5 text-[11px] font-medium text-text-on-accent"
                         >
@@ -807,7 +903,7 @@ export function ScheduleView({
         <div
           ref={dialogRef}
           role="dialog"
-          aria-label={`Appointment details — ${detail.patientName}`}
+          aria-label={`Appointment details — ${displayName(detail.patientName)}`}
           tabIndex={-1}
           onKeyDown={(e) => {
             if (e.key === "Escape") {
@@ -820,7 +916,7 @@ export function ScheduleView({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="flex items-center gap-1.5 text-sm font-medium text-text-primary">
-                <span className="truncate">{detail.patientName}</span>
+                <span className="truncate">{displayName(detail.patientName)}</span>
                 {detail.firstVisit && (
                   <span className="shrink-0 rounded-full bg-brand-wash px-1.5 text-[10px] font-medium text-brand-primary">
                     New
@@ -834,12 +930,26 @@ export function ScheduleView({
             </div>
             <StatusChip status={detailStatus} />
           </div>
+          {/* While masked, present details read "Hidden" (never the value); a missing
+              value keeps its honest em dash. */}
           <dl className="mt-3 border-t border-border-hairline pt-2">
-            <DetailRow label="Phone" value={detail.patientPhone} />
-            <DetailRow label="Email" value={detail.patientEmail} />
+            <DetailRow
+              label="Phone"
+              value={masked && detail.patientPhone ? "Hidden" : detail.patientPhone}
+            />
+            <DetailRow
+              label="Email"
+              value={masked && detail.patientEmail ? "Hidden" : detail.patientEmail}
+            />
             <DetailRow
               label="Booked"
-              value={detail.bookedAt ? formatBookedAt(detail.bookedAt, tz) : undefined}
+              value={
+                detail.bookedAt
+                  ? masked
+                    ? "Hidden"
+                    : formatBookedAt(detail.bookedAt, tz)
+                  : undefined
+              }
             />
           </dl>
           <div className="mt-3 flex items-center justify-between gap-2">
@@ -880,7 +990,7 @@ export function ScheduleView({
           className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-border-hairline bg-surface-card px-4 py-2.5 shadow-lg"
         >
           <span className="text-sm text-text-primary">
-            {ACTION_DONE[undo.to]} — {undo.appointment.patientName}
+            {ACTION_DONE[undo.to]} — {displayName(undo.appointment.patientName)}
           </span>
           <button
             type="button"

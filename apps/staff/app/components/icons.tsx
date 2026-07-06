@@ -110,6 +110,25 @@ export function MenuIcon({ className }: { className?: string }) {
   );
 }
 
+export function EyeIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <path d="M3.5 12S6.5 6.5 12 6.5 20.5 12 20.5 12 17.5 17.5 12 17.5 3.5 12 3.5 12z" />
+      <circle cx="12" cy="12" r="2.5" />
+    </Icon>
+  );
+}
+
+export function EyeOffIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <path d="M3.5 12S6.5 6.5 12 6.5c1.6 0 3 .5 4.2 1.2M20.5 12s-3 5.5-8.5 5.5c-1.6 0-3-.5-4.2-1.2" />
+      <path d="M9.9 14.1a2.9 2.9 0 0 1 4.2-4.2" />
+      <path d="M5 19 19 5" />
+    </Icon>
+  );
+}
+
 export function CloseIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>

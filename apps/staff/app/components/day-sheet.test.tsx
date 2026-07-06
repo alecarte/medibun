@@ -1,8 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, within, act } from "@testing-library/react";
 import type { DaySheet } from "@medibun/api-client";
 
 import { ScheduleView } from "./day-sheet";
+import { IDLE_MASK_MS, POLL_INTERVAL_MS } from "../lib/privacy";
 import { stubFetch } from "../lib/stub-fetch";
 
 const push = vi.fn();
@@ -376,5 +377,167 @@ describe("ScheduleView — week view", () => {
     render(<ScheduleView sheet={weekSheet} view="week" selfPractitionerId="pr1" />);
     fireEvent.click(screen.getByRole("button", { name: "Next week" }));
     expect(push).toHaveBeenLastCalledWith("/schedule?view=week&date=2026-07-13&practitioner=pr1");
+  });
+});
+
+describe("ScheduleView — privacy mask", () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    push.mockClear();
+    refresh.mockClear();
+    stubFetch(200, { id: "a1", status: "arrived" });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("the toolbar toggle masks patient names to initials; the desk still works", () => {
+    render(<ScheduleView {...dayProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Privacy mask" }));
+    expect(screen.getByText("S. L.")).toBeInTheDocument();
+    expect(screen.getByText("A. V.")).toBeInTheDocument();
+    expect(screen.queryByText("Synthia Loginsmith")).not.toBeInTheDocument();
+    // Non-PHI context stays: practitioners, services, times, statuses, count.
+    expect(screen.getByText("Riley Reyes")).toBeInTheDocument();
+    expect(screen.getByText("Botox")).toBeInTheDocument();
+    expect(screen.getByText("2 appointments")).toBeInTheDocument();
+    // Toggling back restores full names.
+    fireEvent.click(screen.getByRole("button", { name: "Privacy mask" }));
+    expect(screen.getByText("Synthia Loginsmith")).toBeInTheDocument();
+  });
+
+  it("P toggles the mask from the keyboard", () => {
+    render(<ScheduleView {...dayProps} />);
+    fireEvent.keyDown(window, { key: "p" });
+    expect(screen.getByText("S. L.")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "p" });
+    expect(screen.getByText("Synthia Loginsmith")).toBeInTheDocument();
+  });
+
+  it("P still masks while a panel is open (walk-behind moments don't wait for Esc)", () => {
+    render(<ScheduleView {...dayProps} />);
+    fireEvent.click(screen.getByText("Synthia Loginsmith"));
+    expect(screen.getByRole("dialog", { name: /Synthia Loginsmith/ })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "p" });
+    expect(screen.getByRole("dialog", { name: /S\. L\./ })).toBeInTheDocument();
+    expect(screen.queryByText("Synthia Loginsmith")).not.toBeInTheDocument();
+  });
+
+  it("masks the week view's compact blocks too", () => {
+    render(<ScheduleView sheet={weekSheet} view="week" selfPractitionerId="pr1" />);
+    fireEvent.keyDown(window, { key: "p" });
+    expect(screen.getByText("S. L.")).toBeInTheDocument();
+    expect(screen.getByText("J. P.")).toBeInTheDocument();
+  });
+
+  it("hides contact details in the detail card while masked", () => {
+    render(<ScheduleView {...dayProps} />);
+    fireEvent.keyDown(window, { key: "p" });
+    fireEvent.click(screen.getByText("S. L."));
+    const dialog = screen.getByRole("dialog", { name: /S\. L\./ });
+    expect(within(dialog).queryByText("555-010-0100")).not.toBeInTheDocument();
+    expect(within(dialog).queryByText("synthia.login@example.test")).not.toBeInTheDocument();
+    // Phone, email, and booked-at all read "Hidden" — present but not shown.
+    expect(within(dialog).getAllByText("Hidden")).toHaveLength(3);
+  });
+
+  it("masks the undo toast and the check-in affordance", async () => {
+    render(<ScheduleView {...dayProps} />);
+    fireEvent.keyDown(window, { key: "p" });
+    fireEvent.click(screen.getByRole("button", { name: "Check in S. L." }));
+    expect(await screen.findByText(/Checked in — S\. L\./)).toBeInTheDocument();
+    expect(screen.queryByText(/Synthia Loginsmith/)).not.toBeInTheDocument();
+  });
+
+  it("auto-engages after the idle window; activity resets the clock", () => {
+    vi.useFakeTimers();
+    render(<ScheduleView {...dayProps} />);
+    // Activity at T+110s: the idle clock restarts, so T+170s is only 60s idle.
+    act(() => vi.advanceTimersByTime(IDLE_MASK_MS - 10_000));
+    fireEvent.keyDown(window, { key: "Shift" });
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(screen.getByText("Synthia Loginsmith")).toBeInTheDocument();
+    // Now let it run out for real.
+    act(() => vi.advanceTimersByTime(IDLE_MASK_MS + 10_000));
+    expect(screen.getByText("S. L.")).toBeInTheDocument();
+    // One keypress unmasks — the session was never touched.
+    fireEvent.keyDown(window, { key: "p" });
+    expect(screen.getByText("Synthia Loginsmith")).toBeInTheDocument();
+  });
+});
+
+describe("ScheduleView — live updates", () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    push.mockClear();
+    refresh.mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    Reflect.deleteProperty(document, "hidden");
+  });
+
+  it("quietly refetches on the poll interval while the tab is visible", () => {
+    vi.useFakeTimers();
+    stubFetch(200, {});
+    render(<ScheduleView {...dayProps} />);
+    expect(refresh).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(POLL_INTERVAL_MS));
+    expect(refresh).toHaveBeenCalledTimes(1);
+    act(() => vi.advanceTimersByTime(POLL_INTERVAL_MS));
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not poll a hidden tab; catches up when it becomes visible", () => {
+    vi.useFakeTimers();
+    stubFetch(200, {});
+    let hidden = true;
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
+    render(<ScheduleView {...dayProps} />);
+    act(() => vi.advanceTimersByTime(POLL_INTERVAL_MS * 3));
+    expect(refresh).not.toHaveBeenCalled();
+    hidden = false;
+    fireEvent(document, new Event("visibilitychange"));
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("pauses polling while a status write is in flight (no optimistic flicker)", async () => {
+    vi.useFakeTimers();
+    let resolveFetch!: (response: Response) => void;
+    vi.stubGlobal("fetch", () => new Promise<Response>((res) => (resolveFetch = res)));
+    render(<ScheduleView {...dayProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Check in Synthia Loginsmith" }));
+    act(() => vi.advanceTimersByTime(POLL_INTERVAL_MS * 2));
+    expect(refresh).not.toHaveBeenCalled();
+    await act(async () => {
+      resolveFetch(
+        new Response(JSON.stringify({ id: "a1", status: "arrived" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    act(() => vi.advanceTimersByTime(POLL_INTERVAL_MS));
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("a background refetch keeps the user's scroll position", () => {
+    stubFetch(200, {});
+    const { rerender } = render(<ScheduleView {...dayProps} />);
+    const scroller = screen.getByTestId("schedule-scroll");
+    scroller.scrollTop = 999;
+    // Same day, new sheet object — exactly what a background router.refresh delivers.
+    rerender(<ScheduleView sheet={{ ...daySheet }} view="day" />);
+    expect(scroller.scrollTop).toBe(999);
+    // A real navigation (different date) re-runs the auto-scroll.
+    rerender(
+      <ScheduleView
+        sheet={{ ...daySheet, date: "2026-07-07", appointments: [daySheet.appointments[1]!] }}
+        view="day"
+      />,
+    );
+    expect(scroller.scrollTop).not.toBe(999);
   });
 });
