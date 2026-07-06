@@ -80,11 +80,15 @@ later as its own approval-gated design.
   has one Schedule per service, so a day off blocks all of them.
 - **Titles are non-PHI by rule**: no patient names/details, ever — they render unmasked
   under the staff privacy glance mask and are stated as such at the create UI.
-- **Writes run under the BFF service client** (decided 2026-07-06): staff Slot access is
-  deliberately readonly, and widening it was rejected in favor of S4's "via BFF" pattern —
-  the staff session gates the routes; the FHIR AuditEvent names the service client (same
-  accepted tradeoff as booking). Create is compensating (slot create failures roll back);
-  delete removes slots first so a partial failure stays visible and retryable.
+- **Split principals** (decided 2026-07-06 + security-review remediation, same change):
+  the READS run **as the caller** — the schedules read on create and the delete-probe
+  Appointment read use the staff user's own token, so their org-scoped AccessPolicy
+  decides what they can touch and those reads' AuditEvents name the real staff user.
+  Only the Slot/Appointment WRITES run under the BFF service client: staff Slot access
+  is deliberately readonly, and widening it was rejected in favor of S4's "via BFF"
+  pattern (write AuditEvents name the service client — the same accepted tradeoff as
+  booking). Create is compensating (slot create failures roll back, stranded slot ids
+  logged); delete removes slots first so a partial failure stays visible and retryable.
 - Race note (v0-accepted): creating the busy Slots doesn't run inside `$book`'s
   serializable transaction, so a patient booking in the same instant as a block creation
   can interleave — the overlap is visible on the calendar and resolved by staff
