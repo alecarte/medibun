@@ -680,12 +680,15 @@ export function ScheduleView({
               {nowTop !== undefined && (
                 <div
                   data-testid="now-line"
-                  className="absolute right-0 left-0 border-t-2 border-brand-primary"
+                  className="absolute right-0 left-0"
                   style={{ top: nowTop }}
                 >
-                  {/* Flush left (not overhanging): anything left of the line slides
-                      UNDER the sticky time gutter's opaque surface and looks clipped. */}
-                  <span className="absolute -top-[3px] left-0 h-2 w-2 rounded-full bg-brand-primary" />
+                  {/* Zero-height anchor at the current time; line and dot self-center on it
+                      with transforms (the calendar-app pattern). A border-t line would push
+                      absolutely-positioned children to the padding box and un-center the dot.
+                      Dot stays flush left: overhang slides under the sticky time gutter. */}
+                  <div className="absolute inset-x-0 h-0.5 -translate-y-1/2 bg-brand-primary" />
+                  <span className="absolute left-0 h-2 w-2 -translate-y-1/2 rounded-full bg-brand-primary" />
                 </div>
               )}
             </div>
