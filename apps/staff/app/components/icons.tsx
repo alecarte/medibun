@@ -110,6 +110,14 @@ export function MenuIcon({ className }: { className?: string }) {
   );
 }
 
+export function PlusIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <path d="M12 5v14M5 12h14" />
+    </Icon>
+  );
+}
+
 export function EyeIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>

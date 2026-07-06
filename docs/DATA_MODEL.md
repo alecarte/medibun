@@ -68,6 +68,30 @@ later as its own approval-gated design.
   example binding — custom CodeSystem is conformant) and `Procedure.code`. Price never enters
   FHIR; what-was-performed never lives only in the experience DB.
 
+### Internal events (S5c — day off, staff meetings, misc time blocks)
+
+- An internal event is a **patient-less `Appointment`** (`status: booked`) carrying a coding
+  from our CodeSystem `https://medibun.com/fhir/CodeSystem/internal-events` in
+  `appointmentType` (`day-off` | `meeting` | `block`), `description` as the display title,
+  and one `participant` per affected Practitioner — **plus one `busy-unavailable` Slot per
+  Schedule those practitioners own**, referenced from `Appointment.slot[]`. The busy Slots
+  are what make `$find` refuse the window to patient booking (the same Appointment+Slot
+  pairing `$book` creates); the Appointment is the visible, deletable event. A practitioner
+  has one Schedule per service, so a day off blocks all of them.
+- **Titles are non-PHI by rule**: no patient names/details, ever — they render unmasked
+  under the staff privacy glance mask and are stated as such at the create UI.
+- **Writes run under the BFF service client** (decided 2026-07-06): staff Slot access is
+  deliberately readonly, and widening it was rejected in favor of S4's "via BFF" pattern —
+  the staff session gates the routes; the FHIR AuditEvent names the service client (same
+  accepted tradeoff as booking). Create is compensating (slot create failures roll back);
+  delete removes slots first so a partial failure stays visible and retryable.
+- Race note (v0-accepted): creating the busy Slots doesn't run inside `$book`'s
+  serializable transaction, so a patient booking in the same instant as a block creation
+  can interleave — the overlap is visible on the calendar and resolved by staff
+  (reschedule lands with S5.5). Existing bookings never block a day off on purpose:
+  marking the day off IS how staff discover who must be called.
+- Recurring events / weekly templates stay post-v0 (COMPETITIVE_NOTES §1).
+
 ### Clinical capture v1 — injectables (the flagship Aureva workflow)
 
 - **`MedicationAdministration` per product per injection site**: `status: completed` (required),
@@ -147,6 +171,19 @@ must be verified per environment — see `docs/AUTH.md` (attribution section).
 
 ### Review log
 
+- **2026-07-06 — internal events (S5c) added** (design interview-approved by Alec
+  in-session: Appointment + busy Slots over slots-only or availability edits; service-client
+  writes over staff policy widening; three types with delete/undo). See the "Internal
+  events" section above; endpoints in `docs/API.md`. Org-compartment visibility of the
+  service-client-created event Appointments to staff readers rides the same
+  `meta.accounts` propagation question as `$book` writes — added to the same §9
+  live-verify item, same `$set-accounts` fallback. **Security-review remediation (same
+  change):** the events path now splits principals — the schedules read (create) and the
+  delete-probe Appointment read run AS THE CALLER (their org-scoped Appointment policy
+  hides other tenants' events, which then 404 like unknown ids, and the probe read's
+  AuditEvent names the real staff user); only the Slot/Appointment writes stay on the
+  service client. Create's org affinity rides the operational-read scoping already
+  tracked pre-second-tenant (above), through the same caller-read choke point.
 - **2026-07-04 — S5 staff policies landed (A3 partial; G1/G2 approved by Alec in-session).**
   First implementations of the table above: `staff-front-desk-v1` and `staff-clinician-v1`
   (org-parameterized via `ProjectMembership.access[]` + `organization` parameter), plus

@@ -3,6 +3,7 @@ import {
   weekStart,
   type AppointmentStatus,
   type DaySheetAppointment,
+  type InternalEventType,
   type ServiceColor,
 } from "@medibun/api-client";
 
@@ -102,6 +103,13 @@ export const STATUS_LABEL: Record<AppointmentStatus, string> = {
   "no-show": "No-show",
 };
 
+/** Display label per internal-event type (S5c). */
+export const EVENT_TYPE_LABEL: Record<InternalEventType, string> = {
+  "day-off": "Day off",
+  meeting: "Meeting",
+  block: "Blocked time",
+};
+
 /** Confirmation line for the undo toast (voice: states the outcome, never celebrates). */
 export const ACTION_DONE: Record<AppointmentStatus, string> = {
   scheduled: "Moved back to scheduled",
@@ -155,12 +163,27 @@ export function blockGeometry(
   startHour: number,
 ): { top: number; height: number } {
   const start = hourOf(appointment.start, timeZone);
-  const end = hourOf(appointment.end, timeZone);
+  // Height comes from the REAL duration, not end-hour minus start-hour: an all-day
+  // window (day off) ends at next-midnight, where hourOf is 0 again and a subtraction
+  // collapses the block to a sliver. Clamped to the grid so a DST 25h day can't overflow.
+  const durationHours = (Date.parse(appointment.end) - Date.parse(appointment.start)) / 3600_000;
+  const clamped = Math.min(durationHours, DAY_END_HOUR - start);
   return {
     top: (start - startHour) * HOUR_PX,
     // Never render a sliver: even a zero-length window stays clickable.
-    height: Math.max((end - start) * HOUR_PX, 28),
+    height: Math.max(clamped * HOUR_PX, 28),
   };
+}
+
+/** "14:30" — the practice-local wall time of an instant, in the 24h form the BFF's
+ *  event contract expects (undo-recreate sends an event back as wall times). */
+export function wallTime(iso: string, timeZone: string): string {
+  const parts = Object.fromEntries(
+    cachedFormatter("en-US", { timeZone, hour12: false, hour: "2-digit", minute: "2-digit" })
+      .formatToParts(new Date(iso))
+      .map((p) => [p.type, p.value]),
+  );
+  return `${String(Number(parts.hour) % 24).padStart(2, "0")}:${parts.minute}`;
 }
 
 /** "2:00 PM" in the practice timezone. */

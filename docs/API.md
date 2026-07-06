@@ -194,6 +194,16 @@ parameters this surface carries. A month range is a future slice
       "firstVisit": true,
       "bookedAt": "…"
     }
+  ],
+  "events": [
+    {
+      "id": "…",
+      "type": "meeting",
+      "title": "Team huddle",
+      "practitionerIds": ["…"],
+      "start": "…",
+      "end": "…"
+    }
   ]
 }
 ```
@@ -202,6 +212,11 @@ parameters this surface carries. A month range is a future slice
 by the BFF to FHIR `Appointment.status` (`booked | arrived | checked-in | fulfilled | noshow`).
 Appointments in unmapped FHIR statuses (cancelled, entered-in-error, …) are not day-sheet rows.
 Contact/service fields are optional; `firstVisit` means no prior non-cancelled appointment.
+
+`events` are internal events (S5c): day off / meeting / misc block — patient-less
+appointments in FHIR (see `docs/DATA_MODEL.md`), partitioned out of `appointments`.
+`type ∈ day-off | meeting | block`; `title` is optional and **non-PHI by rule** (it
+renders unmasked under the staff privacy mask).
 
 `400 invalid_request` (malformed/impossible date, or days ∉ {1,7}) · `401 unauthorized` · `403 forbidden`
 (non-staff principal).
@@ -216,7 +231,43 @@ another station loses cleanly. Success: `200 { "id": "…", "status": "arrived" 
 `400 invalid_request` (unknown status value) · `401 unauthorized` · `403 forbidden` (non-staff
 principal, or the AccessPolicy refused the write) · `404 not_found` ·
 `409 conflict` (illegal transition from the current status, or a lost race — the client
-refetches truth and re-decides; never clobbers).
+refetches truth and re-decides; never clobbers). Internal events answer `404` here — they
+have no patient workflow.
+
+### `POST /staff/events`
+
+Creates an internal event (S5c): day off, staff meeting, or misc time block. Body is
+**entirely practice-local** — the BFF owns all wall-time → instant math (DST-safe):
+
+```json
+{
+  "type": "meeting",
+  "title": "Team huddle",
+  "practitionerIds": ["…"],
+  "date": "2026-07-06",
+  "startTime": "12:00",
+  "endTime": "12:30"
+}
+```
+
+`day-off` omits the times and covers the whole practice-local `date`; `title` (≤ 80 chars,
+meeting/block only) is **non-PHI by rule**. Day off and block take exactly one
+practitioner; meetings take one or more. In FHIR this creates a patient-less Appointment
+plus one `busy-unavailable` Slot per schedule the chosen practitioners own, so `$find`
+can't offer the window to patients (`docs/DATA_MODEL.md`). **Unlike the rest of the staff
+surface, the writes run under the BFF service client** (staff Slot access is readonly by
+design; the staff session still gates the route — S4's "via BFF" pattern and attribution
+tradeoff). Success: `201` with the created event (the `events[]` shape above).
+
+`400 invalid_request` (unknown type, bad date/times, unknown practitioner, title too
+long) · `401 unauthorized` · `403 forbidden` (non-staff principal).
+
+### `DELETE /staff/events/:id`
+
+Deletes an internal event and frees its blocked time (slots first, then the appointment —
+a failed delete stays visible and retryable). Success: `204`. Patient appointments are
+untouchable AND unenumerable through this path: they answer `404 not_found`, identical to
+an unknown id. `401 unauthorized` · `403 forbidden` (non-staff principal).
 
 ## Change discipline
 

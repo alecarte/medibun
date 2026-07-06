@@ -4,8 +4,10 @@ import {
   createApiClient,
   StaffError,
   type AppointmentStatus,
+  type CreateInternalEventRequest,
   type DaySheet,
   type DaySheetAppointment,
+  type InternalEvent,
 } from "@medibun/api-client";
 import { useRouter } from "next/navigation";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -17,6 +19,7 @@ import {
   daySpan,
   DAY_END_HOUR,
   DAY_START_HOUR,
+  EVENT_TYPE_LABEL,
   formatBookedAt,
   formatColumnDay,
   formatHour,
@@ -30,11 +33,13 @@ import {
   STATUS_DOT,
   STATUS_LABEL,
   VIEW_DAYS,
+  wallTime,
   weekStart,
   ymdOf,
   type ScheduleView,
 } from "../lib/day-sheet";
 import { IDLE_MASK_MS, maskName, POLL_INTERVAL_MS } from "../lib/privacy";
+import { EventForm } from "./event-form";
 import {
   ChevronDownIcon,
   ChevronLeftIcon,
@@ -42,6 +47,7 @@ import {
   EyeIcon,
   EyeOffIcon,
   KeyboardIcon,
+  PlusIcon,
 } from "./icons";
 import { MiniCalendar } from "./mini-calendar";
 import { Popover } from "./popover";
@@ -60,19 +66,29 @@ import { Tooltip } from "./tooltip";
 const UNDO_WINDOW_MS = 10_000;
 const GRID_HEIGHT = (DAY_END_HOUR - DAY_START_HOUR) * HOUR_PX;
 
-type Undo = {
-  /** The full appointment, not just its id — the undo must keep working after a
-   *  navigation swaps the sheet out from under the toast. */
-  readonly appointment: DaySheetAppointment;
-  readonly from: AppointmentStatus;
-  readonly to: AppointmentStatus;
-  readonly expiresAt: number;
-};
+/** The undo toast's cargo — carries the full object, not just an id, so the undo
+ *  keeps working after a navigation swaps the sheet out from under it. */
+type Undo =
+  | {
+      readonly kind: "status";
+      readonly appointment: DaySheetAppointment;
+      readonly from: AppointmentStatus;
+      readonly to: AppointmentStatus;
+      readonly expiresAt: number;
+    }
+  | {
+      readonly kind: "event";
+      readonly event: InternalEvent;
+      readonly action: "added" | "removed";
+      readonly expiresAt: number;
+    };
 
 /** A rendered column: practitioners (day view) or weekdays (week view). */
 type Column = {
   readonly key: string;
   readonly appointments: DaySheetAppointment[];
+  /** Internal events overlapping this column (day off / meeting / block — no PHI). */
+  readonly events: InternalEvent[];
   readonly header: React.ReactNode;
   /** Accessible name for the column's appointment list. */
   readonly label: string;
@@ -81,6 +97,11 @@ type Column = {
 /** Column order is time order — arrow-key movement and screen-reader reading depend on
  *  it, so sort here instead of trusting the wire order. */
 const byStart = (x: DaySheetAppointment, y: DaySheetAppointment) => x.start.localeCompare(y.start);
+
+/** Longest event first: DOM order is paint order, so a meeting inside a day-off wash
+ *  stays visible and clickable above it. */
+const byDurationDesc = (x: InternalEvent, y: InternalEvent) =>
+  Date.parse(y.end) - Date.parse(y.start) - (Date.parse(x.end) - Date.parse(x.start));
 
 function StatusChip({ status, compact }: { status: AppointmentStatus; compact?: boolean }) {
   return (
@@ -138,7 +159,9 @@ export function ScheduleView({
 
   const [focusedId, setFocusedId] = useState<string | undefined>();
   const [detailId, setDetailId] = useState<string | undefined>();
+  const [eventDetailId, setEventDetailId] = useState<string | undefined>();
   const [shortcutsOpen, setShortcutsOpen] = useState(false); // controlled: "?" opens it
+  const [createOpen, setCreateOpen] = useState(false); // controlled: "N" opens it
   const [undo, setUndo] = useState<Undo | undefined>();
   const [undoSecondsLeft, setUndoSecondsLeft] = useState(0);
   const [notice, setNotice] = useState<string | undefined>();
@@ -174,11 +197,15 @@ export function ScheduleView({
   const columns: Column[] = useMemo(() => {
     if (isWeek) {
       const mine = sheet.appointments.filter((a) => a.practitionerId === selectedPractitioner);
+      const myEvents = sheet.events.filter(
+        (e) => selectedPractitioner && e.practitionerIds.includes(selectedPractitioner),
+      );
       return daySpan(sheet.date, sheet.days).map((ymd) => {
         const { weekday, day } = formatColumnDay(ymd);
         return {
           key: ymd,
           appointments: mine.filter((a) => ymdOf(a.start, tz) === ymd).sort(byStart),
+          events: myEvents.filter((e) => ymdOf(e.start, tz) === ymd).sort(byDurationDesc),
           header: (
             <span className="flex items-baseline gap-1.5">
               <span className="text-sm font-medium text-text-primary">{weekday}</span>
@@ -194,12 +221,16 @@ export function ScheduleView({
       appointments: sheet.appointments
         .filter((a) => a.practitionerId === p.practitionerId)
         .sort(byStart),
+      events: sheet.events
+        .filter((e) => e.practitionerIds.includes(p.practitionerId))
+        .sort(byDurationDesc),
       header: <span className="text-sm font-medium text-text-primary">{p.practitionerName}</span>,
       label: `${p.practitionerName} appointments`,
     }));
   }, [sheet, isWeek, selectedPractitioner, tz]);
 
   const appointmentById = useMemo(() => new Map(sheet.appointments.map((a) => [a.id, a])), [sheet]);
+  const eventById = useMemo(() => new Map(sheet.events.map((e) => [e.id, e])), [sheet]);
   const visibleAppointments = useMemo(() => columns.flatMap((c) => c.appointments), [columns]);
   const firstFocusableId = columns.find((c) => c.appointments.length > 0)?.appointments[0]?.id;
 
@@ -332,7 +363,7 @@ export function ScheduleView({
     try {
       await api.setAppointmentStatus(appointment.id, to);
       if (withUndo) {
-        setUndo({ appointment, from, to, expiresAt: Date.now() + UNDO_WINDOW_MS });
+        setUndo({ kind: "status", appointment, from, to, expiresAt: Date.now() + UNDO_WINDOW_MS });
       }
     } catch (err) {
       setOverrides((s) => ({ ...s, [appointment.id]: from }));
@@ -359,10 +390,66 @@ export function ScheduleView({
     if (!undo) {
       return;
     }
+    const entry = undo;
     setUndo(undefined);
-    // The toast carries the appointment itself, so undo works even after the sheet
+    // The toast carries the object itself, so undo works even after the sheet
     // navigated away from the day it lives on.
-    void writeStatus(undo.appointment, undo.to, undo.from, false);
+    if (entry.kind === "status") {
+      void writeStatus(entry.appointment, entry.to, entry.from, false);
+    } else {
+      void undoEvent(entry);
+    }
+  }
+
+  // ---- Internal events (S5c) --------------------------------------------------
+  /** An event back as the practice-local request that recreates it (undo of delete). */
+  function recreateRequest(event: InternalEvent): CreateInternalEventRequest {
+    return {
+      type: event.type,
+      ...(event.title ? { title: event.title } : {}),
+      practitionerIds: event.practitionerIds,
+      date: ymdOf(event.start, tz),
+      ...(event.type !== "day-off"
+        ? { startTime: wallTime(event.start, tz), endTime: wallTime(event.end, tz) }
+        : {}),
+    };
+  }
+
+  async function undoEvent(entry: Extract<Undo, { kind: "event" }>) {
+    try {
+      if (entry.action === "added") {
+        await api.deleteInternalEvent(entry.event.id);
+      } else {
+        await api.createInternalEvent(recreateRequest(entry.event));
+      }
+      router.refresh();
+    } catch {
+      setNotice("Couldn't undo that. Check the schedule and try again.");
+    }
+  }
+
+  /** Called by the New-event form; a rejection keeps the form open with its error. */
+  async function addEvent(request: CreateInternalEventRequest) {
+    const event = await api.createInternalEvent(request);
+    setCreateOpen(false);
+    setUndo({ kind: "event", event, action: "added", expiresAt: Date.now() + UNDO_WINDOW_MS });
+    router.refresh();
+  }
+
+  async function removeEvent(event: InternalEvent) {
+    setEventDetailId(undefined);
+    try {
+      await api.deleteInternalEvent(event.id);
+      setUndo({ kind: "event", event, action: "removed", expiresAt: Date.now() + UNDO_WINDOW_MS });
+    } catch (err) {
+      if (err instanceof StaffError && err.code === "not_found") {
+        setNotice("That event was already removed on another station.");
+      } else {
+        setNotice("Couldn't remove the event. Try again.");
+        return;
+      }
+    }
+    router.refresh();
   }
 
   // ---- Navigation (URL is the state) -----------------------------------------
@@ -473,6 +560,10 @@ export function ScheduleView({
           event.preventDefault();
           if (!isWeek) setView("week");
           break;
+        case "n":
+          event.preventDefault();
+          setCreateOpen(true);
+          break;
         case "z":
           // Global, not grid-only: the undo toast must answer Z wherever focus sits.
           if (undo) {
@@ -517,6 +608,7 @@ export function ScheduleView({
 
   const detail = detailId ? appointmentById.get(detailId) : undefined;
   const detailStatus = detail ? statusOf(detail) : undefined;
+  const eventDetail = eventDetailId ? eventById.get(eventDetailId) : undefined;
   const hours = Array.from({ length: DAY_END_HOUR - DAY_START_HOUR }, (_, i) => DAY_START_HOUR + i);
   const nowTop =
     nowInView && nowHour !== undefined ? (nowHour - DAY_START_HOUR) * HOUR_PX : undefined;
@@ -594,6 +686,33 @@ export function ScheduleView({
         </span>
 
         <div className="ml-auto flex items-center gap-2">
+          <Popover
+            align="end"
+            open={createOpen}
+            onOpenChange={setCreateOpen}
+            trigger={(props) => (
+              <Tooltip label="New event" shortcut="N">
+                <button
+                  {...props}
+                  className="flex items-center gap-1.5 rounded-control border border-border-interactive px-2.5 py-1 text-sm text-text-primary hover:bg-surface-well"
+                >
+                  <PlusIcon className="h-3.5 w-3.5" />
+                  New
+                </button>
+              </Tooltip>
+            )}
+          >
+            {(close) => (
+              <EventForm
+                practitioners={sheet.practitioners}
+                defaultPractitionerId={isWeek ? selectedPractitioner : defaultPractitioner}
+                defaultDate={sheet.date}
+                onCreate={addEvent}
+                onClose={close}
+              />
+            )}
+          </Popover>
+
           <Tooltip label="Privacy mask" shortcut="P">
             <button
               type="button"
@@ -797,6 +916,33 @@ export function ScheduleView({
                 aria-label={c.label}
                 className="relative min-w-40 flex-1 border-l border-border-hairline"
               >
+                {/* Internal events first (DOM order = paint order): appointments
+                    stack above an overlapping day-off wash, never under it. */}
+                {c.events.map((e) => {
+                  const { top, height } = blockGeometry(e, tz, DAY_START_HOUR);
+                  const label = e.title ?? EVENT_TYPE_LABEL[e.type];
+                  return (
+                    <div key={e.id} className="absolute right-1.5 left-1.5" style={{ top, height }}>
+                      <button
+                        type="button"
+                        onClick={() => setEventDetailId(e.id === eventDetailId ? undefined : e.id)}
+                        aria-haspopup="dialog"
+                        aria-expanded={eventDetailId === e.id}
+                        aria-label={`${label} — event details`}
+                        className="block h-full w-full overflow-hidden rounded-md border border-dashed border-border-interactive bg-surface-well/70 px-2 py-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-action-primary"
+                      >
+                        <span className="block truncate text-[11px] text-text-secondary tabular-nums">
+                          {e.type === "day-off"
+                            ? "All day"
+                            : `${formatTime(e.start, tz)}–${formatTime(e.end, tz)}`}
+                        </span>
+                        <span className="block truncate text-[12px] font-medium text-text-secondary">
+                          {label}
+                        </span>
+                      </button>
+                    </div>
+                  );
+                })}
                 {c.appointments.map((a) => {
                   const status = statusOf(a);
                   const { top, height } = blockGeometry(a, tz, DAY_START_HOUR);
@@ -983,6 +1129,50 @@ export function ScheduleView({
         </div>
       )}
 
+      {/* ---- Event detail card (no PHI — titles are non-PHI by rule) ---- */}
+      {eventDetail && (
+        <div
+          role="dialog"
+          aria-label={`Event details — ${eventDetail.title ?? EVENT_TYPE_LABEL[eventDetail.type]}`}
+          className="fixed inset-x-4 bottom-4 z-40 rounded-lg border border-border-hairline bg-surface-card p-4 shadow-lg outline-none md:inset-x-auto md:right-6 md:bottom-6 md:w-96"
+        >
+          <p className="text-sm font-medium text-text-primary">
+            {eventDetail.title ?? EVENT_TYPE_LABEL[eventDetail.type]}
+          </p>
+          <p className="mt-0.5 text-xs text-text-secondary">
+            {EVENT_TYPE_LABEL[eventDetail.type]} ·{" "}
+            {eventDetail.type === "day-off"
+              ? "All day"
+              : `${formatTime(eventDetail.start, tz)}–${formatTime(eventDetail.end, tz)}`}
+          </p>
+          <p className="mt-1 text-xs text-text-secondary">
+            {eventDetail.practitionerIds
+              .map(
+                (id) =>
+                  sheet.practitioners.find((p) => p.practitionerId === id)?.practitionerName ??
+                  "Unknown",
+              )
+              .join(", ")}
+          </p>
+          <div className="mt-3 flex items-center justify-between gap-2 border-t border-border-hairline pt-3">
+            <button
+              type="button"
+              onClick={() => void removeEvent(eventDetail)}
+              className="rounded-control border border-border-interactive px-3 py-1.5 text-sm text-status-danger-text"
+            >
+              Delete
+            </button>
+            <button
+              type="button"
+              onClick={() => setEventDetailId(undefined)}
+              className="rounded-control px-3 py-1.5 text-sm text-text-secondary"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ---- Undo toast ---- */}
       {undo && (
         <div
@@ -990,7 +1180,11 @@ export function ScheduleView({
           className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-border-hairline bg-surface-card px-4 py-2.5 shadow-lg"
         >
           <span className="text-sm text-text-primary">
-            {ACTION_DONE[undo.to]} — {displayName(undo.appointment.patientName)}
+            {undo.kind === "status"
+              ? `${ACTION_DONE[undo.to]} — ${displayName(undo.appointment.patientName)}`
+              : `${undo.event.title ?? EVENT_TYPE_LABEL[undo.event.type]} ${
+                  undo.action === "added" ? "added" : "removed"
+                }`}
           </span>
           <button
             type="button"

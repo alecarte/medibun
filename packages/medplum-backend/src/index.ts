@@ -32,6 +32,15 @@ export {
   type DaySheetReader,
 } from "./day-sheet.js";
 export {
+  createInternalEvent,
+  deleteInternalEvent,
+  internalEventCode,
+  INTERNAL_EVENTS_CODE_SYSTEM,
+  isInternalEvent,
+  NotAnInternalEventError,
+  type ResourceWriter,
+} from "./internal-events.js";
+export {
   bookAppointment,
   buildHealthcareService,
   buildPractitioner,

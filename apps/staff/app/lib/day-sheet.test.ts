@@ -45,6 +45,19 @@ describe("blockGeometry", () => {
     );
     expect(g.height).toBe(28);
   });
+
+  it("spans the full grid for an all-day window (day off, S5c regression)", () => {
+    // Midnight → next-day midnight EDT: hourOf(end) is 0 again, so an end-minus-start
+    // hour subtraction collapses the block to a sliver — height must come from the
+    // real duration.
+    const g = blockGeometry(
+      { start: "2026-07-06T04:00:00.000Z", end: "2026-07-07T04:00:00.000Z" },
+      TZ,
+      0,
+    );
+    expect(g.top).toBe(0);
+    expect(g.height).toBe(24 * HOUR_PX);
+  });
 });
 
 describe("formatting", () => {

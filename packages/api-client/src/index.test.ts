@@ -256,6 +256,7 @@ describe("staff endpoints", () => {
         firstVisit: true,
       },
     ],
+    events: [],
   };
 
   it("getStaffProfile GETs /staff/me with the forwarded cookie", async () => {
@@ -318,6 +319,61 @@ describe("staff endpoints", () => {
     const err = await client.setAppointmentStatus("a1", "arrived").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(StaffError);
     expect((err as StaffError).code).toBe("conflict");
+  });
+
+  it("createInternalEvent POSTs /staff/events and returns the created event", async () => {
+    const event = {
+      id: "ev1",
+      type: "meeting",
+      title: "Team huddle",
+      practitionerIds: ["pr1", "pr2"],
+      start: "2026-07-06T16:00:00.000Z",
+      end: "2026-07-06T16:30:00.000Z",
+    };
+    const { fetchImpl, calls } = stubFetch(201, event);
+    const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+    await expect(
+      client.createInternalEvent(
+        {
+          type: "meeting",
+          title: "Team huddle",
+          practitionerIds: ["pr1", "pr2"],
+          date: "2026-07-06",
+          startTime: "12:00",
+          endTime: "12:30",
+        },
+        { sessionToken: "tok" },
+      ),
+    ).resolves.toEqual(event);
+    expect(calls[0]!.url).toBe("https://api.example.test/staff/events");
+    expect(calls[0]!.init?.method).toBe("POST");
+    expect((calls[0]!.init?.headers as Record<string, string>).authorization).toBe("Bearer tok");
+  });
+
+  it("createInternalEvent throws a typed StaffError with the backend code", async () => {
+    const { fetchImpl } = stubFetch(400, { error: "invalid_request", requestId: "r" });
+    const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+    const err = await client
+      .createInternalEvent({ type: "day-off", practitionerIds: ["pr1"], date: "2026-07-07" })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StaffError);
+    expect((err as StaffError).code).toBe("invalid_request");
+  });
+
+  it("deleteInternalEvent DELETEs /staff/events/:id (URL-encoded) and resolves void", async () => {
+    const { fetchImpl, calls } = stubFetch(200, { ok: true });
+    const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+    await expect(client.deleteInternalEvent("ev/1")).resolves.toBeUndefined();
+    expect(calls[0]!.url).toBe("https://api.example.test/staff/events/ev%2F1");
+    expect(calls[0]!.init?.method).toBe("DELETE");
+  });
+
+  it("deleteInternalEvent maps a 404 to not_found (already gone — caller decides)", async () => {
+    const { fetchImpl } = stubFetch(404, { error: "not_found", requestId: "r" });
+    const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+    const err = await client.deleteInternalEvent("ev1").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StaffError);
+    expect((err as StaffError).code).toBe("not_found");
   });
 });
 

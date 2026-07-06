@@ -15,6 +15,7 @@ import { createApp, type AuthDeps } from "./app.js";
 import { createTokenCipher } from "./auth/crypto.js";
 import { createSessionStore } from "./auth/sessions.js";
 import { createBookingService, type BookingService } from "./booking.js";
+import { createEventsService, type EventsService } from "./events.js";
 import { createStaffService, type StaffService, type StaffUserClient } from "./staff.js";
 import { readApiConfigFromEnv } from "./config.js";
 import { checkMedplumConnection } from "./medplum.js";
@@ -28,7 +29,13 @@ const LOGIN_WINDOW_MS = 15 * 60_000;
 
 /** Real auth wiring per docs/AUTH.md. Requires the experience DB + encryption key. */
 function buildAuthDeps():
-  | { auth: AuthDeps; booking: BookingService; staff: StaffService; pool: pg.Pool }
+  | {
+      auth: AuthDeps;
+      booking: BookingService;
+      staff: StaffService;
+      events: EventsService;
+      pool: pg.Pool;
+    }
   | undefined {
   const dbUrl = process.env.EXPERIENCE_DATABASE_URL;
   const key = process.env.SESSION_ENCRYPTION_KEY;
@@ -168,7 +175,19 @@ function buildAuthDeps():
     },
   });
 
-  return { auth, booking, staff, pool };
+  // Internal events (S5c): reads as the caller (same per-user client pattern as staff),
+  // writes under the same cached service client as booking — staff Slot access is
+  // deliberately readonly (rationale + security-review remediation in src/events.ts).
+  const events = createEventsService({
+    getFhirClient,
+    userClient: (accessToken) => {
+      const client = createMedplumClient(medplumConfig);
+      client.setAccessToken(accessToken);
+      return client;
+    },
+  });
+
+  return { auth, booking, staff, events, pool };
 }
 
 const authWiring = buildAuthDeps();
@@ -179,6 +198,7 @@ const app = createApp({
   auth: authWiring?.auth,
   booking: authWiring?.booking,
   staff: authWiring?.staff,
+  events: authWiring?.events,
 });
 
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {

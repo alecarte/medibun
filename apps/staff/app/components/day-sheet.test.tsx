@@ -52,6 +52,7 @@ const daySheet: DaySheet = {
       firstVisit: false,
     },
   ],
+  events: [],
 };
 
 /** Week sheet: Mon-anchored, one practitioner with two appts on different days. */
@@ -81,6 +82,7 @@ const weekSheet: DaySheet = {
       end: "2026-07-07T16:45:00.000Z",
     },
   ],
+  events: [],
 };
 
 const dayProps = { sheet: daySheet, view: "day" as const };
@@ -108,7 +110,9 @@ describe("ScheduleView — day view", () => {
     expect(screen.getByText("Botox")).toBeInTheDocument();
     expect(screen.getByText("Scheduled")).toBeInTheDocument();
     expect(screen.getByText("Arrived")).toBeInTheDocument();
-    expect(screen.getByText("New")).toBeInTheDocument();
+    // Scoped to the column: the toolbar's "New" (event) button also says New.
+    const column = screen.getByRole("list", { name: "Riley Reyes appointments" });
+    expect(within(column).getByText("New")).toBeInTheDocument();
     expect(screen.getByText("2 appointments")).toBeInTheDocument();
   });
 
@@ -377,6 +381,155 @@ describe("ScheduleView — week view", () => {
     render(<ScheduleView sheet={weekSheet} view="week" selfPractitionerId="pr1" />);
     fireEvent.click(screen.getByRole("button", { name: "Next week" }));
     expect(push).toHaveBeenLastCalledWith("/schedule?view=week&date=2026-07-13&practitioner=pr1");
+  });
+});
+
+describe("ScheduleView — internal events (S5c)", () => {
+  const eventSheet: DaySheet = {
+    ...daySheet,
+    events: [
+      {
+        id: "ev1",
+        type: "meeting",
+        title: "Team huddle",
+        practitionerIds: ["pr1", "pr2"],
+        start: "2026-07-06T16:00:00.000Z", // 12:00 EDT
+        end: "2026-07-06T16:30:00.000Z",
+      },
+      {
+        id: "ev2",
+        type: "day-off",
+        practitionerIds: ["pr2"],
+        start: "2026-07-06T04:00:00.000Z",
+        end: "2026-07-07T04:00:00.000Z",
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    push.mockClear();
+    refresh.mockClear();
+  });
+
+  it("renders muted event blocks in every affected practitioner column", () => {
+    stubFetch(200, {});
+    render(<ScheduleView sheet={eventSheet} view="day" />);
+    // The meeting spans both practitioners; the day off shows All day.
+    expect(screen.getAllByText("Team huddle")).toHaveLength(2);
+    expect(screen.getByText("Day off")).toBeInTheDocument();
+    expect(screen.getByText("All day")).toBeInTheDocument();
+    // Events never count as appointments.
+    expect(screen.getByText("2 appointments")).toBeInTheDocument();
+  });
+
+  it("keeps event titles visible under the privacy mask (non-PHI by rule)", () => {
+    stubFetch(200, {});
+    render(<ScheduleView sheet={eventSheet} view="day" />);
+    fireEvent.keyDown(window, { key: "p" });
+    expect(screen.getAllByText("Team huddle")).toHaveLength(2);
+    expect(screen.queryByText("Synthia Loginsmith")).not.toBeInTheDocument();
+  });
+
+  it("creates a day off from the New form and offers undo (compensating delete)", async () => {
+    const calls = stubFetch(201, {
+      id: "ev9",
+      type: "day-off",
+      practitionerIds: ["pr1"],
+      start: "2026-07-06T04:00:00.000Z",
+      end: "2026-07-07T04:00:00.000Z",
+    });
+    render(<ScheduleView {...dayProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    fireEvent.click(screen.getByRole("button", { name: "Day off" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(await screen.findByText(/Day off added/)).toBeInTheDocument();
+    expect(calls[0]!.url).toBe("/api/staff/events");
+    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({
+      type: "day-off",
+      practitionerIds: ["pr1"],
+      date: "2026-07-06",
+    });
+    expect(refresh).toHaveBeenCalled();
+    // Undo compensates with a DELETE of the created event.
+    fireEvent.click(screen.getByRole("button", { name: /Undo/ }));
+    await screen.findByRole("button", { name: "New" }); // settle
+    expect(calls[1]!.url).toBe("/api/staff/events/ev9");
+    expect(calls[1]!.init?.method).toBe("DELETE");
+  });
+
+  it("sends meeting times as practice-local wall times, never instants", async () => {
+    const calls = stubFetch(201, {
+      id: "ev9",
+      type: "meeting",
+      title: "Huddle",
+      practitionerIds: ["pr1", "pr2"],
+      start: "2026-07-06T16:00:00.000Z",
+      end: "2026-07-06T16:30:00.000Z",
+    });
+    render(<ScheduleView {...dayProps} />);
+    fireEvent.keyDown(window, { key: "n" }); // N opens the form
+    fireEvent.click(screen.getByRole("button", { name: "Meeting" }));
+    fireEvent.click(screen.getByRole("button", { name: "Maya Chen" })); // add second
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "12:00" } });
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "12:30" } });
+    fireEvent.change(screen.getByLabelText(/Title/), { target: { value: "Huddle" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await screen.findByText(/Huddle added/);
+    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({
+      type: "meeting",
+      title: "Huddle",
+      practitionerIds: ["pr1", "pr2"],
+      date: "2026-07-06",
+      startTime: "12:00",
+      endTime: "12:30",
+    });
+  });
+
+  it("deletes an event from its detail card; undo recreates it with wall times", async () => {
+    const calls = stubFetch(200, { ok: true });
+    render(<ScheduleView sheet={eventSheet} view="day" />);
+    fireEvent.click(screen.getAllByText("Team huddle")[0]!.closest("button")!);
+    const dialog = screen.getByRole("dialog", { name: /Team huddle/ });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    expect(await screen.findByText(/Team huddle removed/)).toBeInTheDocument();
+    expect(calls[0]!.url).toBe("/api/staff/events/ev1");
+    expect(calls[0]!.init?.method).toBe("DELETE");
+    fireEvent.click(screen.getByRole("button", { name: /Undo/ }));
+    await screen.findByRole("button", { name: "New" }); // settle
+    expect(calls[1]!.url).toBe("/api/staff/events");
+    expect(JSON.parse(String(calls[1]!.init?.body))).toEqual({
+      type: "meeting",
+      title: "Team huddle",
+      practitionerIds: ["pr1", "pr2"],
+      date: "2026-07-06",
+      startTime: "12:00",
+      endTime: "12:30",
+    });
+  });
+
+  it("rejects an inverted time range client-side", () => {
+    stubFetch(201, {});
+    render(<ScheduleView {...dayProps} />);
+    fireEvent.keyDown(window, { key: "n" });
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "14:00" } });
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "13:00" } });
+    expect(screen.getByText("End time must be after the start.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add" })).toBeDisabled();
+  });
+
+  it("filters week-view events to the selected practitioner's days", () => {
+    stubFetch(200, {});
+    render(
+      <ScheduleView
+        sheet={{ ...weekSheet, events: eventSheet.events }}
+        view="week"
+        selfPractitionerId="pr1"
+      />,
+    );
+    // pr1 sees the meeting but not pr2's day off.
+    expect(screen.getByText("Team huddle")).toBeInTheDocument();
+    expect(screen.queryByText("Day off")).not.toBeInTheDocument();
   });
 });
 

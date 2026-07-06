@@ -86,8 +86,31 @@ booking arrives with S11's assistant, or its own slice). ~~Live updates & privac
   SSE/Subscriptions push for v0 (no new infra, reads stay on the staff user's own
   principal); the Subscriptions-driven upgrade is the documented seam.
 
+## 8. S5c — internal events (APPROVED Alec 2026-07-06, shipped)
+
+- **Three types**: day off (all-day, one practitioner) · meeting (time-boxed, 1+
+  practitioners) · misc block (time-boxed, one practitioner, optional title). Recurrence
+  and weekly templates stay post-v0.
+- **Create**: toolbar **New** button or **`N`** → a quiet form popover (type · practitioner
+  pick · date · times · optional title). Everything practice-local; the BFF owns timezone
+  math. Title microcopy states the non-PHI rule (titles render unmasked).
+- **Render**: muted dashed blocks (surface-well wash, secondary text) behind appointment
+  blocks in every affected column; day-offs read "All day". Events don't join the
+  appointment count or the arrow-key cursor, and they stay visible under the privacy mask
+  (no PHI by construction).
+- **Delete**: from the event's detail card, immediate with the standard ~10s undo; undo of
+  a create deletes, undo of a delete recreates (compensating, like the status workflow).
+  No editing-in-place — delete + recreate.
+- Data model + endpoints: DATA_MODEL.md "Internal events", API.md `/staff/events`.
+
 ## Review log
 
+- 2026-07-06 — **S5c shipped** (§8): internal events end to end — FHIR representation
+  (patient-less Appointment + busy-unavailable Slots, DATA_MODEL.md), BFF
+  `POST/DELETE /staff/events` under the service client + `events[]` on the day sheet,
+  and the staff UI (New form popover + `N`, muted event blocks, detail card with
+  delete/undo). Four design decisions interview-approved by Alec the same day
+  (representation, write principal, scope, branch).
 - 2026-07-06 — **S5b shipped** (§7): privacy glance mask (initials + hidden contact
   details, eye toggle + `P`, 2-minute idle auto-engage, one-keypress unmask) and the
   live-updating calendar (15s visible-tab polling with in-flight pause and scroll

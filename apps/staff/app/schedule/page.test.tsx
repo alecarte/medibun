@@ -38,6 +38,7 @@ const sheet: DaySheet = {
       firstVisit: true,
     },
   ],
+  events: [],
 };
 
 const props = (params: { view?: string; date?: string; practitioner?: string } = {}) => ({

@@ -89,6 +89,28 @@ const appointment = (
   ],
 });
 
+/** A patient-less internal event (S5c) — day off / meeting / block. */
+const internalEvent = (
+  id: string,
+  code: string,
+  opts?: { title?: string; practitioners?: string[] },
+): Appointment => ({
+  resourceType: "Appointment",
+  id,
+  status: "booked",
+  appointmentType: {
+    coding: [{ system: "https://medibun.com/fhir/CodeSystem/internal-events", code }],
+  },
+  ...(opts?.title ? { description: opts.title } : {}),
+  start: "2026-07-04T16:00:00.000Z",
+  end: "2026-07-04T16:30:00.000Z",
+  slot: [{ reference: "Slot/sl1" }],
+  participant: (opts?.practitioners ?? ["pr1"]).map((p) => ({
+    actor: { reference: `Practitioner/${p}` },
+    status: "accepted" as const,
+  })),
+});
+
 const serviceRow = (code: string, name: string): ServiceRow =>
   ({
     id: `${code}-row`,
@@ -332,6 +354,51 @@ describe("getDaySheet", () => {
     const sheet = await service(client).getDaySheet(user);
     expect(sheet.practitioners.map((p) => p.practitionerId)).toEqual(["pr1"]);
   });
+
+  it("partitions internal events out of the appointment rows (S5c)", async () => {
+    const { client } = fakeClient({
+      schedules: schedulesBundle,
+      appointments: {
+        resourceType: "Bundle",
+        type: "searchset",
+        entry: [
+          { resource: appointment("a1", "booked") },
+          { resource: internalEvent("ev1", "meeting", { title: "Team huddle" }) },
+          { resource: internalEvent("ev2", "day-off") },
+          // Unknown internal code: not renderable, never mistaken for a booking.
+          { resource: internalEvent("ev3", "sabbatical") },
+          {
+            resource: {
+              resourceType: "Patient",
+              id: "pt1",
+              name: [{ given: ["Synthia"], family: "Loginsmith" }],
+            },
+          },
+          { resource: practitioner("pr1", "Reyes") },
+        ],
+      },
+      priorCount: 0,
+    });
+    const sheet = await service(client).getDaySheet(user);
+    expect(sheet.appointments.map((a) => a.id)).toEqual(["a1"]);
+    expect(sheet.events).toEqual([
+      {
+        id: "ev1",
+        type: "meeting",
+        title: "Team huddle",
+        practitionerIds: ["pr1"],
+        start: "2026-07-04T16:00:00.000Z",
+        end: "2026-07-04T16:30:00.000Z",
+      },
+      {
+        id: "ev2",
+        type: "day-off",
+        practitionerIds: ["pr1"],
+        start: "2026-07-04T16:00:00.000Z",
+        end: "2026-07-04T16:30:00.000Z",
+      },
+    ]);
+  });
 });
 
 describe("setAppointmentStatus", () => {
@@ -393,6 +460,18 @@ describe("setAppointmentStatus", () => {
     await expect(
       service(client).setAppointmentStatus(user, "nope", "arrived"),
     ).rejects.toBeInstanceOf(UnknownAppointmentError);
+  });
+
+  it("refuses the patient workflow on an internal event (sits at FHIR booked) without writing", async () => {
+    const patch = vi.fn();
+    const { client } = fakeClient({
+      read: { "Appointment/ev1": internalEvent("ev1", "meeting") },
+      patch,
+    });
+    await expect(
+      service(client).setAppointmentStatus(user, "ev1", "arrived"),
+    ).rejects.toBeInstanceOf(UnknownAppointmentError);
+    expect(patch).not.toHaveBeenCalled();
   });
 
   it("propagates StatusConflictError from a lost test-and-set", async () => {

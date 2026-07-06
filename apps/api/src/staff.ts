@@ -1,15 +1,19 @@
 import {
+  INTERNAL_EVENT_TYPES,
   STATUS_TRANSITIONS,
   weekStart,
   type AppointmentStatus,
   type DaySheet,
   type DaySheetAppointment,
   type DaySheetPractitioner,
+  type InternalEvent,
   type ServiceColor,
   type StaffProfile,
 } from "@medibun/api-client";
 import {
   hasAppointmentBefore,
+  internalEventCode,
+  isInternalEvent,
   listDayAppointments,
   listSchedules,
   practitionerTimezone,
@@ -125,23 +129,33 @@ function tzOffsetMs(instantMs: number, timeZone: string): number {
 }
 
 /**
- * [start, end) instants of one practice-local calendar date. DST-safe: the double
- * correction converges on zones where a transition sits between the UTC guess and
- * local midnight, so fall-back days are truly 25h long.
+ * The instant at a practice-local wall time ("HH:mm") on a calendar date. DST-safe:
+ * the double correction converges on zones where a transition sits between the UTC
+ * guess and the local wall time. The BFF is the only place wall time becomes UTC —
+ * clients send practice-local values and never do timezone math.
+ */
+export function zonedInstant(date: string, time: string, timeZone: string): Date {
+  const utcGuess = Date.parse(`${date}T${time}:00Z`);
+  let t = utcGuess - tzOffsetMs(utcGuess, timeZone);
+  t = utcGuess - tzOffsetMs(t, timeZone);
+  return new Date(t);
+}
+
+/**
+ * [start, end) instants of one practice-local calendar date. DST-safe via
+ * zonedInstant, so fall-back days are truly 25h long.
  */
 export function dayBoundsFor(
   date: string,
   timeZone: string,
 ): { date: string; start: Date; end: Date } {
-  const startOf = (ymd: string): Date => {
-    const utcGuess = Date.parse(`${ymd}T00:00:00Z`);
-    let t = utcGuess - tzOffsetMs(utcGuess, timeZone);
-    t = utcGuess - tzOffsetMs(t, timeZone);
-    return new Date(t);
-  };
   const [y, m, d] = date.split("-").map(Number);
   const nextYmd = new Date(Date.UTC(y!, m! - 1, d! + 1)).toISOString().slice(0, 10);
-  return { date, start: startOf(date), end: startOf(nextYmd) };
+  return {
+    date,
+    start: zonedInstant(date, "00:00", timeZone),
+    end: zonedInstant(nextYmd, "00:00", timeZone),
+  };
 }
 
 /** The practice-local calendar day containing `now`. */
@@ -261,8 +275,33 @@ export function createStaffService(deps: {
         }
       }
 
+      // Internal events (S5c): patient-less appointments carrying our internal-events
+      // code — day off / meeting / block. They render as their own muted blocks, never
+      // as bookings (no status workflow, no PHI).
+      const events: InternalEvent[] = day.appointments.flatMap((appointment) => {
+        const type = INTERNAL_EVENT_TYPES.find((t) => t === internalEventCode(appointment));
+        if (!type || !isInternalEvent(appointment) || !appointment.start || !appointment.end) {
+          return [];
+        }
+        const practitionerIds = (appointment.participant ?? [])
+          .map((p) => p.actor?.reference)
+          .filter((ref): ref is string => Boolean(ref?.startsWith("Practitioner/")))
+          .map((ref) => ref.split("/")[1]!);
+        return [
+          {
+            id: appointment.id!,
+            type,
+            ...(appointment.description ? { title: appointment.description } : {}),
+            practitionerIds,
+            start: appointment.start,
+            end: appointment.end,
+          },
+        ];
+      });
+
       // Appointments we can render: a mapped workflow status + patient + practitioner.
-      // Unmapped statuses (cancelled, entered-in-error, proposed…) are not day-sheet rows.
+      // Unmapped statuses (cancelled, entered-in-error, proposed…) are not day-sheet
+      // rows — and neither are internal events (no patient participant).
       const mappable = day.appointments.flatMap((appointment) => {
         const status = DOMAIN_BY_FHIR.get(appointment.status);
         const patientRef = patientParticipant(appointment);
@@ -348,13 +387,16 @@ export function createStaffService(deps: {
         timezone,
         practitioners,
         appointments: appointments.sort((a, b) => a.start.localeCompare(b.start)),
+        events: events.sort((a, b) => a.start.localeCompare(b.start)),
       };
     },
 
     async setAppointmentStatus(user, appointmentId, to) {
       const client = deps.userClient(user.accessToken);
       const appointment = await readAppointmentById(client, appointmentId);
-      if (!appointment) {
+      // Internal events have no patient workflow — through the status path they are
+      // indistinguishable from nothing (they also happen to sit at FHIR "booked").
+      if (!appointment || isInternalEvent(appointment)) {
         throw new UnknownAppointmentError();
       }
       const current = DOMAIN_BY_FHIR.get(appointment.status);
