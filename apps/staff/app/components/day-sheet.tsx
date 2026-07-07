@@ -95,13 +95,12 @@ type Undo =
       readonly expiresAt: number;
     };
 
-/** A live drag: the ghost's target column + snapped start (minutes-of-day). */
+/** A live drag: the ghost's target column + snapped start (minutes-of-day).
+ *  Duration comes from the appointment itself — no derived copies. */
 type DragState = {
   readonly appointment: DaySheetAppointment;
   readonly columnIndex: number;
   readonly minutes: number;
-  readonly durationMinutes: number;
-  readonly committing: boolean;
 };
 
 /** A rendered column: practitioners (day view) or weekdays (week view). */
@@ -566,11 +565,17 @@ export function ScheduleView({
     };
   }
 
-  async function dropDrag() {
-    const dropped = dragLive.current;
+  /** Full drag teardown — the one owner of the lifecycle's reset invariant
+   *  (drop, Escape, and pointercancel all end a drag through here). */
+  function clearDrag() {
     dragArm.current = undefined;
     dragLive.current = undefined;
     setDrag(undefined);
+  }
+
+  async function dropDrag() {
+    const dropped = dragLive.current;
+    clearDrag();
     if (!dropped) {
       return;
     }
@@ -639,14 +644,15 @@ export function ScheduleView({
           columnIndex = index;
         }
       });
-      const next: DragState = {
-        appointment: arm.appointment,
-        columnIndex,
-        minutes: snapMinutes(event.clientY - grid.top - arm.grabOffsetY),
-        durationMinutes:
-          (Date.parse(arm.appointment.end) - Date.parse(arm.appointment.start)) / 60000,
-        committing: false,
-      };
+      const minutes = snapMinutes(event.clientY - grid.top - arm.grabOffsetY);
+      // Most pixels don't cross a 15-min snap step or a column edge — skip the
+      // whole-view re-render (and the deps-less effects' listener churn) when the
+      // ghost wouldn't actually move.
+      const live = dragLive.current;
+      if (live && live.minutes === minutes && live.columnIndex === columnIndex) {
+        return;
+      }
+      const next: DragState = { appointment: arm.appointment, columnIndex, minutes };
       dragLive.current = next;
       setDrag(next);
     };
@@ -659,9 +665,7 @@ export function ScheduleView({
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && dragLive.current) {
-        dragArm.current = undefined;
-        dragLive.current = undefined;
-        setDrag(undefined);
+        clearDrag();
       }
     };
     // A cancelled pointer (window blur, native drag interception, gesture) never
@@ -672,9 +676,7 @@ export function ScheduleView({
       if (!arm || event.pointerId !== arm.pointerId) {
         return;
       }
-      dragArm.current = undefined;
-      dragLive.current = undefined;
-      setDrag(undefined);
+      clearDrag();
       suppressClick.current = false; // no click follows a cancelled pointer
     };
     // The gesture's own click (dispatched after pointerup, bubbling past React's
@@ -1186,7 +1188,10 @@ export function ScheduleView({
                       className="pointer-events-none absolute right-1.5 left-1.5 z-30 rounded-md border-2 border-dashed border-action-primary bg-brand-wash/70 px-2 py-1"
                       style={{
                         top: (drag.minutes / 60) * HOUR_PX,
-                        height: (drag.durationMinutes / 60) * HOUR_PX,
+                        height:
+                          ((Date.parse(drag.appointment.end) - Date.parse(drag.appointment.start)) /
+                            3600_000) *
+                          HOUR_PX,
                       }}
                     >
                       <span className="text-[11px] font-medium text-brand-primary tabular-nums">

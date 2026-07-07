@@ -516,15 +516,17 @@ export function createApp(deps: AppDeps): Hono<Env> {
           if (!gate.user) {
             return gate.fail;
           }
-          const body = ((await c.req.json().catch(() => undefined)) ?? undefined) as
-            | RescheduleRequest
-            | undefined;
+          const body = (await c.req.json().catch(() => undefined)) as unknown;
           if (!body || typeof body !== "object") {
             return fail(c, "invalid_request", 400);
           }
           try {
             return c.json(
-              await reschedule.rescheduleAppointment(gate.user, c.req.param("id"), body),
+              await reschedule.rescheduleAppointment(
+                gate.user,
+                c.req.param("id"),
+                body as RescheduleRequest,
+              ),
             );
           } catch (err) {
             if (err instanceof InvalidRescheduleRequestError) {

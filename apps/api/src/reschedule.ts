@@ -1,30 +1,30 @@
 import {
   isValidDateString,
+  isValidWallTime,
   type RescheduleRequest,
   type RescheduledAppointment,
 } from "@medibun/api-client";
 import {
   isInternalEvent,
   listSchedules,
-  practitionerTimezone,
+  practiceTimezone,
   readAppointmentById,
   resolveBookedSlots,
   rethrowPatchFailure,
-  SERVICES_CODE_SYSTEM,
+  serviceCodeOf,
   StatusConflictError,
   windowIsFree,
-  type AppointmentPatcher,
-  type DaySheetReader,
-  type FhirOpsClient,
   type ResourceWriter,
 } from "@medibun/medplum-backend";
-import type { Appointment, Slot } from "@medibun/fhir-types";
+import type { Slot } from "@medibun/fhir-types";
 
 import {
   InvalidTransitionError,
+  practitionerParticipant,
   UnknownAppointmentError,
   zonedInstant,
   type SessionUser,
+  type StaffUserClient,
 } from "./staff.js";
 
 /**
@@ -52,8 +52,9 @@ export class InvalidRescheduleRequestError extends Error {
   }
 }
 
-/** Reads + the Appointment patch — the CALLER's own client. */
-export type RescheduleUserClient = FhirOpsClient & DaySheetReader & AppointmentPatcher;
+/** Reads + the Appointment patch — the CALLER's own client (the same capability
+ *  surface every staff call uses). */
+export type RescheduleUserClient = StaffUserClient;
 
 /** Slot writes — the service client (staff Slot access is readonly). */
 export type RescheduleWriter = ResourceWriter;
@@ -66,20 +67,6 @@ export type RescheduleService = {
   ) => Promise<RescheduledAppointment>;
 };
 
-const WALL_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
-
-const scheduleServiceCode = (schedule: {
-  serviceType?: { coding?: { system?: string; code?: string }[] }[];
-}): string | undefined =>
-  schedule.serviceType
-    ?.flatMap((concept) => concept.coding ?? [])
-    .find((coding) => coding.system === SERVICES_CODE_SYSTEM)?.code;
-
-const appointmentServiceCode = (appointment: Appointment): string | undefined =>
-  appointment.serviceType
-    ?.flatMap((concept) => concept.coding ?? [])
-    .find((coding) => coding.system === SERVICES_CODE_SYSTEM)?.code;
-
 export function createRescheduleService(deps: {
   readonly getFhirClient: () => Promise<RescheduleWriter>;
   readonly userClient: (accessToken: string) => RescheduleUserClient;
@@ -90,7 +77,7 @@ export function createRescheduleService(deps: {
         !request.date ||
         !isValidDateString(request.date) ||
         typeof request.startTime !== "string" ||
-        !WALL_TIME.test(request.startTime) ||
+        !isValidWallTime(request.startTime) ||
         typeof request.practitionerId !== "string" ||
         request.practitionerId.length === 0
       ) {
@@ -109,7 +96,7 @@ export function createRescheduleService(deps: {
       if (appointment.status !== "booked") {
         throw new InvalidTransitionError();
       }
-      const serviceCode = appointmentServiceCode(appointment);
+      const serviceCode = serviceCodeOf(appointment);
       if (!serviceCode) {
         // v0 bookings always carry our service code ($book path); without it the
         // target schedule can't be derived.
@@ -119,20 +106,19 @@ export function createRescheduleService(deps: {
       // Schedules read AS THE CALLER: practice timezone + the target's schedule for
       // this service (no schedule for it = can't perform the service = reject).
       const schedules = await listSchedules(caller);
-      const timezone = schedules
-        .map(({ practitioner }) => practitioner && practitionerTimezone(practitioner))
-        .find(Boolean);
+      const timezone = practiceTimezone(schedules);
       if (!timezone) {
-        // Same posture as $find/$book: a missing practice timezone is a stack
-        // misconfiguration — never a silent UTC guess that lands the move hours off
-        // (security review, LOW).
+        // STRICTER than the display paths (day sheet, $find payload), which tolerate
+        // a `?? "UTC"` fallback because a wrong zone only shifts labels: here it
+        // would WRITE the move hours off. A missing practice timezone is a stack
+        // misconfiguration — hard-fail, never guess (security review, LOW).
         throw new Error("no practice timezone on any schedule actor — cannot derive instants");
       }
       const scheduleFor = (practitionerId: string) =>
         schedules.find(
           ({ schedule }) =>
             schedule.actor?.[0]?.reference === `Practitioner/${practitionerId}` &&
-            scheduleServiceCode(schedule) === serviceCode,
+            serviceCodeOf(schedule) === serviceCode,
         );
       const target = scheduleFor(request.practitionerId);
       if (!target) {
@@ -148,10 +134,7 @@ export function createRescheduleService(deps: {
       // security control that keeps another booking's identical-window protector from
       // being treated as ours (and later deleted). No resolvable current schedule →
       // no fallback, which fails safe: identical windows then read as conflicts.
-      const currentPractitionerId = (appointment.participant ?? [])
-        .map((p) => p.actor?.reference)
-        .find((r) => r?.startsWith("Practitioner/"))
-        ?.split("/")[1];
+      const currentPractitionerId = practitionerParticipant(appointment)?.split("/")[1];
       const currentSchedule = currentPractitionerId
         ? scheduleFor(currentPractitionerId)
         : undefined;

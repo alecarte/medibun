@@ -5,6 +5,7 @@ import {
   createApiClient,
   FORWARD_TRANSITIONS,
   isValidDateString,
+  isValidWallTime,
   LoginError,
   StaffError,
   STATUS_TRANSITIONS,
@@ -433,6 +434,14 @@ describe("schedule contract helpers (shared by BFF and staff app)", () => {
     expect(isValidDateString("2026-02-31")).toBe(false);
     expect(isValidDateString("tomorrow")).toBe(false);
     expect(isValidDateString("2026-7-6")).toBe(false);
+  });
+
+  it("isValidWallTime accepts 24h HH:mm and rejects out-of-range or malformed times", () => {
+    expect(isValidWallTime("00:00")).toBe(true);
+    expect(isValidWallTime("23:59")).toBe(true);
+    expect(isValidWallTime("24:00")).toBe(false);
+    expect(isValidWallTime("9:00")).toBe(false);
+    expect(isValidWallTime("09:60")).toBe(false);
   });
 
   it("STATUS_TRANSITIONS is the forward graph plus each move's exact reverse (undo)", () => {

@@ -187,11 +187,16 @@ export function minutesToWallTime(minutes: number): string {
   return `${h}:${m}`;
 }
 
+/** 24h hour → 12-hour clock parts. One conversion for every hand-built label
+ *  (gutter hours, drag ghost) so the display convention can't drift. */
+function hour12(h24: number): { h: number; meridiem: "AM" | "PM" } {
+  return { h: ((h24 + 11) % 12) + 1, meridiem: h24 < 12 ? "AM" : "PM" };
+}
+
 /** Minutes-of-day as the drag ghost's display label ("2:15 PM"). */
 export function formatMinutesLabel(minutes: number): string {
-  const h24 = Math.floor(minutes / 60);
-  const h = ((h24 + 11) % 12) + 1;
-  return `${h}:${String(minutes % 60).padStart(2, "0")} ${h24 < 12 ? "AM" : "PM"}`;
+  const { h, meridiem } = hour12(Math.floor(minutes / 60));
+  return `${h}:${String(minutes % 60).padStart(2, "0")} ${meridiem}`;
 }
 
 export type BlockLayout = {
@@ -302,8 +307,8 @@ export function formatBookedAt(iso: string, timeZone: string): string {
 
 /** "9 AM" gutter label. */
 export function formatHour(hour: number): string {
-  const h = ((hour + 11) % 12) + 1;
-  return `${h} ${hour < 12 ? "AM" : "PM"}`;
+  const { h, meridiem } = hour12(hour);
+  return `${h} ${meridiem}`;
 }
 
 /** A YYYY-MM-DD date as a UTC-noon Date, safe for Intl formatting (no tz drift). */

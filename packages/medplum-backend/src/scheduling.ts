@@ -52,6 +52,17 @@ const minutes = (value: number): MinutesDuration => ({
  *  HealthcareService.type, Schedule.serviceType, and proposed Slot.serviceType). */
 const serviceCoding = (code: string) => ({ system: SERVICES_CODE_SYSTEM, code });
 
+/** `serviceCoding`'s read-side twin: the service code a resource carries in our
+ *  CodeSystem. Structural, so Appointment.serviceType and Schedule.serviceType
+ *  both fit — the one place the extraction is defined. */
+export function serviceCodeOf(resource: {
+  serviceType?: { coding?: { system?: string; code?: string }[] }[];
+}): string | undefined {
+  return resource.serviceType
+    ?.flatMap((concept) => concept.coding ?? [])
+    .find((coding) => coding.system === SERVICES_CODE_SYSTEM)?.code;
+}
+
 export type WeeklyAvailability = {
   readonly daysOfWeek: ("mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun")[];
   /** "09:00:00" local to the actor's timezone. */
@@ -221,6 +232,18 @@ export async function listSchedulesForService(
 /** The actor-level IANA timezone (buildPractitioner sets it; $find/$book require it). */
 export function practitionerTimezone(practitioner: Practitioner): string | undefined {
   return practitioner.extension?.find((e) => e.url === TIMEZONE_EXTENSION_URL)?.valueCode;
+}
+
+/** The practice timezone: the first schedule actor carrying one (v0: single location,
+ *  every actor shares the zone). Undefined when no actor carries it — each caller
+ *  states its missing-timezone posture explicitly at the call site (`?? "UTC"` where a
+ *  wrong zone only shifts display; throw where it would corrupt a write). */
+export function practiceTimezone(
+  schedules: readonly { readonly practitioner?: Practitioner }[],
+): string | undefined {
+  return schedules
+    .map(({ practitioner }) => practitioner && practitionerTimezone(practitioner))
+    .find(Boolean);
 }
 
 /** Free slots for one schedule + service in [start, end] (≤31 days, server-enforced). */

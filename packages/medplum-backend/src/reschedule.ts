@@ -68,6 +68,13 @@ export async function resolveBookedSlots(
     .map((slot) => `Slot/${slot.id}`);
 }
 
+/** No block we mint outlasts a practice-local day — the overlap query's lower bound,
+ *  so history can't push live conflicts past the page cap. The invariant is OWNED by
+ *  the minting sites (all-day internal events via dayBoundsFor; a DST fall-back day is
+ *  25h — the worst case). Exported so the minting side pins itself against this bound:
+ *  a future multi-day block MUST widen it or windowIsFree silently misses the block. */
+export const MAX_BLOCK_MS = 25 * 3600_000;
+
 /**
  * Whether [start, end) on `scheduleReference` overlaps no blocking Slot, ignoring
  * `ownSlotRefs` (moving within your own window is legal). Deliberately does NOT check
@@ -75,10 +82,6 @@ export async function resolveBookedSlots(
  * but the front desk placing a deliberate off-hours squeeze-in is staff judgment
  * (decided at the S5.5 interview). Conflicts are what matter.
  */
-/** No block we mint outlasts a practice-local day (all-day events) — the overlap
- *  query's lower bound, so history can't push live conflicts past the page cap. */
-const MAX_BLOCK_MS = 25 * 3600_000; // a DST fall-back all-day block is 25h
-
 export async function windowIsFree(
   client: FhirOpsClient,
   scheduleReference: string,

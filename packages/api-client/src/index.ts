@@ -133,6 +133,13 @@ export function isValidDateString(value: string): boolean {
   return new Date(Date.UTC(y!, m! - 1, d!)).toISOString().slice(0, 10) === value;
 }
 
+/** A 24h wall time in "HH:mm" form (lexicographic comparison IS chronological).
+ *  Shared by the BFF's event + reschedule validation — same judgment everywhere,
+ *  next to isValidDateString for the same reason. */
+export function isValidWallTime(value: string): boolean {
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
+
 /** Monday-of-the-week for a YYYY-MM-DD date (SCHEDULE_DESIGN.md: weeks start Monday).
  *  Pure calendar math, no timezone — these are practice-local date labels. The BFF
  *  snaps week ranges with this; the staff app pre-aligns URLs with the same function. */
