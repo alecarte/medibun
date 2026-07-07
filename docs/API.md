@@ -248,11 +248,14 @@ preserves the appointment's duration:
 Only **scheduled** appointments move (arrived/roomed patients are in the building;
 completed/no-show are history); the target practitioner must have a schedule for the
 appointment's service. The BFF re-derives that the target window is free against busy
-Slots (never trusts the client), creates the new busy Slot, patches the Appointment with
-a **test-and-set on its current start** (a concurrent move loses cleanly and compensates
-by removing the new slot), then deletes the old slot. Reads and the Appointment patch run
-AS THE CALLER; only the Slot swap rides the service client (S5c's split-principal
-pattern). Schedule availability _hours_ are deliberately not enforced — an off-hours
+Slots (never trusts the client), creates the new busy Slot, **re-checks the window with
+its claim visible** (two stations racing different appointments onto the same open
+window: one loses here — no serializable `$reschedule` exists at our Medplum pin, so the
+check-then-act gap is closed to a search round-trip rather than a transaction), patches
+the Appointment with **test-and-sets on its current start and versionId** (any concurrent
+write loses cleanly and compensates by removing the new slot), then deletes the old slot.
+Reads and the Appointment patch run AS THE CALLER; only the Slot swap rides the service
+client (S5c's split-principal pattern). Schedule availability _hours_ are deliberately not enforced — an off-hours
 squeeze-in is staff judgment; conflicts are what matter. Success:
 `200 { "id", "practitionerId", "start", "end" }`.
 

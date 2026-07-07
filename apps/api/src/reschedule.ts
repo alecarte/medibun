@@ -9,6 +9,7 @@ import {
   practitionerTimezone,
   readAppointmentById,
   resolveBookedSlots,
+  rethrowPatchFailure,
   SERVICES_CODE_SYSTEM,
   StatusConflictError,
   windowIsFree,
@@ -29,11 +30,13 @@ import {
 /**
  * Drag-to-reschedule (S5.5). No $reschedule exists at our Medplum pin, so a move is:
  * validate the target window is free (busy-Slot overlap check — the S4 "re-derive,
- * never trust the client" defense), create the new busy Slot, patch the Appointment
- * with a test-and-set on its CURRENT start (a concurrent move loses cleanly), then
- * delete the old slot. Split principals, same as S5c events: reads and the Appointment
- * patch run AS THE CALLER (org-scoped policy + audit attribution); only the Slot
- * writes ride the service client (staff Slot access is readonly by design).
+ * never trust the client" defense), create the new busy Slot, RE-CHECK the window
+ * with our claim visible (two stations racing onto the same window: one loses here),
+ * patch the Appointment with test-and-sets on its CURRENT start and versionId (any
+ * concurrent write loses cleanly), then delete the old slot. Split principals, same
+ * as S5c events: reads and the Appointment patch run AS THE CALLER (org-scoped
+ * policy + audit attribution); only the Slot writes ride the service client (staff
+ * Slot access is readonly by design).
  *
  * Deliberately unchecked (S5.5 interview): schedule availability hours — patients
  * can't book off-hours ($find enforces it), but the front desk placing a deliberate
@@ -163,8 +166,12 @@ export function createRescheduleService(deps: {
         throw new StatusConflictError();
       }
 
-      // New protector first (same blocking semantics as $book's busy slot), then the
-      // test-and-set patch; a lost patch compensates by removing the new slot, so a
+      // New protector first (same blocking semantics as $book's busy slot), then a
+      // RE-CHECK of the window now that our claim is visible: two stations dropping
+      // different appointments onto the same open window both pass the pre-check, but
+      // only one survives this second look (no serializable $reschedule at our pin —
+      // this closes the check-then-act gap to a search round-trip). Then the
+      // test-and-set patch; any failure compensates by removing the new slot, so a
       // failed move never leaves the target window blocked.
       const writer = await deps.getFhirClient();
       const newSlot = await writer.createResource<Slot>({
@@ -175,23 +182,42 @@ export function createRescheduleService(deps: {
         end: window.end,
       });
       try {
+        const stillFree = await windowIsFree(caller, `Schedule/${target.schedule.id}`, window, [
+          ...ownSlots,
+          `Slot/${newSlot.id}`,
+        ]);
+        if (!stillFree) {
+          throw new StatusConflictError();
+        }
         const participants = (appointment.participant ?? []).map((participant) =>
           participant.actor?.reference?.startsWith("Practitioner/")
             ? { ...participant, actor: { reference: `Practitioner/${request.practitionerId}` } }
             : participant,
         );
         await caller.patchResource("Appointment", appointmentId, [
+          // Two tests: /start catches a concurrent time move; /meta/versionId (when
+          // the read carried one) catches EVERY concurrent write — without it, a
+          // same-start practitioner swap from another station would silently win
+          // and strand this move's protector slot (review finding).
           { op: "test", path: "/start", value: appointment.start },
+          ...(appointment.meta?.versionId
+            ? [{ op: "test" as const, path: "/meta/versionId", value: appointment.meta.versionId }]
+            : []),
           { op: "replace", path: "/start", value: window.start },
           { op: "replace", path: "/end", value: window.end },
-          { op: "replace", path: "/participant", value: participants },
-          { op: "replace", path: "/slot", value: [{ reference: `Slot/${newSlot.id}` }] },
+          // `add` on an object member replaces it when present and creates it when
+          // absent (RFC 6902) — `replace` would reject the whole patch on a stack
+          // where $book leaves slot[]/participant unset (the live-verify unknown).
+          { op: "add", path: "/participant", value: participants },
+          { op: "add", path: "/slot", value: [{ reference: `Slot/${newSlot.id}` }] },
         ]);
       } catch (err) {
         await writer.deleteResource("Slot", newSlot.id!).catch(() => {
           console.warn(`reschedule: compensation failed, stranded busy slot Slot/${newSlot.id}`);
         });
-        throw err;
+        // A lost test op arrives as a raw OperationOutcomeError — map it to the 409
+        // wire contract (and auth rejections to 401/403) instead of leaking a 500.
+        rethrowPatchFailure(err);
       }
       // Old protectors last: a failure here strands busy slots on the OLD window
       // (availability loss, never a double-booking) — log ids and move on.

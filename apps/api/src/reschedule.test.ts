@@ -44,6 +44,7 @@ const schedulesBundle = {
 const booking = (overrides?: Partial<Appointment>): Appointment => ({
   resourceType: "Appointment",
   id: "a1",
+  meta: { versionId: "7" },
   status: "booked",
   serviceType: [{ coding: [{ system: SERVICES, code: "svc-botox" }] }],
   start: "2026-07-06T18:00:00.000Z",
@@ -59,12 +60,29 @@ const booking = (overrides?: Partial<Appointment>): Appointment => ({
 function fakeClients(opts?: {
   appointment?: Appointment | undefined;
   busy?: boolean;
+  /** The window is free at the pre-check but taken by the RE-CHECK (a racing move
+   *  landed between our check and our claim — the TOCTOU regression). */
+  busyOnRecheck?: boolean;
+  /** The re-check sees the protector this move just minted (the realistic read
+   *  of our own write) — it must be excluded, not read as a conflict. */
+  recheckSeesOwnSlot?: boolean;
   patchFails?: boolean;
   timezoneless?: boolean;
 }) {
   const created: Resource[] = [];
   const deleted: string[] = [];
   const patches: unknown[] = [];
+  let slotQueries = 0;
+  const busyEntry = (id: string, start: string, end: string) => ({
+    resource: {
+      resourceType: "Slot",
+      id,
+      schedule: { reference: "Schedule/s2" },
+      status: "busy",
+      start,
+      end,
+    },
+  });
   const userClient = {
     get: vi.fn().mockImplementation((url: string) => {
       if (url.startsWith("fhir/R4/Schedule?")) {
@@ -81,24 +99,16 @@ function fakeClients(opts?: {
         return Promise.resolve(schedulesBundle);
       }
       if (url.startsWith("fhir/R4/Slot?")) {
-        return Promise.resolve({
-          resourceType: "Bundle",
-          type: "searchset",
-          entry: opts?.busy
-            ? [
-                {
-                  resource: {
-                    resourceType: "Slot",
-                    id: "sl-other",
-                    schedule: { reference: "Schedule/s2" },
-                    status: "busy",
-                    start: "2026-07-06T19:00:00.000Z",
-                    end: "2026-07-06T19:30:00.000Z",
-                  },
-                },
-              ]
-            : [],
-        });
+        slotQueries += 1;
+        const recheck = slotQueries >= 2;
+        const entry = opts?.busy
+          ? [busyEntry("sl-other", "2026-07-06T19:00:00.000Z", "2026-07-06T19:30:00.000Z")]
+          : opts?.busyOnRecheck && recheck
+            ? [busyEntry("sl-racer", "2026-07-06T19:15:00.000Z", "2026-07-06T19:45:00.000Z")]
+            : opts?.recheckSeesOwnSlot && recheck
+              ? [busyEntry("sl-new", "2026-07-06T19:15:00.000Z", "2026-07-06T19:45:00.000Z")]
+              : [];
+        return Promise.resolve({ resourceType: "Bundle", type: "searchset", entry });
       }
       return Promise.reject(new Error(`unexpected GET ${url}`));
     }),
@@ -158,16 +168,24 @@ describe("rescheduleAppointment", () => {
     const slot = created[0] as { schedule?: { reference?: string }; status?: string };
     expect(slot.schedule?.reference).toBe("Schedule/s2");
     expect(slot.status).toBe("busy");
-    // The patch ran AS THE CALLER with a test-and-set on the current start.
+    // The patch ran AS THE CALLER with test-and-sets on the current start AND the
+    // versionId — the versionId test is what makes a same-start concurrent write
+    // (practitioner-only swap on another station) lose instead of silently winning.
     expect(userClient.patchResource).toHaveBeenCalledWith(
       "Appointment",
       "a1",
       expect.arrayContaining([
         { op: "test", path: "/start", value: "2026-07-06T18:00:00.000Z" },
+        { op: "test", path: "/meta/versionId", value: "7" },
         { op: "replace", path: "/start", value: "2026-07-06T19:15:00.000Z" },
         { op: "replace", path: "/end", value: "2026-07-06T19:45:00.000Z" },
       ]),
     );
+    // `add`, not `replace`: RFC 6902 rejects replace on a missing member, and
+    // whether $book populates slot[]/participant is a live-verify unknown.
+    const ops = userClient.patchResource.mock.calls[0]![2] as { op: string; path: string }[];
+    expect(ops.find((o) => o.path === "/slot")?.op).toBe("add");
+    expect(ops.find((o) => o.path === "/participant")?.op).toBe("add");
     expect(deleted).toEqual(["Slot/sl-old"]);
   });
 
@@ -201,7 +219,52 @@ describe("rescheduleAppointment", () => {
     expect(created).toHaveLength(0);
   });
 
+  it("re-checks the window AFTER minting the protector: a racing move 409s and compensates (TOCTOU regression)", async () => {
+    // Both stations pass the pre-check on the same open window; the loser must see
+    // the winner's slot once its own claim exists — not double-book silently.
+    const { service, created, deleted } = fakeClients({ busyOnRecheck: true });
+    await expect(
+      service.rescheduleAppointment(user, "a1", {
+        date: "2026-07-06",
+        startTime: "15:15",
+        practitionerId: "pr2",
+      }),
+    ).rejects.toBeInstanceOf(StatusConflictError);
+    expect(created).toHaveLength(1); // pre-check passed, so the protector was minted...
+    expect(deleted).toEqual(["Slot/sl-new"]); // ...and compensated; the old slot untouched
+  });
+
+  it("the re-check ignores the protector this move just minted", async () => {
+    const { service, deleted } = fakeClients({ recheckSeesOwnSlot: true });
+    const result = await service.rescheduleAppointment(user, "a1", {
+      date: "2026-07-06",
+      startTime: "15:15",
+      practitionerId: "pr2",
+    });
+    expect(result.start).toBe("2026-07-06T19:15:00.000Z");
+    expect(deleted).toEqual(["Slot/sl-old"]);
+  });
+
+  it("reschedules a $book-shaped appointment WITHOUT slot refs: add-ops, nothing foreign deleted", async () => {
+    const { service, userClient, deleted } = fakeClients({
+      appointment: booking({ slot: undefined }),
+    });
+    await service.rescheduleAppointment(user, "a1", {
+      date: "2026-07-06",
+      startTime: "15:15",
+      practitionerId: "pr2",
+    });
+    // `replace /slot` would reject the whole patch on this stack shape (RFC 6902).
+    const ops = userClient.patchResource.mock.calls[0]![2] as { op: string; path: string }[];
+    expect(ops.find((o) => o.path === "/slot")?.op).toBe("add");
+    expect(deleted).toEqual([]); // no resolvable old protector — nothing foreign deleted
+  });
+
   it("compensates a lost patch race: the new slot is deleted again", async () => {
+    // The stub throws the already-typed StatusConflictError; the raw
+    // OperationOutcomeError→StatusConflictError mapping the service routes every
+    // patch failure through (rethrowPatchFailure) is pinned in medplum-backend,
+    // where the SDK error class lives.
     const { service, created, deleted } = fakeClients({ patchFails: true });
     await expect(
       service.rescheduleAppointment(user, "a1", {

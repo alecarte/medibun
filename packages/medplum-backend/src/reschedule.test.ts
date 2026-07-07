@@ -1,6 +1,8 @@
+import { OperationOutcomeError, unauthorized } from "@medplum/core";
 import type { Appointment, Slot } from "@medplum/fhirtypes";
 import { describe, expect, it, vi } from "vitest";
 
+import { SessionExpiredError } from "./patients.js";
 import { resolveBookedSlots, windowIsFree } from "./reschedule.js";
 
 const booking = (overrides?: Partial<Appointment>): Appointment => ({
@@ -75,6 +77,25 @@ describe("resolveBookedSlots", () => {
     const slots = await resolveBookedSlots({ get, post: vi.fn() }, booking(), "Schedule/s1");
     expect(slots).toEqual([]);
   });
+
+  it("matches the own protector by INSTANT, not string: offset-form ends still resolve", async () => {
+    // 14:30 EDT = 18:30Z — equal instants, different text. A string comparison would
+    // miss it and silently strand the old busy slot after a move (review finding).
+    const get = vi
+      .fn()
+      .mockResolvedValue(
+        slotBundle([busySlot("sl9", "2026-07-06T14:00:00-04:00", "2026-07-06T14:30:00-04:00")]),
+      );
+    const slots = await resolveBookedSlots({ get, post: vi.fn() }, booking(), "Schedule/s1");
+    expect(slots).toEqual(["Slot/sl9"]);
+  });
+
+  it("maps a 401 on the fallback search to SessionExpiredError (staff re-login flow)", async () => {
+    const get = vi.fn().mockRejectedValue(new OperationOutcomeError(unauthorized));
+    await expect(
+      resolveBookedSlots({ get, post: vi.fn() }, booking(), "Schedule/s1"),
+    ).rejects.toBeInstanceOf(SessionExpiredError);
+  });
 });
 
 describe("windowIsFree", () => {
@@ -125,5 +146,37 @@ describe("windowIsFree", () => {
     await expect(windowIsFree({ get, post: vi.fn() }, "Schedule/s1", window, [])).resolves.toBe(
       true,
     );
+  });
+
+  it("compares instants, not strings: an offset-form busy slot still blocks", async () => {
+    // 15:15–15:45 EDT = 19:15–19:45Z overlaps the 19:00–19:30Z window, but the string
+    // '2026-07-06T15:45:00-04:00' sorts BELOW window.start — a lexicographic compare
+    // would read the window as free and double-book it (review finding).
+    const get = vi
+      .fn()
+      .mockResolvedValue(
+        slotBundle([busySlot("sl4", "2026-07-06T15:15:00-04:00", "2026-07-06T15:45:00-04:00")]),
+      );
+    await expect(windowIsFree({ get, post: vi.fn() }, "Schedule/s1", window, [])).resolves.toBe(
+      false,
+    );
+  });
+
+  it("fails SAFE on an unparseable slot end — blocks instead of double-booking", async () => {
+    const mangled: Slot = {
+      ...busySlot("sl5", "2026-07-06T19:00:00.000Z", "2026-07-06T19:30:00.000Z"),
+      end: "not-an-instant",
+    };
+    const get = vi.fn().mockResolvedValue(slotBundle([mangled]));
+    await expect(windowIsFree({ get, post: vi.fn() }, "Schedule/s1", window, [])).resolves.toBe(
+      false,
+    );
+  });
+
+  it("maps a 401 on the conflict scan to SessionExpiredError (staff re-login flow)", async () => {
+    const get = vi.fn().mockRejectedValue(new OperationOutcomeError(unauthorized));
+    await expect(
+      windowIsFree({ get, post: vi.fn() }, "Schedule/s1", window, []),
+    ).rejects.toBeInstanceOf(SessionExpiredError);
   });
 });

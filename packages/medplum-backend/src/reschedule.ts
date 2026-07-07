@@ -1,5 +1,6 @@
 import type { Appointment, Bundle, Slot } from "@medplum/fhirtypes";
 
+import { rethrowAuth } from "./day-sheet.js";
 import { bundleResources } from "./scheduling.js";
 import type { FhirOpsClient } from "./scheduling.js";
 
@@ -46,14 +47,23 @@ export async function resolveBookedSlots(
     start: appointment.start!,
     _count: "100",
   });
-  const bundle = (await client.get(`fhir/R4/Slot?${params.toString()}`)) as Bundle;
+  let bundle: Bundle;
+  try {
+    bundle = (await client.get(`fhir/R4/Slot?${params.toString()}`)) as Bundle;
+  } catch (err) {
+    rethrowAuth(err);
+  }
+  // Instant equality, not string equality: an offset-form or millis-less instant
+  // (external tooling, server normalization) is still this booking's window. An
+  // unparseable end never matches — fail-safe, same as no fallback at all.
+  const appointmentEnd = Date.parse(appointment.end ?? "");
   return bundleResources(bundle)
     .filter(
       (r): r is Slot =>
         r.resourceType === "Slot" &&
         Boolean(r.id) &&
         BLOCKING.has((r as Slot).status) &&
-        (r as Slot).end === appointment.end,
+        Date.parse((r as Slot).end ?? "") === appointmentEnd,
     )
     .map((slot) => `Slot/${slot.id}`);
 }
@@ -85,13 +95,21 @@ export async function windowIsFree(
   // fall off the page (security review, 2026-07-06).
   params.append("start", `lt${window.end}`);
   params.append("start", `ge${new Date(Date.parse(window.start) - MAX_BLOCK_MS).toISOString()}`);
-  const bundle = (await client.get(`fhir/R4/Slot?${params.toString()}`)) as Bundle;
+  let bundle: Bundle;
+  try {
+    bundle = (await client.get(`fhir/R4/Slot?${params.toString()}`)) as Bundle;
+  } catch (err) {
+    rethrowAuth(err);
+  }
   const own = new Set(ownSlotRefs);
-  return !bundleResources(bundle).some(
-    (r) =>
-      r.resourceType === "Slot" &&
-      BLOCKING.has((r as Slot).status) &&
-      (r as Slot).end! > window.start &&
-      !own.has(`Slot/${r.id}`),
-  );
+  const windowStart = Date.parse(window.start);
+  return !bundleResources(bundle).some((r) => {
+    if (r.resourceType !== "Slot" || !BLOCKING.has((r as Slot).status) || own.has(`Slot/${r.id}`)) {
+      return false;
+    }
+    // Instant comparison, not lexicographic: an offset-form end (external tooling)
+    // must still register as overlap. An unparseable end blocks — fail-safe.
+    const end = Date.parse((r as Slot).end ?? "");
+    return Number.isNaN(end) || end > windowStart;
+  });
 }

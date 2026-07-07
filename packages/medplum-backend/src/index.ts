@@ -25,6 +25,7 @@ export {
   listSchedules,
   readAppointmentById,
   readPractitionerById,
+  rethrowPatchFailure,
   StatusConflictError,
   updateAppointmentStatus,
   type AppointmentPatcher,

@@ -633,6 +633,46 @@ describe("ScheduleView — drag to reschedule (S5.5)", () => {
     expect(refresh).toHaveBeenCalled();
     // The drop is a drag's end, not a click: no detail card.
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    // The grid repaints the confirmed move BEFORE the refreshed sheet lands: the
+    // block now lives in Maya's column (stale columns-memo regression).
+    const maya = screen.getByRole("list", { name: "Maya Chen appointments" });
+    expect(within(maya).getByText("Synthia Loginsmith")).toBeInTheDocument();
+  });
+
+  it("a drag ending off the origin block doesn't swallow the next click (suppressClick leak)", async () => {
+    stubFetch(200, {
+      id: "a1",
+      practitionerId: "pr2",
+      start: "2026-07-06T19:15:00.000Z",
+      end: "2026-07-06T19:45:00.000Z",
+    });
+    render(<ScheduleView {...dayProps} />);
+    const block = primeGeometry();
+    drag(block, 600, 15.25 * 112 + 10);
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 600, clientY: 15.25 * 112 + 10 });
+    await screen.findByText(/Moved — Synthia Loginsmith/);
+    // A cross-column drop's click lands on the columns' common ancestor, never on a
+    // block button — the browser still dispatches it, and it must clear the flag.
+    fireEvent.click(screen.getByTestId("schedule-grid"));
+    // The user's next real click opens the detail card on the FIRST try.
+    fireEvent.click(screen.getByText("Aurelia Vandermeer-Castellanos"));
+    expect(screen.getByRole("dialog", { name: /Aurelia/ })).toBeInTheDocument();
+  });
+
+  it("pointercancel cancels the drag and does not strand future drags", () => {
+    const calls = stubFetch(200, {});
+    render(<ScheduleView {...dayProps} />);
+    const block = primeGeometry();
+    drag(block, 600, 15.25 * 112 + 10);
+    expect(screen.getByTestId("drag-ghost")).toBeInTheDocument();
+    // Alt-tab / native-drag interception: the browser cancels the pointer instead
+    // of delivering pointerup.
+    fireEvent.pointerCancel(window, { pointerId: 1 });
+    expect(screen.queryByTestId("drag-ghost")).not.toBeInTheDocument();
+    expect(calls).toHaveLength(0); // no write
+    // The next drag lifts normally — the armDrag guard isn't wedged on stale state.
+    drag(block, 600, 16 * 112 + 10);
+    expect(screen.getByTestId("drag-ghost")).toBeInTheDocument();
   });
 
   it("undo is a compensating reverse move back to the original window", async () => {
@@ -654,6 +694,45 @@ describe("ScheduleView — drag to reschedule (S5.5)", () => {
       startTime: "14:00",
       practitionerId: "pr1",
     });
+    // The overlay reverts optimistically: the grid shows the original column right
+    // away, not the just-reverted position until the next sheet lands.
+    const riley = screen.getByRole("list", { name: "Riley Reyes appointments" });
+    expect(within(riley).getByText("Synthia Loginsmith")).toBeInTheDocument();
+  });
+
+  it("a failed undo restores the overlay AND the Undo affordance (retryable)", async () => {
+    // Move succeeds; the compensating undo write fails (non-conflict).
+    let requests = 0;
+    vi.stubGlobal("fetch", () => {
+      requests += 1;
+      const ok = requests === 1;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify(
+            ok
+              ? {
+                  id: "a1",
+                  practitionerId: "pr2",
+                  start: "2026-07-06T19:15:00.000Z",
+                  end: "2026-07-06T19:45:00.000Z",
+                }
+              : { error: "internal_error", requestId: "r" },
+          ),
+          { status: ok ? 200 : 500, headers: { "content-type": "application/json" } },
+        ),
+      );
+    });
+    render(<ScheduleView {...dayProps} />);
+    const block = primeGeometry();
+    drag(block, 600, 15.25 * 112 + 10);
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 600, clientY: 15.25 * 112 + 10 });
+    fireEvent.click(await screen.findByRole("button", { name: /Undo/ }));
+    expect(await screen.findByText("Couldn't undo the move. Try again.")).toBeVisible();
+    // Server truth is still the moved position — the overlay is rolled back…
+    const maya = screen.getByRole("list", { name: "Maya Chen appointments" });
+    expect(within(maya).getByText("Synthia Loginsmith")).toBeInTheDocument();
+    // …and "Try again" has a button to press.
+    expect(screen.getByRole("button", { name: /Undo/ })).toBeInTheDocument();
   });
 
   it("a taken window (409) explains and refreshes instead of clobbering", async () => {

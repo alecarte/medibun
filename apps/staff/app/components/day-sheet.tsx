@@ -283,7 +283,7 @@ export function ScheduleView({
       header: <span className="text-sm font-medium text-text-primary">{p.practitionerName}</span>,
       label: `${p.practitionerName} appointments`,
     }));
-  }, [sheet, isWeek, selectedPractitioner, tz]);
+  }, [sheet, effectiveAppointments, isWeek, selectedPractitioner, tz]);
 
   const appointmentById = useMemo(
     () => new Map(effectiveAppointments.map((a) => [a.id, a])),
@@ -463,8 +463,12 @@ export function ScheduleView({
   }
 
   /** Undo a drag: a compensating reschedule back to the ORIGINAL window/practitioner.
-   *  It can itself 409 (someone took the old window) — surface that honestly. */
+   *  It can itself 409 (someone took the old window) — surface that honestly.
+   *  Optimistic like writeStatus: the move overlay reverts up front (the grid shows
+   *  the original window immediately) and rolls back if the write fails. */
   async function undoMove(original: DaySheetAppointment) {
+    const overlay = moves[original.id];
+    setMoves((m) => Object.fromEntries(Object.entries(m).filter(([id]) => id !== original.id)));
     pendingWrites.current += 1;
     try {
       await api.rescheduleAppointment(original.id, {
@@ -474,10 +478,15 @@ export function ScheduleView({
       });
       router.refresh();
     } catch (err) {
+      if (overlay) {
+        setMoves((m) => ({ ...m, [original.id]: overlay }));
+      }
       if (err instanceof StaffError && err.code === "conflict") {
         setNotice("The original time is no longer free. Refreshing the schedule.");
         router.refresh();
       } else {
+        // Restore the undo affordance — "Try again" must have a button to press.
+        setUndo({ kind: "move", appointment: original, expiresAt: Date.now() + UNDO_WINDOW_MS });
         setNotice("Couldn't undo the move. Try again.");
       }
     } finally {
@@ -655,13 +664,38 @@ export function ScheduleView({
         setDrag(undefined);
       }
     };
+    // A cancelled pointer (window blur, native drag interception, gesture) never
+    // delivers pointerup — without this the ghost stays painted and the armDrag
+    // guard blocks every future drag until Escape.
+    const onPointerCancel = (event: PointerEvent) => {
+      const arm = dragArm.current;
+      if (!arm || event.pointerId !== arm.pointerId) {
+        return;
+      }
+      dragArm.current = undefined;
+      dragLive.current = undefined;
+      setDrag(undefined);
+      suppressClick.current = false; // no click follows a cancelled pointer
+    };
+    // The gesture's own click (dispatched after pointerup, bubbling past React's
+    // root) is the LAST place suppressClick matters: a block's onClick consumed it
+    // if the drop landed on the origin block; clearing here covers every other
+    // landing spot (another column, empty grid, post-Escape release) so the flag
+    // can't leak and swallow the user's next real click.
+    const onWindowClick = () => {
+      suppressClick.current = false;
+    };
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerCancel);
     window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("click", onWindowClick);
     return () => {
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerCancel);
       window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("click", onWindowClick);
     };
   });
 
