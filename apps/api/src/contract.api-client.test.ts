@@ -4,10 +4,14 @@ import {
   StatusConflictError,
   TIMEZONE_EXTENSION_URL,
 } from "@medibun/medplum-backend";
-import { describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createApp, type AuthDeps } from "./app.js";
 import { createBookingService } from "./booking.js";
+import { createCancelService } from "./cancel.js";
+import * as dbSchema from "./db/schema.js";
+import { bootTestDb } from "./db/test-db.js";
+import { createMoveUpService } from "./move-up.js";
 import { createStaffService } from "./staff.js";
 import type { ServiceRow } from "./services/catalog.js";
 
@@ -395,5 +399,168 @@ describe("api-client ⇄ BFF staff contract (real staff service, stubbed FHIR wi
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(StaffError);
     expect((err as StaffError).code).toBe("conflict");
+  });
+});
+
+describe("api-client ⇄ BFF S5.7 contract (real cancel + move-up services, stubbed FHIR wire)", () => {
+  const staffUser = { profileReference: "Practitioner/prac-1", accessToken: "at-staff" };
+  const auth = { cookie: "medibun_session=staff-1" };
+  const SERVICES = "https://medibun.com/fhir/CodeSystem/services";
+
+  const s57Schedules = {
+    resourceType: "Bundle",
+    type: "searchset",
+    entry: [
+      {
+        resource: {
+          resourceType: "Schedule",
+          id: "sched-1",
+          actor: [{ reference: "Practitioner/prac-1" }],
+          serviceType: [{ coding: [{ system: SERVICES, code: "svc-botox" }] }],
+        },
+      },
+      {
+        resource: {
+          resourceType: "Practitioner",
+          id: "prac-1",
+          name: [{ given: ["Riley"], family: "Reyes" }],
+          extension: [{ url: TIMEZONE_EXTENSION_URL, valueCode: "America/New_York" }],
+        },
+      },
+    ],
+  };
+
+  const appointment = (id: string, status: string) => ({
+    resourceType: "Appointment",
+    id,
+    status,
+    serviceType: [{ coding: [{ system: SERVICES, code: "svc-botox" }] }],
+    start: "2026-07-16T14:00:00.000Z",
+    end: "2026-07-16T14:30:00.000Z",
+    ...(status === "booked" ? { slot: [{ reference: `Slot/sl-${id}` }] } : {}),
+    participant: [
+      { actor: { reference: "Patient/pt-1" }, status: "accepted" },
+      { actor: { reference: "Practitioner/prac-1" }, status: "accepted" },
+    ],
+  });
+
+  let db: Awaited<ReturnType<typeof bootTestDb>>;
+
+  beforeAll(async () => {
+    db = await bootTestDb();
+  }, 60_000);
+
+  beforeEach(async () => {
+    await db.delete(dbSchema.moveUpRequests);
+  });
+
+  function makeS57Client(resources: Record<string, unknown>) {
+    const deleted: string[] = [];
+    const userClient = () =>
+      ({
+        get: (url: string) =>
+          Promise.resolve(
+            url.startsWith("fhir/R4/Schedule?")
+              ? s57Schedules
+              : { resourceType: "Bundle", type: "searchset" }, // no busy slots
+          ),
+        post: () => Promise.reject(new Error("unexpected post")),
+        readResource: (type: string, id: string) => Promise.resolve(resources[`${type}/${id}`]),
+        patchResource: (_t: string, id: string) => Promise.resolve(resources[`Appointment/${id}`]),
+      }) as never;
+    const writer = {
+      createResource: <T>(resource: T) => Promise.resolve({ ...resource, id: "sl-new" }),
+      deleteResource: (resourceType: string, id: string) => {
+        deleted.push(`${resourceType}/${id}`);
+        return Promise.resolve(undefined);
+      },
+    } as never;
+    const moveUp = createMoveUpService({
+      db,
+      catalog: {
+        getByCode: (code) => Promise.resolve(code === "svc-botox" ? botoxRow : undefined),
+      },
+      userClient,
+    });
+    const cancel = createCancelService({
+      getFhirClient: () => Promise.resolve(writer),
+      userClient,
+      countMoveUpMatches: moveUp.countMatches,
+    });
+    const app = createApp({
+      log: () => undefined,
+      checkMedplum: () => Promise.resolve(true),
+      auth: {
+        login: () => Promise.resolve({ sessionId: "staff-1" }),
+        logout: () => Promise.resolve(),
+        getUser: (sessionId) => Promise.resolve(sessionId === "staff-1" ? staffUser : null),
+        getMyProfile: () => Promise.resolve(undefined),
+        recordAndCheckRateLimit: () => Promise.resolve(false),
+        cookieSecure: false,
+      },
+      staff: {
+        getStaffProfile: () => Promise.resolve(undefined),
+        getDaySheet: () => Promise.reject(new Error("unused")),
+        setAppointmentStatus: () => Promise.reject(new Error("unused")),
+      },
+      cancel,
+      moveUp,
+    });
+    const fetchImpl = ((input: RequestInfo | URL, init?: RequestInit) =>
+      app.request(input, init)) as typeof fetch;
+    return { client: createApiClient({ baseUrl: "http://bff.test", fetch: fetchImpl }), deleted };
+  }
+
+  const resources = {
+    "Appointment/appt-cancel": appointment("appt-cancel", "booked"),
+    "Appointment/appt-held": appointment("appt-held", "booked"),
+    "Appointment/appt-restore": appointment("appt-restore", "cancelled"),
+    "Patient/pt-1": {
+      resourceType: "Patient",
+      id: "pt-1",
+      name: [{ given: ["Synthia"], family: "Loginsmith" }],
+      telecom: [{ system: "phone", value: "555-010-0100" }],
+    },
+    "Practitioner/prac-1": s57Schedules.entry[1]!.resource,
+  };
+
+  it("round-trips the move-up entry DTO: add → list → resolve", async () => {
+    const { client } = makeS57Client(resources);
+    const entry = await client.addMoveUp(
+      { appointmentId: "appt-held", note: "mornings only" },
+      auth,
+    );
+    expect(entry).toMatchObject({
+      patientId: "pt-1",
+      patientName: "Synthia Loginsmith",
+      patientPhone: "555-010-0100",
+      appointmentId: "appt-held",
+      appointmentStart: "2026-07-16T14:00:00.000Z",
+      serviceCode: "svc-botox",
+      serviceName: "Botox",
+      note: "mornings only",
+    });
+    await expect(client.listMoveUp(auth)).resolves.toEqual([entry]);
+    await client.resolveMoveUp(entry.id, "fulfilled", auth);
+    await expect(client.listMoveUp(auth)).resolves.toEqual([]);
+  });
+
+  it("cancels end-to-end: coded reason, freed protector slot, live match cue", async () => {
+    const { client, deleted } = makeS57Client(resources);
+    await client.addMoveUp({ appointmentId: "appt-held" }, auth);
+    await expect(client.cancelAppointment("appt-cancel", "patient", auth)).resolves.toEqual({
+      id: "appt-cancel",
+      status: "cancelled",
+      moveUpMatches: 1,
+    });
+    expect(deleted).toEqual(["Slot/sl-appt-cancel"]);
+  });
+
+  it("restores end-to-end (the undo) and re-protects the window", async () => {
+    const { client } = makeS57Client(resources);
+    await expect(client.restoreAppointment("appt-restore", auth)).resolves.toEqual({
+      id: "appt-restore",
+      status: "scheduled",
+    });
   });
 });

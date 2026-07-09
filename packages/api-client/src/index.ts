@@ -235,6 +235,59 @@ export type RescheduledAppointment = {
   readonly end: string;
 };
 
+/** Coded cancellation reasons (S5.7) — written to FHIR `Appointment.cancelationReason`
+ *  under our CodeSystem (DATA_MODEL.md). Coded, never free text: a typed reason can't
+ *  carry PHI. */
+export const CANCELLATION_REASONS = ["patient", "practice", "no-longer-needed"] as const;
+
+export type CancellationReason = (typeof CANCELLATION_REASONS)[number];
+
+export type CancelledAppointment = {
+  readonly id: string;
+  readonly status: "cancelled";
+  /** Waiting move-up entries the freed window could serve (same service; the entry's
+   *  practitioner preference doesn't exclude the freed column) — the post-cancel desk
+   *  cue. The panel, not this count, is where staff judge actual fit. */
+  readonly moveUpMatches: number;
+};
+
+/** Move-up list (S5.7): the desk-worked cancellation-backfill waitlist. Experience
+ *  data — the BFF stores ONLY ids and resolves names/phones live from FHIR as the
+ *  caller, so nothing PHI-shaped enters the experience DB. */
+export type MoveUpEntry = {
+  readonly id: string;
+  readonly patientId: string;
+  readonly patientName: string;
+  readonly patientPhone?: string;
+  /** The later appointment they hold — fulfilling = rescheduling THIS earlier. */
+  readonly appointmentId: string;
+  /** Its start, when the appointment is still resolvable for the caller. */
+  readonly appointmentStart?: string;
+  readonly serviceCode: string;
+  readonly serviceName?: string;
+  /** Preferred practitioner; absent = any qualified provider. */
+  readonly practitionerId?: string;
+  readonly practitionerName?: string;
+  /** Availability quirks ("mornings only"). NON-PHI BY RULE — same rule and create-UI
+   *  microcopy as internal-event titles (DATA_MODEL.md). */
+  readonly note?: string;
+  readonly createdAt: string;
+};
+
+export type AddMoveUpRequest = {
+  readonly appointmentId: string;
+  readonly practitionerId?: string;
+  readonly note?: string;
+};
+
+/** Shared bound for the move-up note — the BFF enforces it, the UI counts against it. */
+export const MAX_MOVE_UP_NOTE_LENGTH = 120;
+
+/** Terminal move-up states: fulfilled (rescheduled earlier) or removed (withdrawn). */
+export const MOVE_UP_RESOLUTIONS = ["fulfilled", "removed"] as const;
+
+export type MoveUpResolution = (typeof MOVE_UP_RESOLUTIONS)[number];
+
 export type DaySheet = {
   /** The practice-local calendar date (YYYY-MM-DD) the range STARTS on. */
   readonly date: string;
@@ -381,6 +434,33 @@ export type ApiClient = {
     request: RescheduleRequest,
     auth?: SessionAuth,
   ) => Promise<RescheduledAppointment>;
+  /** Cancels a SCHEDULED appointment with a coded reason and frees its window (S5.7).
+   *  Throws StaffError — "conflict" when it isn't scheduled anymore or moved under
+   *  you (refetch and re-decide). */
+  readonly cancelAppointment: (
+    appointmentId: string,
+    reason: CancellationReason,
+    auth?: SessionAuth,
+  ) => Promise<CancelledAppointment>;
+  /** The ~10s compensating undo of a cancel: re-books the appointment and re-protects
+   *  its window. Throws StaffError — "conflict" when the freed window was taken in the
+   *  meantime (surfaced honestly, like the S5.5 undo). */
+  readonly restoreAppointment: (
+    appointmentId: string,
+    auth?: SessionAuth,
+  ) => Promise<{ id: string; status: "scheduled" }>;
+  /** Waiting move-up entries, oldest first (fairness). Staff session required. */
+  readonly listMoveUp: (auth?: SessionAuth) => Promise<MoveUpEntry[]>;
+  /** Puts a scheduled appointment's patient on the move-up list. Throws StaffError —
+   *  "conflict" when the appointment is already on it. */
+  readonly addMoveUp: (request: AddMoveUpRequest, auth?: SessionAuth) => Promise<MoveUpEntry>;
+  /** Resolves a waiting entry: fulfilled (rescheduled earlier) or removed. Throws
+   *  StaffError — "not_found" for unknown or already-resolved entries. */
+  readonly resolveMoveUp: (
+    entryId: string,
+    resolution: MoveUpResolution,
+    auth?: SessionAuth,
+  ) => Promise<void>;
   /** Creates an internal event (day off / meeting / block) and its booking-blocking
    *  slots. Staff session required. Throws StaffError ("invalid_request" for bad
    *  windows/practitioners). */
@@ -546,6 +626,64 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
         throw new StaffError(await errorCodeFrom(res, STAFF_CODES), res.status);
       }
       return (await res.json()) as RescheduledAppointment;
+    },
+
+    async cancelAppointment(appointmentId, reason, auth) {
+      const res = await fetchImpl(
+        `${baseUrl}/staff/appointments/${encodeURIComponent(appointmentId)}/cancel`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", ...authHeaders(auth) },
+          body: JSON.stringify({ reason }),
+        },
+      );
+      if (!res.ok) {
+        throw new StaffError(await errorCodeFrom(res, STAFF_CODES), res.status);
+      }
+      return (await res.json()) as CancelledAppointment;
+    },
+
+    async restoreAppointment(appointmentId, auth) {
+      const res = await fetchImpl(
+        `${baseUrl}/staff/appointments/${encodeURIComponent(appointmentId)}/restore`,
+        { method: "POST", headers: authHeaders(auth) },
+      );
+      if (!res.ok) {
+        throw new StaffError(await errorCodeFrom(res, STAFF_CODES), res.status);
+      }
+      return (await res.json()) as { id: string; status: "scheduled" };
+    },
+
+    async listMoveUp(auth) {
+      const res = await fetchImpl(`${baseUrl}/staff/move-up`, { headers: authHeaders(auth) });
+      if (!res.ok) {
+        throw new StaffError(await errorCodeFrom(res, STAFF_CODES), res.status);
+      }
+      const body = (await res.json()) as { entries: MoveUpEntry[] };
+      return body.entries;
+    },
+
+    async addMoveUp(request, auth) {
+      const res = await fetchImpl(`${baseUrl}/staff/move-up`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...authHeaders(auth) },
+        body: JSON.stringify(request),
+      });
+      if (!res.ok) {
+        throw new StaffError(await errorCodeFrom(res, STAFF_CODES), res.status);
+      }
+      return (await res.json()) as MoveUpEntry;
+    },
+
+    async resolveMoveUp(entryId, resolution, auth) {
+      const res = await fetchImpl(`${baseUrl}/staff/move-up/${encodeURIComponent(entryId)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", ...authHeaders(auth) },
+        body: JSON.stringify({ status: resolution }),
+      });
+      if (!res.ok) {
+        throw new StaffError(await errorCodeFrom(res, STAFF_CODES), res.status);
+      }
     },
 
     async createInternalEvent(request, auth) {

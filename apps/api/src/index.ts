@@ -15,7 +15,9 @@ import { createApp, type AuthDeps } from "./app.js";
 import { createTokenCipher } from "./auth/crypto.js";
 import { createSessionStore } from "./auth/sessions.js";
 import { createBookingService, type BookingService } from "./booking.js";
+import { createCancelService, type CancelService } from "./cancel.js";
 import { createEventsService, type EventsService } from "./events.js";
+import { createMoveUpService, type MoveUpService } from "./move-up.js";
 import { createRescheduleService, type RescheduleService } from "./reschedule.js";
 import { createStaffService, type StaffService, type StaffUserClient } from "./staff.js";
 import { readApiConfigFromEnv } from "./config.js";
@@ -36,6 +38,8 @@ function buildAuthDeps():
       staff: StaffService;
       events: EventsService;
       reschedule: RescheduleService;
+      cancel: CancelService;
+      moveUp: MoveUpService;
       pool: pg.Pool;
     }
   | undefined {
@@ -200,7 +204,32 @@ function buildAuthDeps():
     },
   });
 
-  return { auth, booking, staff, events, reschedule, pool };
+  // Move-up list (S5.7): experience-DB rows (ids only), resolved against FHIR as the
+  // caller on every read — nothing PHI-shaped is stored (src/move-up.ts).
+  const moveUp = createMoveUpService({
+    db,
+    catalog: createServiceCatalog(db),
+    userClient: (accessToken) => {
+      const client = createMedplumClient(medplumConfig);
+      client.setAccessToken(accessToken);
+      return client;
+    },
+  });
+
+  // Cancel + restore (S5.7): the split-principal pattern again — the status patch runs
+  // as the caller, the protector-slot writes under the cached service client. The
+  // cancel response's move-up match cue reads through the move-up service.
+  const cancel = createCancelService({
+    getFhirClient,
+    userClient: (accessToken) => {
+      const client = createMedplumClient(medplumConfig);
+      client.setAccessToken(accessToken);
+      return client;
+    },
+    countMoveUpMatches: moveUp.countMatches,
+  });
+
+  return { auth, booking, staff, events, reschedule, cancel, moveUp, pool };
 }
 
 const authWiring = buildAuthDeps();
@@ -213,6 +242,8 @@ const app = createApp({
   staff: authWiring?.staff,
   events: authWiring?.events,
   reschedule: authWiring?.reschedule,
+  cancel: authWiring?.cancel,
+  moveUp: authWiring?.moveUp,
 });
 
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {

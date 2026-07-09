@@ -1,5 +1,15 @@
 import type { CategoryColor } from "@medibun/design-tokens";
-import { boolean, index, integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import {
+  boolean,
+  index,
+  integer,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
 
 /**
  * Experience DB schema (ADR-0002). Sessions hold ENCRYPTED Medplum tokens
@@ -45,6 +55,42 @@ export const services = pgTable("services", {
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * The move-up list (S5.7): patients who want an earlier slot than the appointment they
+ * hold — the desk works it when a cancellation frees time. EXPERIENCE DATA, ids only:
+ * names/phones are resolved live from FHIR by the BFF as the caller; nothing PHI-shaped
+ * is stored here (the sanctioned reconcile-by-id pattern, DATA_MODEL.md). `note` is
+ * non-PHI by rule — availability quirks only, same rule as internal-event titles.
+ * Phase-2 seam: a Bot on Appointment?status=cancelled auto-matches `waiting` rows.
+ */
+export const moveUpRequests = pgTable(
+  "move_up_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** Medplum Patient id — the reconciliation key. */
+    patientId: text("patient_id").notNull(),
+    /** The later appointment they hold; fulfilling = rescheduling THIS earlier. */
+    appointmentId: text("appointment_id").notNull(),
+    /** Denormalized from the appointment for match filtering (our CodeSystem code). */
+    serviceCode: text("service_code").notNull(),
+    /** Preferred practitioner (Medplum Practitioner id); null = any qualified. */
+    practitionerId: text("practitioner_id"),
+    /** ≤120 chars (MAX_MOVE_UP_NOTE_LENGTH), non-PHI by rule. */
+    note: text("note"),
+    status: text("status").$type<"waiting" | "fulfilled" | "removed">().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (t) => [
+    // One WAITING entry per appointment (resolved history may repeat).
+    uniqueIndex("move_up_waiting_per_appointment_idx")
+      .on(t.appointmentId)
+      .where(sql`${t.status} = 'waiting'`),
+    // The list reads oldest-first (fairness) over waiting rows.
+    index("move_up_status_created_idx").on(t.status, t.createdAt),
+  ],
+);
 
 export const loginAttempts = pgTable(
   "login_attempts",

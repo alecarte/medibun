@@ -13,13 +13,20 @@ import {
   createApp,
   type AuthDeps,
   type BookingDeps,
+  type CancelDeps,
   type EventsDeps,
   type LogEntry,
+  type MoveUpDeps,
   type RescheduleDeps,
   type StaffDeps,
 } from "./app.js";
 import { InvalidSlotError, UnknownScheduleError, UnknownServiceError } from "./booking.js";
 import { InvalidEventRequestError, UnknownEventError } from "./events.js";
+import {
+  DuplicateMoveUpError,
+  InvalidMoveUpRequestError,
+  UnknownMoveUpEntryError,
+} from "./move-up.js";
 import { InvalidRescheduleRequestError } from "./reschedule.js";
 import { InvalidTransitionError, UnknownAppointmentError } from "./staff.js";
 
@@ -32,6 +39,8 @@ function makeApp(
     staff?: Partial<StaffDeps>;
     events?: Partial<EventsDeps>;
     reschedule?: Partial<RescheduleDeps>;
+    cancel?: Partial<CancelDeps>;
+    moveUp?: Partial<MoveUpDeps>;
   } = {},
 ) {
   const logs: LogEntry[] = [];
@@ -89,6 +98,21 @@ function makeApp(
         ...opts.events,
       }
     : undefined;
+  const cancel: CancelDeps | undefined = opts.cancel
+    ? {
+        cancelAppointment: () => Promise.reject(new Error("cancelAppointment not stubbed")),
+        restoreAppointment: () => Promise.reject(new Error("restoreAppointment not stubbed")),
+        ...opts.cancel,
+      }
+    : undefined;
+  const moveUp: MoveUpDeps | undefined = opts.moveUp
+    ? {
+        list: () => Promise.resolve([]),
+        add: () => Promise.reject(new Error("add not stubbed")),
+        resolve: () => Promise.reject(new Error("resolve not stubbed")),
+        ...opts.moveUp,
+      }
+    : undefined;
   const app = createApp({
     log: (entry) => logs.push(entry),
     checkMedplum: opts.checkMedplum ?? (() => Promise.resolve(true)),
@@ -97,6 +121,8 @@ function makeApp(
     staff,
     events,
     reschedule,
+    cancel,
+    moveUp,
   });
   return { app, logs };
 }
@@ -927,6 +953,229 @@ describe("staff routes", () => {
       });
       expect(res.status).toBe(403);
       expect(((await res.json()) as { error: string }).error).toBe("forbidden_origin");
+    });
+  });
+
+  describe("cancel + restore routes (S5.7)", () => {
+    const cancelled = { id: "a1", status: "cancelled" as const, moveUpMatches: 2 };
+    const post = (app: ReturnType<typeof makeApp>["app"], path: string, body?: unknown) =>
+      app.request(`/staff/appointments/a1/${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: "Bearer tok" },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      });
+
+    it("404s when cancel deps are not wired; 401/403 gate the principal", async () => {
+      const unwired = makeApp({ auth: staffSession, staff: {} });
+      expect((await post(unwired.app, "cancel", { reason: "patient" })).status).toBe(404);
+      const noSession = makeApp({ auth: {}, staff: {}, cancel: {} });
+      expect((await post(noSession.app, "cancel", { reason: "patient" })).status).toBe(401);
+      expect((await post(noSession.app, "restore")).status).toBe(401);
+      const patient = makeApp({ auth: patientSession, staff: {}, cancel: {} });
+      expect((await post(patient.app, "cancel", { reason: "patient" })).status).toBe(403);
+      expect((await post(patient.app, "restore")).status).toBe(403);
+    });
+
+    it("cancel: 200s with the match cue and 400s reasons outside the coded set", async () => {
+      const ok = makeApp({
+        auth: staffSession,
+        staff: {},
+        cancel: { cancelAppointment: () => Promise.resolve(cancelled) },
+      });
+      const res = await post(ok.app, "cancel", { reason: "patient" });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(cancelled);
+
+      expect((await post(ok.app, "cancel", { reason: "free text" })).status).toBe(400);
+      expect((await post(ok.app, "cancel", {})).status).toBe(400);
+      expect((await post(ok.app, "cancel", null)).status).toBe(400);
+    });
+
+    it("cancel: 409s stale/raced moves, 404s unknown ids", async () => {
+      const stale = makeApp({
+        auth: staffSession,
+        staff: {},
+        cancel: { cancelAppointment: () => Promise.reject(new InvalidTransitionError()) },
+      });
+      expect((await post(stale.app, "cancel", { reason: "patient" })).status).toBe(409);
+      const unknown = makeApp({
+        auth: staffSession,
+        staff: {},
+        cancel: { cancelAppointment: () => Promise.reject(new UnknownAppointmentError()) },
+      });
+      expect((await post(unknown.app, "cancel", { reason: "patient" })).status).toBe(404);
+    });
+
+    it("restore: 200s the undo and 409s an honestly-taken window", async () => {
+      const ok = makeApp({
+        auth: staffSession,
+        staff: {},
+        cancel: {
+          restoreAppointment: () => Promise.resolve({ id: "a1", status: "scheduled" as const }),
+        },
+      });
+      const res = await post(ok.app, "restore");
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ id: "a1", status: "scheduled" });
+
+      const taken = makeApp({
+        auth: staffSession,
+        staff: {},
+        cancel: { restoreAppointment: () => Promise.reject(new StatusConflictError()) },
+      });
+      expect((await post(taken.app, "restore")).status).toBe(409);
+    });
+
+    it("keeps both mutations behind the global Origin guard", async () => {
+      const { app } = makeApp({ auth: staffSession, staff: {}, cancel: {} });
+      for (const path of ["cancel", "restore"]) {
+        const res = await app.request(`/staff/appointments/a1/${path}`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            Authorization: "Bearer tok",
+            Origin: "https://evil.example",
+          },
+          body: JSON.stringify({ reason: "patient" }),
+        });
+        expect(res.status).toBe(403);
+        expect(((await res.json()) as { error: string }).error).toBe("forbidden_origin");
+      }
+    });
+  });
+
+  describe("move-up routes (S5.7)", () => {
+    const entry = {
+      id: "m1",
+      patientId: "pt1",
+      patientName: "Synthia Loginsmith",
+      appointmentId: "a1",
+      serviceCode: "svc-botox",
+      createdAt: "2026-07-09T12:00:00.000Z",
+    };
+
+    it("404s when move-up deps are not wired; 401/403 gate every route", async () => {
+      const unwired = makeApp({ auth: staffSession, staff: {} });
+      expect((await unwired.app.request("/staff/move-up")).status).toBe(404);
+      const noSession = makeApp({ auth: {}, staff: {}, moveUp: {} });
+      expect(
+        (await noSession.app.request("/staff/move-up", { headers: { Authorization: "Bearer t" } }))
+          .status,
+      ).toBe(401);
+      const patient = makeApp({ auth: patientSession, staff: {}, moveUp: {} });
+      for (const [path, method] of [
+        ["/staff/move-up", "GET"],
+        ["/staff/move-up", "POST"],
+        ["/staff/move-up/m1", "PATCH"],
+      ] as const) {
+        const res = await patient.app.request(path, {
+          method,
+          headers: { "content-type": "application/json", Authorization: "Bearer tok" },
+          ...(method === "GET" ? {} : { body: "{}" }),
+        });
+        expect(res.status).toBe(403);
+      }
+    });
+
+    it("GET lists entries; POST 201s an add, 400s bad requests, 409s duplicates", async () => {
+      const { app } = makeApp({
+        auth: staffSession,
+        staff: {},
+        moveUp: {
+          list: () => Promise.resolve([entry]),
+          add: () => Promise.resolve(entry),
+        },
+      });
+      const listed = await app.request("/staff/move-up", {
+        headers: { Authorization: "Bearer tok" },
+      });
+      expect(listed.status).toBe(200);
+      expect(await listed.json()).toEqual({ entries: [entry] });
+
+      const added = await app.request("/staff/move-up", {
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: "Bearer tok" },
+        body: JSON.stringify({ appointmentId: "a1" }),
+      });
+      expect(added.status).toBe(201);
+      expect(await added.json()).toEqual(entry);
+
+      const invalid = makeApp({
+        auth: staffSession,
+        staff: {},
+        moveUp: { add: () => Promise.reject(new InvalidMoveUpRequestError()) },
+      });
+      const bad = await invalid.app.request("/staff/move-up", {
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: "Bearer tok" },
+        body: JSON.stringify({ appointmentId: "" }),
+      });
+      expect(bad.status).toBe(400);
+
+      const dup = makeApp({
+        auth: staffSession,
+        staff: {},
+        moveUp: { add: () => Promise.reject(new DuplicateMoveUpError()) },
+      });
+      const conflicted = await dup.app.request("/staff/move-up", {
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: "Bearer tok" },
+        body: JSON.stringify({ appointmentId: "a1" }),
+      });
+      expect(conflicted.status).toBe(409);
+    });
+
+    it("PATCH resolves entries, 400s unknown statuses, 404s unknown/resolved ids", async () => {
+      const { app } = makeApp({
+        auth: staffSession,
+        staff: {},
+        moveUp: { resolve: () => Promise.resolve({ id: "m1", status: "fulfilled" as const }) },
+      });
+      const patch = (body: unknown) =>
+        app.request("/staff/move-up/m1", {
+          method: "PATCH",
+          headers: { "content-type": "application/json", Authorization: "Bearer tok" },
+          body: JSON.stringify(body),
+        });
+      const ok = await patch({ status: "fulfilled" });
+      expect(ok.status).toBe(200);
+      expect(await ok.json()).toEqual({ id: "m1", status: "fulfilled" });
+
+      expect((await patch({ status: "waiting" })).status).toBe(400);
+      expect((await patch({})).status).toBe(400);
+      expect((await patch(null)).status).toBe(400);
+
+      const gone = makeApp({
+        auth: staffSession,
+        staff: {},
+        moveUp: { resolve: () => Promise.reject(new UnknownMoveUpEntryError()) },
+      });
+      const missing = await gone.app.request("/staff/move-up/m1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json", Authorization: "Bearer tok" },
+        body: JSON.stringify({ status: "removed" }),
+      });
+      expect(missing.status).toBe(404);
+    });
+
+    it("keeps the move-up mutations behind the global Origin guard", async () => {
+      const { app } = makeApp({ auth: staffSession, staff: {}, moveUp: {} });
+      for (const [path, method] of [
+        ["/staff/move-up", "POST"],
+        ["/staff/move-up/m1", "PATCH"],
+      ] as const) {
+        const res = await app.request(path, {
+          method,
+          headers: {
+            "content-type": "application/json",
+            Authorization: "Bearer tok",
+            Origin: "https://evil.example",
+          },
+          body: "{}",
+        });
+        expect(res.status).toBe(403);
+        expect(((await res.json()) as { error: string }).error).toBe("forbidden_origin");
+      }
     });
   });
 

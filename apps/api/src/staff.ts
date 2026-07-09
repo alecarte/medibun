@@ -166,7 +166,7 @@ export function zonedDayBounds(
   return dayBoundsFor(ymdFormatter(timeZone).format(now), timeZone);
 }
 
-const telecomValue = (patient: Patient, system: "phone" | "email"): string | undefined =>
+export const telecomValue = (patient: Patient, system: "phone" | "email"): string | undefined =>
   patient.telecom?.find((t) => t.system === system && t.value)?.value;
 
 /** The first Practitioner participant's reference — the day sheet's and the
@@ -176,7 +176,7 @@ export const practitionerParticipant = (appointment: Appointment): string | unde
     ?.map((p) => p.actor?.reference)
     .find((ref) => ref?.startsWith("Practitioner/"));
 
-const patientParticipant = (appointment: Appointment): string | undefined =>
+export const patientParticipant = (appointment: Appointment): string | undefined =>
   appointment.participant
     ?.map((p) => p.actor?.reference)
     .find((ref) => ref?.startsWith("Patient/"));

@@ -1,11 +1,22 @@
-import { APPOINTMENT_STATUSES, isValidDateString, SESSION_COOKIE_NAME } from "@medibun/api-client";
+import {
+  APPOINTMENT_STATUSES,
+  CANCELLATION_REASONS,
+  isValidDateString,
+  MOVE_UP_RESOLUTIONS,
+  SESSION_COOKIE_NAME,
+} from "@medibun/api-client";
 import type {
+  AddMoveUpRequest,
   AppointmentStatus,
   BookedAppointment,
   BookingRequest,
+  CancellationReason,
+  CancelledAppointment,
   CreateInternalEventRequest,
   DaySheet,
   InternalEvent,
+  MoveUpEntry,
+  MoveUpResolution,
   PatientProfile,
   ServiceAvailability,
   ServiceSummary,
@@ -25,8 +36,14 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 
 import { InvalidSlotError, UnknownScheduleError, UnknownServiceError } from "./booking.js";
+import { InvalidCancelRequestError } from "./cancel.js";
 import { InvalidEventRequestError, UnknownEventError } from "./events.js";
 import type { RescheduledAppointment, RescheduleRequest } from "@medibun/api-client";
+import {
+  DuplicateMoveUpError,
+  InvalidMoveUpRequestError,
+  UnknownMoveUpEntryError,
+} from "./move-up.js";
 import { InvalidRescheduleRequestError } from "./reschedule.js";
 import { InvalidTransitionError, UnknownAppointmentError } from "./staff.js";
 
@@ -137,6 +154,44 @@ export type RescheduleDeps = {
   ) => Promise<RescheduledAppointment>;
 };
 
+/** Cancel + restore (S5.7): the status patch runs AS THE CALLER; only the protector
+ *  Slot writes ride the service client (see src/cancel.ts). */
+export type CancelDeps = {
+  /** Throws InvalidCancelRequestError / UnknownAppointmentError /
+   *  InvalidTransitionError / StatusConflictError. */
+  readonly cancelAppointment: (
+    user: { profileReference: string; accessToken: string },
+    appointmentId: string,
+    reason: CancellationReason,
+  ) => Promise<CancelledAppointment>;
+  /** Throws UnknownAppointmentError / InvalidTransitionError / StatusConflictError
+   *  (the freed window was taken — the honest undo 409). */
+  readonly restoreAppointment: (
+    user: { profileReference: string; accessToken: string },
+    appointmentId: string,
+  ) => Promise<{ id: string; status: "scheduled" }>;
+};
+
+/** Move-up list (S5.7): experience-DB rows (ids only), resolved against FHIR as the
+ *  caller on every read (see src/move-up.ts). */
+export type MoveUpDeps = {
+  readonly list: (user: {
+    profileReference: string;
+    accessToken: string;
+  }) => Promise<MoveUpEntry[]>;
+  /** Throws InvalidMoveUpRequestError / UnknownAppointmentError /
+   *  InvalidTransitionError / DuplicateMoveUpError. */
+  readonly add: (
+    user: { profileReference: string; accessToken: string },
+    request: AddMoveUpRequest,
+  ) => Promise<MoveUpEntry>;
+  /** Throws UnknownMoveUpEntryError. */
+  readonly resolve: (
+    entryId: string,
+    resolution: MoveUpResolution,
+  ) => Promise<{ id: string; status: MoveUpResolution }>;
+};
+
 export type AppDeps = {
   readonly log: (entry: LogEntry) => void;
   /** Resolves true when Medplum is reachable and credentials are valid. */
@@ -151,6 +206,10 @@ export type AppDeps = {
   readonly reschedule?: RescheduleDeps;
   /** Internal-event routes mount only when provided ALONG WITH auth + staff. */
   readonly events?: EventsDeps;
+  /** Cancel/restore routes mount only when provided ALONG WITH auth + staff. */
+  readonly cancel?: CancelDeps;
+  /** Move-up routes mount only when provided ALONG WITH auth + staff. */
+  readonly moveUp?: MoveUpDeps;
 };
 
 type Env = { Variables: { requestId: string; logDetail?: string } };
@@ -531,6 +590,116 @@ export function createApp(deps: AppDeps): Hono<Env> {
           } catch (err) {
             if (err instanceof InvalidRescheduleRequestError) {
               return fail(c, "invalid_request", 400);
+            }
+            return staffFailure(c, err);
+          }
+        });
+      }
+
+      // Cancel + restore (S5.7): staff session gates them; the status patch runs as
+      // the caller, the protector-slot writes under the service client (src/cancel.ts).
+      const cancel = deps.cancel;
+      if (cancel) {
+        app.post("/staff/appointments/:id/cancel", async (c) => {
+          const gate = await staffUser(c);
+          if (!gate.user) {
+            return gate.fail;
+          }
+          // ?? {} — a literal `null` body parses successfully, so the catch can't cover it.
+          const body = ((await c.req.json().catch(() => ({}))) ?? {}) as { reason?: unknown };
+          const reason = body.reason;
+          if (
+            typeof reason !== "string" ||
+            !(CANCELLATION_REASONS as readonly string[]).includes(reason)
+          ) {
+            return fail(c, "invalid_request", 400);
+          }
+          try {
+            return c.json(
+              await cancel.cancelAppointment(
+                gate.user,
+                c.req.param("id"),
+                reason as CancellationReason,
+              ),
+            );
+          } catch (err) {
+            if (err instanceof InvalidCancelRequestError) {
+              return fail(c, "invalid_request", 400);
+            }
+            return staffFailure(c, err);
+          }
+        });
+
+        app.post("/staff/appointments/:id/restore", async (c) => {
+          const gate = await staffUser(c);
+          if (!gate.user) {
+            return gate.fail;
+          }
+          try {
+            return c.json(await cancel.restoreAppointment(gate.user, c.req.param("id")));
+          } catch (err) {
+            return staffFailure(c, err);
+          }
+        });
+      }
+
+      // Move-up list (S5.7): experience-DB rows resolved against FHIR as the caller.
+      const moveUp = deps.moveUp;
+      if (moveUp) {
+        app.get("/staff/move-up", async (c) => {
+          const gate = await staffUser(c);
+          if (!gate.user) {
+            return gate.fail;
+          }
+          try {
+            return c.json({ entries: await moveUp.list(gate.user) });
+          } catch (err) {
+            return staffFailure(c, err);
+          }
+        });
+
+        app.post("/staff/move-up", async (c) => {
+          const gate = await staffUser(c);
+          if (!gate.user) {
+            return gate.fail;
+          }
+          const body = (await c.req.json().catch(() => undefined)) as unknown;
+          if (!body || typeof body !== "object") {
+            return fail(c, "invalid_request", 400);
+          }
+          try {
+            return c.json(await moveUp.add(gate.user, body as AddMoveUpRequest), 201);
+          } catch (err) {
+            if (err instanceof InvalidMoveUpRequestError) {
+              return fail(c, "invalid_request", 400);
+            }
+            // Already waiting — same recovery as any conflict: refetch the list.
+            if (err instanceof DuplicateMoveUpError) {
+              return fail(c, "conflict", 409);
+            }
+            return staffFailure(c, err);
+          }
+        });
+
+        app.patch("/staff/move-up/:id", async (c) => {
+          const gate = await staffUser(c);
+          if (!gate.user) {
+            return gate.fail;
+          }
+          // ?? {} — a literal `null` body parses successfully, so the catch can't cover it.
+          const body = ((await c.req.json().catch(() => ({}))) ?? {}) as { status?: unknown };
+          const status = body.status;
+          if (
+            typeof status !== "string" ||
+            !(MOVE_UP_RESOLUTIONS as readonly string[]).includes(status)
+          ) {
+            return fail(c, "invalid_request", 400);
+          }
+          try {
+            return c.json(await moveUp.resolve(c.req.param("id"), status as MoveUpResolution));
+          } catch (err) {
+            if (err instanceof UnknownMoveUpEntryError) {
+              return fail(c, "not_found", 404);
             }
             return staffFailure(c, err);
           }
