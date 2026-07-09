@@ -5,6 +5,7 @@ import {
   type RescheduledAppointment,
 } from "@medibun/api-client";
 import {
+  findScheduleFor,
   isInternalEvent,
   listSchedules,
   practiceTimezone,
@@ -19,7 +20,7 @@ import {
 import type { Slot } from "@medibun/fhir-types";
 
 import {
-  InvalidTransitionError,
+  assertScheduled,
   practitionerParticipant,
   UnknownAppointmentError,
   zonedInstant,
@@ -93,9 +94,7 @@ export function createRescheduleService(deps: {
       }
       // Scheduled-only (S5.5 interview): arrived/roomed patients are in the building;
       // completed/no-show are history. Same client recovery as a stale status move.
-      if (appointment.status !== "booked") {
-        throw new InvalidTransitionError();
-      }
+      assertScheduled(appointment);
       const serviceCode = serviceCodeOf(appointment);
       if (!serviceCode) {
         // v0 bookings always carry our service code ($book path); without it the
@@ -114,12 +113,10 @@ export function createRescheduleService(deps: {
         // misconfiguration — hard-fail, never guess (security review, LOW).
         throw new Error("no practice timezone on any schedule actor — cannot derive instants");
       }
+      // The SHARED practitioner+service predicate (medplum-backend) — the security
+      // control that scopes own-slot resolution; cancel/restore use the same one.
       const scheduleFor = (practitionerId: string) =>
-        schedules.find(
-          ({ schedule }) =>
-            schedule.actor?.[0]?.reference === `Practitioner/${practitionerId}` &&
-            serviceCodeOf(schedule) === serviceCode,
-        );
+        findScheduleFor(schedules, practitionerId, serviceCode);
       const target = scheduleFor(request.practitionerId);
       if (!target) {
         throw new InvalidRescheduleRequestError();

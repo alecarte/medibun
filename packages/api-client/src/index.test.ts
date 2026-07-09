@@ -419,6 +419,108 @@ describe("staff endpoints", () => {
     expect(err).toBeInstanceOf(StaffError);
     expect((err as StaffError).code).toBe("not_found");
   });
+
+  it("cancelAppointment POSTs the coded reason and returns the match cue", async () => {
+    const cancelled = { id: "a1", status: "cancelled", moveUpMatches: 2 };
+    const { fetchImpl, calls } = stubFetch(200, cancelled);
+    const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+    await expect(client.cancelAppointment("a/1", "patient")).resolves.toEqual(cancelled);
+    expect(calls[0]!.url).toBe("https://api.example.test/staff/appointments/a%2F1/cancel");
+    expect(calls[0]!.init?.method).toBe("POST");
+    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({ reason: "patient" });
+  });
+
+  it("cancelAppointment maps a 409 to conflict (not scheduled anymore / lost race)", async () => {
+    const { fetchImpl } = stubFetch(409, { error: "conflict", requestId: "r" });
+    const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+    const err = await client.cancelAppointment("a1", "practice").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StaffError);
+    expect((err as StaffError).code).toBe("conflict");
+  });
+
+  it("restoreAppointment POSTs the undo and returns the re-booked status", async () => {
+    const { fetchImpl, calls } = stubFetch(200, { id: "a1", status: "scheduled" });
+    const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+    await expect(client.restoreAppointment("a1")).resolves.toEqual({
+      id: "a1",
+      status: "scheduled",
+    });
+    expect(calls[0]!.url).toBe("https://api.example.test/staff/appointments/a1/restore");
+    expect(calls[0]!.init?.method).toBe("POST");
+  });
+
+  it("restoreAppointment maps a 409 to conflict (the freed window was taken)", async () => {
+    const { fetchImpl } = stubFetch(409, { error: "conflict", requestId: "r" });
+    const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+    const err = await client.restoreAppointment("a1").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StaffError);
+    expect((err as StaffError).code).toBe("conflict");
+  });
+
+  it("listMoveUp GETs /staff/move-up and unwraps the entries", async () => {
+    const entry = {
+      id: "m1",
+      patientId: "pt1",
+      patientName: "Synthia Loginsmith",
+      appointmentId: "a1",
+      serviceCode: "svc-botox",
+      createdAt: "2026-07-09T12:00:00.000Z",
+    };
+    const { fetchImpl, calls } = stubFetch(200, { entries: [entry] });
+    const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+    await expect(client.listMoveUp({ sessionToken: "tok" })).resolves.toEqual([entry]);
+    expect(calls[0]!.url).toBe("https://api.example.test/staff/move-up");
+    expect((calls[0]!.init?.headers as Record<string, string>).authorization).toBe("Bearer tok");
+  });
+
+  it("addMoveUp POSTs the request and returns the resolved entry", async () => {
+    const entry = {
+      id: "m1",
+      patientId: "pt1",
+      patientName: "Synthia Loginsmith",
+      appointmentId: "a1",
+      serviceCode: "svc-botox",
+      practitionerId: "pr1",
+      note: "mornings only",
+      createdAt: "2026-07-09T12:00:00.000Z",
+    };
+    const { fetchImpl, calls } = stubFetch(201, entry);
+    const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+    await expect(
+      client.addMoveUp({ appointmentId: "a1", practitionerId: "pr1", note: "mornings only" }),
+    ).resolves.toEqual(entry);
+    expect(calls[0]!.url).toBe("https://api.example.test/staff/move-up");
+    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({
+      appointmentId: "a1",
+      practitionerId: "pr1",
+      note: "mornings only",
+    });
+  });
+
+  it("addMoveUp maps a 409 to conflict (already on the list)", async () => {
+    const { fetchImpl } = stubFetch(409, { error: "conflict", requestId: "r" });
+    const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+    const err = await client.addMoveUp({ appointmentId: "a1" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StaffError);
+    expect((err as StaffError).code).toBe("conflict");
+  });
+
+  it("resolveMoveUp PATCHes the terminal status and resolves void", async () => {
+    const { fetchImpl, calls } = stubFetch(200, { id: "m1", status: "fulfilled" });
+    const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+    await expect(client.resolveMoveUp("m/1", "fulfilled")).resolves.toBeUndefined();
+    expect(calls[0]!.url).toBe("https://api.example.test/staff/move-up/m%2F1");
+    expect(calls[0]!.init?.method).toBe("PATCH");
+    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({ status: "fulfilled" });
+  });
+
+  it("resolveMoveUp maps a 404 to not_found (unknown or already resolved)", async () => {
+    const { fetchImpl } = stubFetch(404, { error: "not_found", requestId: "r" });
+    const client = createApiClient({ baseUrl: "https://api.example.test", fetch: fetchImpl });
+    const err = await client.resolveMoveUp("m1", "removed").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StaffError);
+    expect((err as StaffError).code).toBe("not_found");
+  });
 });
 
 describe("schedule contract helpers (shared by BFF and staff app)", () => {

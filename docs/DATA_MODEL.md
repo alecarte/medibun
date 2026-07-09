@@ -101,6 +101,46 @@ later as its own approval-gated design.
   marking the day off IS how staff discover who must be called.
 - Recurring events / weekly templates stay post-v0 (COMPETITIVE_NOTES §1).
 
+### Cancellation + move-up list (S5.7)
+
+- **Cancel is not an operation at our pin** (`$cancel` doesn't exist at v5.1.9, per the
+  A2 correction): a staff cancel is an `Appointment.status → cancelled` patch
+  (test-and-set on status + versionId) **plus deleting the appointment's protector
+  Slot(s)** — removing the busy Slot is exactly what makes `$find` offer the window
+  again. Order is a safety property: status first, slots after (a partial failure
+  strands a busy Slot — availability loss, ids logged — never a bookable window with a
+  live appointment). Restore (the ~10s undo) runs the mirror image: re-mint the
+  protector, re-check the window with the claim visible (the S5.5 pattern), then patch
+  back to `booked` — an occupied window 409s honestly.
+- **Cancellation reason is coded, never free text** (no PHI by construction): our
+  CodeSystem `https://medibun.com/fhir/CodeSystem/cancellation-reason`
+  (`patient | practice | no-longer-needed`) written to `Appointment.cancelationReason`
+  (example binding — custom CodeSystem is conformant, same argument as services /
+  internal-events). Restore removes it.
+- **Split principals**, same as S5c/S5.5: reads + the Appointment patch run AS THE
+  CALLER (org-scoped policy, audit attribution); only the Slot writes ride the BFF
+  service client (staff Slot access stays readonly).
+- **The move-up list is EXPERIENCE data** (`move_up_requests`, migration approved at
+  the S5.7 interview): **ids only** — patient id, held-appointment id, service code,
+  optional practitioner preference — plus a ≤120-char note that is **non-PHI by rule**
+  (availability quirks; same rule + create-UI microcopy as internal-event titles) and
+  `status: waiting | fulfilled | removed` with timestamps. Names/phones/times resolve
+  live from FHIR as the caller on every read; nothing PHI-shaped is stored. One
+  _waiting_ entry per appointment (partial unique index). Fulfilling = rescheduling
+  the held appointment earlier via S5.5, then marking the entry.
+- **Phase-2 growth-engine seam (seam only, decided at the interview):** auto-matching
+  is a Bot on a `Appointment?status=cancelled` Subscription working `waiting` rows;
+  the status/resolvedAt columns and the ordinary-FHIR-write cancel path are that seam.
+  Nothing auto-matches in v0 — the desk works the list manually (phone; no SMS/push
+  vendor yet). The seam should also add a `resolvedBy` column (security-review LOW,
+  2026-07-09): today's desk-only resolve isn't principal-attributed in the row, and
+  the Bot will need to distinguish machine from desk resolutions.
+- **Pre-second-tenant follow-up** (security-review LOW, 2026-07-09 — joins the
+  standing list under the AccessPolicy table): the move-up list/count queries are not
+  tenant-scoped. Rows are ids-only and caller-side FHIR resolution degrades cross-org
+  PHI to "Unknown", but an org column or org-scoped filter MUST land before Handal
+  joins the project.
+
 ### Clinical capture v1 — injectables (the flagship Aureva workflow)
 
 - **`MedicationAdministration` per product per injection site**: `status: completed` (required),
@@ -180,6 +220,13 @@ must be verified per environment — see `docs/AUTH.md` (attribution section).
 
 ### Review log
 
+- **2026-07-09 — cancellation + move-up list (S5.7) added** (design
+  interview-approved by Alec in-session: detail-card cancel with a **coded reason**
+  over free text; the approved `move_up_requests` migration — the A6-family gate;
+  staff-only list entry in v0; manual desk workflow with Bot auto-match as a
+  Phase-2 seam). See the "Cancellation + move-up list" section above; endpoints in
+  `docs/API.md`. No AccessPolicy change: cancel/restore reuse the staff Appointment
+  write + service-client Slot writes already granted.
 - **2026-07-06 — internal events (S5c) added** (design interview-approved by Alec
   in-session: Appointment + busy Slots over slots-only or availability edits; service-client
   writes over staff policy widening; three types with delete/undo). See the "Internal

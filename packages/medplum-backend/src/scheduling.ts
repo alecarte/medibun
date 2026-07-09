@@ -193,6 +193,25 @@ export type ScheduleWithActor = {
   readonly practitioner?: Practitioner;
 };
 
+/**
+ * The Schedule a practitioner holds for one of our services — the shared
+ * practitioner+service resolution predicate. This is a SECURITY CONTROL, not a
+ * convenience: reschedule (S5.5) and cancel/restore (S5.7) use it to scope which
+ * busy Slots count as a booking's own protectors, so the "which actor / which
+ * service" convention must never fork between call sites (security review, S5.7).
+ */
+export function findScheduleFor(
+  schedules: readonly ScheduleWithActor[],
+  practitionerId: string,
+  serviceCode: string,
+): ScheduleWithActor | undefined {
+  return schedules.find(
+    ({ schedule }) =>
+      schedule.actor?.[0]?.reference === `Practitioner/${practitionerId}` &&
+      serviceCodeOf(schedule) === serviceCode,
+  );
+}
+
 /** Map a `Schedule?_include=Schedule:actor` searchset to schedules with their actors. */
 export function schedulesWithActors(bundle: Bundle): ScheduleWithActor[] {
   const resources = bundleResources(bundle);

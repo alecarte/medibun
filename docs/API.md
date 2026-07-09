@@ -264,6 +264,108 @@ code on the appointment) · `401 unauthorized` · `403 forbidden` (non-staff pri
 `404 not_found` (unknown id — internal events answer this too) · `409 conflict` (target
 window taken, appointment not scheduled anymore, or a lost race — refetch and re-decide).
 
+### `POST /staff/appointments/:id/cancel`
+
+Cancels a **scheduled** appointment (S5.7). No `$cancel` exists at our Medplum pin — the
+BFF patches `Appointment.status → cancelled` with test-and-sets on the current status
+and versionId (a concurrent move loses cleanly), writes the **coded** reason to FHIR
+`Appointment.cancelationReason` (our CodeSystem, `docs/DATA_MODEL.md` — coded, never
+free text), then deletes the appointment's protector Slot(s), which is exactly what
+makes `$find` offer the window again. Status patch runs AS THE CALLER; slot deletes
+ride the service client (the S5c/S5.5 split-principal pattern). Body:
+
+```json
+{ "reason": "patient" }
+```
+
+`reason ∈ patient | practice | no-longer-needed`. Success: `200` with the move-up
+match cue — waiting move-up entries the freed window could serve (same service;
+the entry's practitioner preference doesn't exclude the freed column; never the
+cancelled appointment's own entry). A cue for the desk, not a promise of fit:
+
+```json
+{ "id": "…", "status": "cancelled", "moveUpMatches": 2 }
+```
+
+`400 invalid_request` (reason outside the coded set) · `401 unauthorized` ·
+`403 forbidden` (non-staff principal) · `404 not_found` (unknown id — internal events
+answer this too) · `409 conflict` (not scheduled anymore, or a lost race — refetch).
+
+### `POST /staff/appointments/:id/restore`
+
+The ~10s compensating undo of a cancel. Restore re-protects the window FIRST — mint
+the busy Slot, re-check the window with the claim visible (the S5.5 pattern; a failed
+restore never leaves the window blocked) — then patches `cancelled → booked` and
+removes the cancellation reason. Success: `200 { "id": "…", "status": "scheduled" }`.
+
+`401 unauthorized` · `403 forbidden` · `404 not_found` · `409 conflict` (**the freed
+window was taken inside the undo period** — surfaced honestly, the appointment stays
+cancelled; also: not cancelled anymore, no re-derivable schedule, or a lost race).
+
+### Move-up list (S5.7): `GET|POST /staff/move-up` · `PATCH /staff/move-up/:id`
+
+The desk-worked cancellation-backfill waitlist. Experience data: the
+`move_up_requests` table stores **ids only** (patient, appointment, service code,
+optional practitioner preference) plus a ≤120-char note that is **non-PHI by rule**
+(availability quirks — same rule and UI microcopy as internal-event titles). Names,
+phones, and appointment times are resolved live from FHIR **as the caller** on every
+read — nothing PHI-shaped enters the experience DB, reads are org-scoped by the
+caller's policy and audit-attribute to the real staff user. Fulfilling = rescheduling
+the patient's existing appointment earlier (the S5.5 endpoint), then marking the
+entry here. Phase-2 seam: a Bot on `Appointment?status=cancelled` works `waiting`
+rows automatically.
+
+**`GET /staff/move-up`** — waiting entries, oldest first (fairness). `200`:
+
+```json
+{
+  "entries": [
+    {
+      "id": "…",
+      "patientId": "…",
+      "patientName": "Synthia Loginsmith",
+      "patientPhone": "555-010-0100",
+      "appointmentId": "…",
+      "appointmentStart": "…",
+      "serviceCode": "svc-botox",
+      "serviceName": "Botox",
+      "practitionerId": "…",
+      "practitionerName": "Riley Reyes",
+      "note": "mornings only",
+      "createdAt": "…"
+    }
+  ]
+}
+```
+
+`patientPhone`/`appointmentStart`/`serviceName`/practitioner fields are optional —
+a since-deleted OR policy-hidden resource degrades that field (name falls back to
+"Unknown"), never the whole list: one row the caller's AccessPolicy can't resolve
+must not abort the panel or masquerade as a session problem. Only a dead token
+(401) fails the request. Absent `practitionerId` = any qualified provider.
+`401 unauthorized` · `403 forbidden` (non-staff principal).
+
+**`POST /staff/move-up`** — body
+`{ "appointmentId": "…", "practitionerId": "…?", "note": "…?" }`. The BFF reads
+the appointment as the caller and derives `patientId`/`serviceCode` server-side —
+only a **scheduled** appointment joins. Success: `201` with the resolved entry
+(shape above). One waiting entry per appointment (DB partial-unique).
+
+`400 invalid_request` (empty id, unknown practitioner preference, note over 120
+chars, or an appointment without our service code) · `401 unauthorized` ·
+`403 forbidden` · `404 not_found` (unknown id — internal events too) ·
+`409 conflict` (already waiting, or the appointment isn't scheduled anymore).
+
+**`PATCH /staff/move-up/:id`** — body
+`{ "status": "fulfilled" | "removed" }`, the two terminal states (fulfilled =
+their appointment was rescheduled earlier; removed = withdrawn). Success:
+`200 { "id": "…", "status": "fulfilled" }`. Resolved entries leave the list but stay
+in the table (`resolvedAt`).
+
+`400 invalid_request` (status outside the pair) · `401 unauthorized` ·
+`403 forbidden` · `404 not_found` (unknown, malformed, or already-resolved id —
+identical answers).
+
 ### `POST /staff/events`
 
 Creates an internal event (S5c): a staff meeting or a misc time block. Time off is a

@@ -2,6 +2,7 @@ import {
   FORWARD_TRANSITIONS,
   weekStart,
   type AppointmentStatus,
+  type CancellationReason,
   type DaySheetAppointment,
   type InternalEvent,
   type InternalEventType,
@@ -123,6 +124,14 @@ export function isAllDayEvent(
     wallTime(event.end, timeZone) === "00:00"
   );
 }
+
+/** Reason-picker labels for the coded cancellation set (S5.7 — coded, never free
+ *  text; the codes write to FHIR Appointment.cancelationReason). */
+export const CANCEL_REASON_LABEL: Record<CancellationReason, string> = {
+  patient: "Patient asked",
+  practice: "Practice change",
+  "no-longer-needed": "No longer needed",
+};
 
 /** Confirmation line for the undo toast (voice: states the outcome, never celebrates). */
 export const ACTION_DONE: Record<AppointmentStatus, string> = {

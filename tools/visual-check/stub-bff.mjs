@@ -88,6 +88,16 @@ const staffStatuses = new Map(STAFF_APPOINTMENTS.map((a) => [a.id, a.status]));
 // re-anchored — same tradeoff as created events) so the live-update poll shows them.
 const staffMoves = new Map(); // id -> { practitionerId, start, end }
 
+// Cancel + move-up (S5.7): cancelled appointments leave the sheet (restore brings
+// them back); the move-up list seeds two waiting entries so the panel has content.
+const cancelledIds = new Set();
+const MOVE_UP_SEED = [
+  { id: "mu-1", patientId: "pt-4", patientName: "Jo Park", appointmentId: "sa-4", appointmentStart: null, serviceCode: "svc-dysport", serviceName: "Dysport", practitionerId: "prac-riley", practitionerName: "Riley Reyes", note: "mornings only", createdAt: new Date(dayStart.getTime() - 2 * 86400000).toISOString() },
+  { id: "mu-2", patientId: "pt-9", patientName: "Grace Adeyemi-Thompson", patientPhone: "555-010-0119", appointmentId: "sa-9", appointmentStart: null, serviceCode: "svc-lip-filler", serviceName: "Lip filler", createdAt: new Date(dayStart.getTime() - 86400000).toISOString() },
+];
+const moveUpEntries = MOVE_UP_SEED.map((e) => ({ ...e }));
+let nextMoveUpId = 2;
+
 // ---- Internal events (S5c): one seeded meeting (re-anchored like the appointments);
 // creates/deletes persist in memory so the live-update poll shows them cross-station.
 const SEED_EVENTS = [
@@ -138,6 +148,10 @@ createServer((req, res) => {
     // appointments across the days so every column has content to review.
     const rangeStart = Date.parse(`${date}T13:00:00Z`); // 9:00 AM EDT
     const shift = rangeStart - dayStart.getTime();
+    // Map with the FIXED index first, filter cancelled after: the week-view day
+    // bucket (i % days) must stay anchored to each appointment's position in
+    // STAFF_APPOINTMENTS, or a cancel would re-bucket every later appointment to a
+    // different weekday column (review finding, 2026-07-09).
     const appointments = STAFF_APPOINTMENTS.map((a, i) => {
       const dayOffset = (days > 1 ? i % days : 0) * 86400000;
       const moved = staffMoves.get(a.id);
@@ -148,7 +162,7 @@ createServer((req, res) => {
         practitionerId: moved?.practitionerId ?? a.practitionerId,
         status: staffStatuses.get(a.id),
       };
-    });
+    }).filter((a) => !cancelledIds.has(a.id));
     const rangeEnd = rangeStart + days * 86400000;
     const events = [
       ...SEED_EVENTS.map((e) => ({
@@ -225,6 +239,97 @@ createServer((req, res) => {
       };
       staffMoves.set(id, moved);
       json(res, 200, { id, ...moved });
+    });
+    return;
+  }
+  // Cancel + restore (S5.7). The match cue counts waiting same-service entries whose
+  // practitioner preference doesn't exclude the freed column (mirrors the real BFF).
+  const cancelMatch = url.pathname.match(/^\/staff\/appointments\/([^/]+)\/cancel$/);
+  if (req.method === "POST" && cancelMatch) {
+    const id = decodeURIComponent(cancelMatch[1]);
+    const appointment = STAFF_APPOINTMENTS.find((a) => a.id === id);
+    if (!appointment || cancelledIds.has(id))
+      return json(res, 404, { error: "not_found", requestId: "stub" });
+    if (staffStatuses.get(id) !== "scheduled")
+      return json(res, 409, { error: "conflict", requestId: "stub" });
+    cancelledIds.add(id);
+    const moveUpMatches = moveUpEntries.filter(
+      (e) =>
+        e.appointmentId !== id &&
+        e.serviceCode === appointment.serviceCode &&
+        (!e.practitionerId || e.practitionerId === appointment.practitionerId),
+    ).length;
+    return json(res, 200, { id, status: "cancelled", moveUpMatches });
+  }
+  const restoreMatch = url.pathname.match(/^\/staff\/appointments\/([^/]+)\/restore$/);
+  if (req.method === "POST" && restoreMatch) {
+    const id = decodeURIComponent(restoreMatch[1]);
+    if (!cancelledIds.has(id)) return json(res, 409, { error: "conflict", requestId: "stub" });
+    cancelledIds.delete(id);
+    return json(res, 200, { id, status: "scheduled" });
+  }
+  // Move-up list (S5.7): seeded waiting entries + staff adds; resolutions remove.
+  if (url.pathname === "/staff/move-up" && req.method === "GET") {
+    const anchor = Date.parse(`${new Date().toISOString().slice(0, 10)}T13:00:00Z`);
+    const entries = moveUpEntries.map((e) => {
+      const held = STAFF_APPOINTMENTS.find((a) => a.id === e.appointmentId);
+      const { appointmentStart: _seed, ...rest } = e;
+      return {
+        ...rest,
+        ...(held
+          ? {
+              appointmentStart: new Date(
+                Date.parse(held.start) + (anchor - dayStart.getTime()),
+              ).toISOString(),
+            }
+          : {}),
+      };
+    });
+    return json(res, 200, { entries });
+  }
+  if (url.pathname === "/staff/move-up" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      const request = JSON.parse(body);
+      const held = STAFF_APPOINTMENTS.find((a) => a.id === request.appointmentId);
+      if (!held) return json(res, 404, { error: "not_found", requestId: "stub" });
+      if (moveUpEntries.some((e) => e.appointmentId === request.appointmentId))
+        return json(res, 409, { error: "conflict", requestId: "stub" });
+      const practitioner =
+        request.practitionerId === "prac-riley"
+          ? "Riley Reyes"
+          : request.practitionerId === "prac-maya"
+            ? "Maya Chen"
+            : undefined;
+      const entry = {
+        id: `mu-created-${++nextMoveUpId}`,
+        patientId: held.patientId,
+        patientName: held.patientName,
+        appointmentId: held.id,
+        appointmentStart: held.start,
+        serviceCode: held.serviceCode,
+        serviceName: held.serviceName,
+        ...(request.practitionerId ? { practitionerId: request.practitionerId } : {}),
+        ...(practitioner ? { practitionerName: practitioner } : {}),
+        ...(request.note ? { note: request.note } : {}),
+        createdAt: new Date().toISOString(),
+      };
+      moveUpEntries.push(entry);
+      json(res, 201, entry);
+    });
+    return;
+  }
+  const moveUpMatch = url.pathname.match(/^\/staff\/move-up\/([^/]+)$/);
+  if (req.method === "PATCH" && moveUpMatch) {
+    const id = decodeURIComponent(moveUpMatch[1]);
+    const index = moveUpEntries.findIndex((e) => e.id === id);
+    if (index < 0) return json(res, 404, { error: "not_found", requestId: "stub" });
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      const [entry] = moveUpEntries.splice(index, 1);
+      json(res, 200, { id: entry.id, status: JSON.parse(body).status });
     });
     return;
   }

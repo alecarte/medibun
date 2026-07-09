@@ -73,6 +73,17 @@ export class UnknownAppointmentError extends Error {
   }
 }
 
+/** The scheduled-only precondition shared by reschedule (S5.5), cancel, and
+ *  move-up add (S5.7): arrived/roomed patients are in the building; completed /
+ *  no-show / cancelled are history. ONE guard, so a future workflow change (e.g.
+ *  cancelling a same-day arrived patient) is a one-place decision. Same client
+ *  recovery as a stale status move: 409 → refetch and re-decide. */
+export function assertScheduled(appointment: Appointment): void {
+  if (appointment.status !== "booked") {
+    throw new InvalidTransitionError();
+  }
+}
+
 /** Per-timezone cached Intl formatters — construction is expensive and the day-bounds
  *  math calls these several times per request. */
 const wallClockFormatters = new Map<string, Intl.DateTimeFormat>();
@@ -166,7 +177,7 @@ export function zonedDayBounds(
   return dayBoundsFor(ymdFormatter(timeZone).format(now), timeZone);
 }
 
-const telecomValue = (patient: Patient, system: "phone" | "email"): string | undefined =>
+export const telecomValue = (patient: Patient, system: "phone" | "email"): string | undefined =>
   patient.telecom?.find((t) => t.system === system && t.value)?.value;
 
 /** The first Practitioner participant's reference — the day sheet's and the
@@ -176,7 +187,7 @@ export const practitionerParticipant = (appointment: Appointment): string | unde
     ?.map((p) => p.actor?.reference)
     .find((ref) => ref?.startsWith("Practitioner/"));
 
-const patientParticipant = (appointment: Appointment): string | undefined =>
+export const patientParticipant = (appointment: Appointment): string | undefined =>
   appointment.participant
     ?.map((p) => p.actor?.reference)
     .find((ref) => ref?.startsWith("Patient/"));

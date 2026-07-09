@@ -115,13 +115,7 @@ booking arrives with S11's assistant, or its own slice). ~~Live updates & privac
    column cluster into side-by-side lanes (greedy lane reuse; solo blocks keep the full
    width). Prerequisite for drag — dropping onto occupied space creates overlaps.
 2. **S5.5 drag-to-reschedule** — shipped, see §10.
-3. **S5.7 move-up list** — the 4D cancellation-backfill waitlist. Hidden dependency,
-   recorded: **no cancellation affordance exists anywhere yet** (portal or staff; `$cancel`
-   doesn't exist at our Medplum pin — cancel = staff status write to `cancelled` + slot
-   freeing), so S5.7 starts with staff-side cancel (undo-over-confirm) before the list
-   itself. The list is experience data → **experience-DB migration, approval-gated**;
-   auto-match on cancellation is Phase-2 growth-engine material (Bots). Design round at
-   slice start.
+3. **S5.7 move-up list — shipped, see §11** (interview-approved + built 2026-07-09).
 4. **S5.8 room/resource columns** — rooms as first-class calendars ("OR 2"). Direction:
    rooms are `Location` resources with their own Schedules (FHIR allows a Location actor;
    **verify `$find` accepts non-Practitioner actors against the v5.1.9 source at build
@@ -149,9 +143,57 @@ toggles, jump-ahead nav, a plain Find-Openings affordance alongside S11, grid zo
   A 409 on drop explains and refreshes, never clobbers.
 - **Queued follow-ups**: touch drag (a finger on a block must keep scrolling the grid —
   needs a long-press affordance) · keyboard reschedule (via the detail card) · week-view
-  drag (single-practitioner columns make it a date move — different interaction).
+  drag (single-practitioner columns make it a date move — different interaction) ·
+  two S5.7-review observations on this pre-existing code (2026-07-09): the participant
+  remap rewrites EVERY Practitioner participant to the target (harmless while $book
+  mints exactly one, wrong the day multi-practitioner appointments exist), and a drag
+  whose first committed pointer move sits over the sticky time gutter defaults its
+  target to column 0 (drop there moves the appointment to the first practitioner).
+
+## 11. S5.7 — staff cancel + move-up list (interview-approved Alec 2026-07-09, built)
+
+- **Cancel** (the recorded hidden dependency — no cancellation affordance existed
+  anywhere): a **destructive detail-card action**, deliberately outside the status
+  menu (cancel removes the row and frees the window; it is not a workflow step).
+  **Scheduled-only** (same reasoning as S5.5 drag: arrived/roomed are in the
+  building; no-show stays the status-menu path). Undo-over-confirm: the block
+  disappears immediately, a ~10s toast offers Undo; restore re-protects the window
+  first and **409s honestly if the freed time was taken** inside the undo period.
+  **Coded reason required** (decided over no-reason and over free text): patient ·
+  practice · no-longer-needed → FHIR `Appointment.cancelationReason` under our
+  CodeSystem. The freed window is immediately re-bookable — deleting the protector
+  Slot is what makes `$find` offer it again. Mechanics + split principals in
+  DATA_MODEL.md; endpoints in API.md.
+- **Move-up list** (the 4D gap feature, COMPETITIVE_NOTES §6): a toolbar **Move-up
+  panel**, oldest-first (fairness), each row showing live-resolved name · phone ·
+  service · held-appointment time · practitioner preference · availability note.
+  The desk calls (no SMS/push in v0), moves the appointment earlier with the normal
+  reschedule tools, then marks the entry **Fulfilled** (or **Remove**). **Staff-only
+  entry in v0** from the detail card ("Add to move-up list": practitioner pinned to
+  the current provider with an any-provider toggle; note ≤120 chars, non-PHI by
+  rule, stated at the form) — the portal "notify me if earlier opens" toggle joins
+  the Phase-2 notify/growth work, where it can actually notify. Adds are undoable
+  (the toast resolves the fresh entry as removed).
+- **Post-cancel match cue** (the execution win over 4D's dumb list): the cancel
+  toast reads "Cancelled — S. L. · 2 move-up matches" with a **View list** button
+  when waiting same-service entries fit the freed column. A cue, not a promise —
+  the panel is where staff judge actual fit.
+- **Privacy mask** covers the panel and toasts like every patient surface (initials,
+  hidden phone).
+- **Auto-match on cancellation is a seam only** (Phase-2 growth engine): a Bot on
+  `Appointment?status=cancelled` working `waiting` rows — the experience-DB status
+  columns and the ordinary-FHIR-write cancel path are the seam (DATA_MODEL.md).
 
 ## Review log
+
+- 2026-07-09 — **S5.7 shipped** (§11): staff cancel end to end (coded-reason detail-card
+  action, undo-over-confirm with honest restore-409, protector-slot freeing) + the
+  move-up list (approved `move_up_requests` experience-DB migration — ids only, live
+  FHIR resolution as the caller; toolbar panel; detail-card add with any-provider
+  toggle + non-PHI note; post-cancel match cue with View list). Four design decisions
+  interview-approved by Alec the same day: cancel = detail-card destructive action
+  WITH a coded reason; the migration as proposed; panel + post-cancel match cue with
+  manual fulfil-marking; staff-only list entry in v0.
 
 - 2026-07-06 — **Overlap layout shipped** (pulled forward from the 4D study the same day
   Alec approved the pull-forward): `columnLayout` clusters transitively-overlapping

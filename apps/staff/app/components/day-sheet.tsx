@@ -1,13 +1,17 @@
 "use client";
 
 import {
+  CANCELLATION_REASONS,
   createApiClient,
+  MAX_MOVE_UP_NOTE_LENGTH,
   StaffError,
   type AppointmentStatus,
+  type CancellationReason,
   type CreateInternalEventRequest,
   type DaySheet,
   type DaySheetAppointment,
   type InternalEvent,
+  type MoveUpEntry,
 } from "@medibun/api-client";
 import { useRouter } from "next/navigation";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -15,6 +19,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ACTION_DONE,
   blockGeometry,
+  CANCEL_REASON_LABEL,
   CATEGORY_EDGE,
   columnLayout,
   daySpan,
@@ -43,7 +48,7 @@ import {
   ymdOf,
   type ScheduleView,
 } from "../lib/day-sheet";
-import { IDLE_MASK_MS, maskName, POLL_INTERVAL_MS } from "../lib/privacy";
+import { IDLE_MASK_MS, maskName, maskValue, POLL_INTERVAL_MS } from "../lib/privacy";
 import { EventForm } from "./event-form";
 import {
   ChevronDownIcon,
@@ -55,6 +60,7 @@ import {
   PlusIcon,
 } from "./icons";
 import { MiniCalendar } from "./mini-calendar";
+import { MoveUpPanel } from "./move-up-panel";
 import { Popover } from "./popover";
 import { ShortcutsPopover } from "./shortcuts";
 import { Tooltip } from "./tooltip";
@@ -93,6 +99,21 @@ type Undo =
       readonly kind: "move";
       readonly appointment: DaySheetAppointment;
       readonly expiresAt: number;
+    }
+  | {
+      /** Cancel (S5.7): undo restores the booking and re-protects its window — which
+       *  can honestly 409 if the freed time was taken inside the undo period. */
+      readonly kind: "cancel";
+      readonly appointment: DaySheetAppointment;
+      /** The post-cancel desk cue: waiting move-up entries the freed window fits. */
+      readonly matches: number;
+      readonly expiresAt: number;
+    }
+  | {
+      /** Add-to-move-up (S5.7): undo resolves the fresh entry as removed. */
+      readonly kind: "moveup";
+      readonly entry: MoveUpEntry;
+      readonly expiresAt: number;
     };
 
 /** A live drag: the ghost's target column + snapped start (minutes-of-day).
@@ -118,6 +139,36 @@ type Column = {
  *  it, so sort here instead of trusting the wire order. */
 const byStart = (x: DaySheetAppointment, y: DaySheetAppointment) => x.start.localeCompare(y.start);
 
+/** A copy of `record` without `key` — the optimistic-overlay prune every rollback
+ *  path (cancel, restore, move-undo) shares. */
+function withoutKey<T>(record: Record<string, T>, key: string): Record<string, T> {
+  return Object.fromEntries(Object.entries(record).filter(([k]) => k !== key));
+}
+
+/** The undo toast's line, per variant — one switch, so a new undo kind is added
+ *  here and in undoNow, never re-balanced inside a nested ternary. */
+function undoToastLabel(undo: Undo, displayName: (name: string) => string): string {
+  switch (undo.kind) {
+    case "status":
+      return `${ACTION_DONE[undo.to]} — ${displayName(undo.appointment.patientName)}`;
+    case "move":
+      return `Moved — ${displayName(undo.appointment.patientName)}`;
+    case "cancel": {
+      const cue =
+        undo.matches > 0
+          ? ` · ${undo.matches} move-up ${undo.matches === 1 ? "match" : "matches"}`
+          : "";
+      return `Cancelled — ${displayName(undo.appointment.patientName)}${cue}`;
+    }
+    case "moveup":
+      return `Added to the move-up list — ${displayName(undo.entry.patientName)}`;
+    case "event":
+      return `${undo.event.title ?? EVENT_TYPE_LABEL[undo.event.type]} ${
+        undo.action === "added" ? "added" : "removed"
+      }`;
+  }
+}
+
 /** Longest event first: DOM order is paint order, so a meeting inside a day-off wash
  *  stays visible and clickable above it. */
 const byDurationDesc = (x: InternalEvent, y: InternalEvent) =>
@@ -136,6 +187,91 @@ function DetailRow({ label, value }: { label: string; value?: string }) {
     <div className="flex items-baseline justify-between gap-4 py-1">
       <dt className="text-xs text-text-secondary">{label}</dt>
       <dd className="min-w-0 truncate text-sm text-text-primary tabular-nums">{value ?? "—"}</dd>
+    </div>
+  );
+}
+
+/** The detail card's add-to-move-up form (S5.7): practitioner preference pinned to
+ *  the appointment's own provider by default, with an any-provider opt-out, plus a
+ *  bounded availability note that is NON-PHI BY RULE (the microcopy states it, same
+ *  as internal-event titles). */
+function AddToMoveUpForm({
+  practitionerId,
+  practitionerName,
+  onAdd,
+  onBack,
+}: {
+  practitionerId: string;
+  practitionerName?: string;
+  /** Resolves on success (the parent closes the card); rejects keep the form open. */
+  onAdd: (request: { practitionerId?: string; note?: string }) => Promise<void>;
+  onBack: () => void;
+}) {
+  const [anyProvider, setAnyProvider] = useState(false);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  async function submit() {
+    setBusy(true);
+    setFailed(false);
+    try {
+      await onAdd({
+        ...(anyProvider ? {} : { practitionerId }),
+        ...(note.trim() ? { note: note.trim() } : {}),
+      });
+    } catch {
+      setFailed(true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 border-t border-border-hairline pt-3">
+      <p className="text-xs text-text-secondary">
+        They&apos;ll be called when an earlier time frees up.
+      </p>
+      <label className="mt-2 flex items-center gap-2 text-sm text-text-primary">
+        <input
+          type="checkbox"
+          checked={anyProvider}
+          onChange={(e) => setAnyProvider(e.target.checked)}
+        />
+        Any provider{practitionerName ? ` (currently ${practitionerName})` : ""}
+      </label>
+      <input
+        type="text"
+        value={note}
+        maxLength={MAX_MOVE_UP_NOTE_LENGTH}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder="Availability note — e.g. mornings only"
+        aria-label="Availability note"
+        className="mt-2 w-full rounded-control border border-border-interactive px-2.5 py-1.5 text-sm text-text-primary"
+      />
+      <p className="mt-1 text-xs text-text-secondary">Availability only — never patient details.</p>
+      {failed && (
+        <p className="mt-1 text-xs text-status-warning-text">
+          Couldn&apos;t add to the list. Try again.
+        </p>
+      )}
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void submit()}
+          className="rounded-control bg-action-primary px-3 py-1.5 text-sm font-medium text-text-on-accent disabled:opacity-60"
+        >
+          Add to move-up list
+        </button>
+        <button
+          type="button"
+          onClick={onBack}
+          className="rounded-control px-3 py-1.5 text-sm text-text-secondary"
+        >
+          Back
+        </button>
+      </div>
     </div>
   );
 }
@@ -163,6 +299,10 @@ export function ScheduleView({
   const [overrides, setOverrides] = useState<Record<string, AppointmentStatus>>({});
   const statusOf = (a: DaySheetAppointment) => overrides[a.id] ?? a.status;
 
+  // Optimistically-cancelled ids (S5.7): the block disappears the moment the desk
+  // cancels; the refreshed sheet (which no longer carries the appointment) clears it.
+  const [cancelledIds, setCancelledIds] = useState<Record<string, true>>({});
+
   // Week filter: an in-page pick (replaceState, no refetch) wins while valid, else the
   // URL param, else the signed-in practitioner (when they have a column), else column 1.
   const practitionerIds = useMemo(() => sheet.practitioners.map((p) => p.practitionerId), [sheet]);
@@ -182,6 +322,15 @@ export function ScheduleView({
   const [eventDetailId, setEventDetailId] = useState<string | undefined>();
   const [shortcutsOpen, setShortcutsOpen] = useState(false); // controlled: "?" opens it
   const [createOpen, setCreateOpen] = useState(false); // controlled: "N" opens it
+  const [moveUpOpen, setMoveUpOpen] = useState(false); // controlled: the toast opens it too
+  // The detail card's footer mode: workflow actions, the cancel reason picker, or the
+  // add-to-move-up form. Resets whenever the card targets a different appointment.
+  const [detailMode, setDetailMode] = useState<"actions" | "cancel" | "moveup">("actions");
+  const [prevDetailId, setPrevDetailId] = useState<string | undefined>(detailId);
+  if (prevDetailId !== detailId) {
+    setPrevDetailId(detailId);
+    setDetailMode("actions");
+  }
   const [undo, setUndo] = useState<Undo | undefined>();
   const [undoSecondsLeft, setUndoSecondsLeft] = useState(0);
   const [notice, setNotice] = useState<string | undefined>();
@@ -225,6 +374,7 @@ export function ScheduleView({
     setPrev({ sheet, practitionerId });
     setOverrides({});
     setMoves({});
+    setCancelledIds({});
     if (prev.practitionerId !== practitionerId) {
       setPicked(undefined);
     }
@@ -239,13 +389,16 @@ export function ScheduleView({
 
   // Confirmed moves applied over the wire sheet — everything downstream (columns,
   // keyboard map, detail card) sees the moved appointment where it now lives.
+  // Cancelled blocks (S5.7) drop out entirely until the refreshed sheet confirms.
   const effectiveAppointments = useMemo(
     () =>
-      sheet.appointments.map((a) => {
-        const move = moves[a.id];
-        return move ? { ...a, ...move } : a;
-      }),
-    [sheet, moves],
+      sheet.appointments
+        .filter((a) => !cancelledIds[a.id])
+        .map((a) => {
+          const move = moves[a.id];
+          return move ? { ...a, ...move } : a;
+        }),
+    [sheet, moves, cancelledIds],
   );
 
   // ---- Columns ---------------------------------------------------------------
@@ -456,8 +609,110 @@ export function ScheduleView({
       void writeStatus(entry.appointment, entry.to, entry.from, false);
     } else if (entry.kind === "move") {
       void undoMove(entry.appointment);
+    } else if (entry.kind === "cancel") {
+      void undoCancel(entry.appointment);
+    } else if (entry.kind === "moveup") {
+      void undoMoveUpAdd(entry.entry);
     } else {
       void undoEvent(entry);
+    }
+  }
+
+  // ---- Cancel + restore (S5.7) --------------------------------------------------
+  /** Cancel with a coded reason: the block disappears immediately, the freed window
+   *  becomes bookable server-side, and the toast offers the ~10s restore. */
+  async function cancelNow(appointment: DaySheetAppointment, reason: CancellationReason) {
+    setDetailId(undefined);
+    setCancelledIds((s) => ({ ...s, [appointment.id]: true }));
+    if (focusedId === appointment.id) {
+      setFocusedId(undefined); // a hidden block must not hold the keyboard cursor
+    }
+    pendingWrites.current += 1;
+    try {
+      const result = await api.cancelAppointment(appointment.id, reason);
+      setUndo({
+        kind: "cancel",
+        appointment,
+        matches: result.moveUpMatches,
+        expiresAt: Date.now() + UNDO_WINDOW_MS,
+      });
+      router.refresh();
+    } catch (err) {
+      setCancelledIds((s) => withoutKey(s, appointment.id));
+      if (err instanceof StaffError && err.code === "conflict") {
+        setNotice("That appointment changed on another station. Refreshing the schedule.");
+        router.refresh();
+      } else {
+        setNotice("Couldn't cancel the appointment. Try again.");
+      }
+    } finally {
+      pendingWrites.current -= 1;
+    }
+  }
+
+  /** Undo a cancel: restore re-books the appointment and re-protects its window —
+   *  which can honestly 409 if the freed time was taken inside the undo period. */
+  async function undoCancel(appointment: DaySheetAppointment) {
+    // Optimistic: the block reappears up front and re-hides if the restore loses.
+    setCancelledIds((s) => withoutKey(s, appointment.id));
+    pendingWrites.current += 1;
+    try {
+      await api.restoreAppointment(appointment.id);
+      router.refresh();
+    } catch (err) {
+      setCancelledIds((s) => ({ ...s, [appointment.id]: true }));
+      if (err instanceof StaffError && err.code === "conflict") {
+        setNotice(
+          "Couldn't restore — the time may no longer be free. The appointment stays cancelled.",
+        );
+        router.refresh();
+      } else {
+        // Restore the undo affordance — "Try again" must have a button to press.
+        setUndo({
+          kind: "cancel",
+          appointment,
+          matches: 0,
+          expiresAt: Date.now() + UNDO_WINDOW_MS,
+        });
+        setNotice("Couldn't restore the appointment. Try again.");
+      }
+    } finally {
+      pendingWrites.current -= 1;
+    }
+  }
+
+  // ---- Move-up list (S5.7) --------------------------------------------------
+  /** Add the detail card's patient to the move-up list. Duplicate adds resolve
+   *  quietly (the entry is already there); other failures rethrow so the inline
+   *  form keeps its error. */
+  async function addToMoveUp(
+    appointment: DaySheetAppointment,
+    request: { practitionerId?: string; note?: string },
+  ) {
+    try {
+      const entry = await api.addMoveUp({ appointmentId: appointment.id, ...request });
+      setDetailId(undefined);
+      setUndo({ kind: "moveup", entry, expiresAt: Date.now() + UNDO_WINDOW_MS });
+    } catch (err) {
+      if (err instanceof StaffError && err.code === "conflict") {
+        setDetailId(undefined);
+        setNotice("Already on the move-up list.");
+        return;
+      }
+      throw err;
+    }
+  }
+
+  async function undoMoveUpAdd(entry: MoveUpEntry) {
+    try {
+      await api.resolveMoveUp(entry.id, "removed");
+    } catch (err) {
+      // Already resolved from the panel (fulfilled/removed) inside the undo window:
+      // there is nothing left to undo — a legitimate no-op, never an error notice.
+      if (err instanceof StaffError && err.code === "not_found") {
+        return;
+      }
+      setNotice("Couldn't undo that. Check the move-up list.");
     }
   }
 
@@ -467,7 +722,7 @@ export function ScheduleView({
    *  the original window immediately) and rolls back if the write fails. */
   async function undoMove(original: DaySheetAppointment) {
     const overlay = moves[original.id];
-    setMoves((m) => Object.fromEntries(Object.entries(m).filter(([id]) => id !== original.id)));
+    setMoves((m) => withoutKey(m, original.id));
     pendingWrites.current += 1;
     try {
       await api.rescheduleAppointment(original.id, {
@@ -962,6 +1217,24 @@ export function ScheduleView({
             )}
           </Popover>
 
+          <Popover
+            align="end"
+            open={moveUpOpen}
+            onOpenChange={setMoveUpOpen}
+            trigger={(props) => (
+              <Tooltip label="Move-up list">
+                <button
+                  {...props}
+                  className="rounded-control border border-border-interactive px-2.5 py-1 text-sm text-text-primary hover:bg-surface-well"
+                >
+                  Move-up
+                </button>
+              </Tooltip>
+            )}
+          >
+            {(close) => <MoveUpPanel api={api} timezone={tz} masked={masked} onClose={close} />}
+          </Popover>
+
           <Tooltip label="Privacy mask" shortcut="P">
             <button
               type="button"
@@ -1386,53 +1659,106 @@ export function ScheduleView({
           {/* While masked, present details read "Hidden" (never the value); a missing
               value keeps its honest em dash. */}
           <dl className="mt-3 border-t border-border-hairline pt-2">
-            <DetailRow
-              label="Phone"
-              value={masked && detail.patientPhone ? "Hidden" : detail.patientPhone}
-            />
-            <DetailRow
-              label="Email"
-              value={masked && detail.patientEmail ? "Hidden" : detail.patientEmail}
-            />
+            <DetailRow label="Phone" value={maskValue(masked, detail.patientPhone)} />
+            <DetailRow label="Email" value={maskValue(masked, detail.patientEmail)} />
             <DetailRow
               label="Booked"
-              value={
-                detail.bookedAt
-                  ? masked
-                    ? "Hidden"
-                    : formatBookedAt(detail.bookedAt, tz)
-                  : undefined
-              }
+              value={maskValue(
+                masked,
+                detail.bookedAt ? formatBookedAt(detail.bookedAt, tz) : undefined,
+              )}
             />
           </dl>
-          <div className="mt-3 flex items-center justify-between gap-2">
-            <div className="flex gap-2">
-              {FORWARD_ACTIONS[detailStatus].map(({ to, label }, index) => (
+          {detailMode === "actions" && (
+            <>
+              <div className="mt-3 flex items-center justify-between gap-2">
+                <div className="flex gap-2">
+                  {FORWARD_ACTIONS[detailStatus].map(({ to, label }, index) => (
+                    <button
+                      key={to}
+                      type="button"
+                      onClick={() => act(detail, to)}
+                      className={
+                        index === 0
+                          ? "rounded-control bg-action-primary px-3 py-1.5 text-sm font-medium text-text-on-accent"
+                          : "rounded-control border border-border-interactive px-3 py-1.5 text-sm text-text-primary"
+                      }
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
                 <button
-                  key={to}
                   type="button"
-                  onClick={() => act(detail, to)}
-                  className={
-                    index === 0
-                      ? "rounded-control bg-action-primary px-3 py-1.5 text-sm font-medium text-text-on-accent"
-                      : "rounded-control border border-border-interactive px-3 py-1.5 text-sm text-text-primary"
-                  }
+                  onClick={() => {
+                    setDetailId(undefined);
+                    blockRefs.current.get(detail.id)?.focus();
+                  }}
+                  className="rounded-control px-3 py-1.5 text-sm text-text-secondary"
                 >
-                  {label}
+                  Close
                 </button>
-              ))}
+              </div>
+              {/* Removal-flavored actions (S5.7): only a scheduled booking cancels or
+                  joins the move-up list — quiet row, apart from the workflow steps. */}
+              {detailStatus === "scheduled" && (
+                <div className="mt-2 flex items-center justify-between gap-2 border-t border-border-hairline pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setDetailMode("moveup")}
+                    className="rounded-control px-2 py-1 text-sm text-text-secondary hover:bg-surface-well"
+                  >
+                    Add to move-up list
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDetailMode("cancel")}
+                    className="rounded-control px-2 py-1 text-sm text-status-danger-text hover:bg-surface-well"
+                  >
+                    Cancel appointment…
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+          {detailMode === "cancel" && (
+            <div className="mt-3 border-t border-border-hairline pt-3">
+              <p className="text-xs text-text-secondary">
+                Cancel this appointment? The time opens up for booking again. Pick why:
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {CANCELLATION_REASONS.map((reason) => (
+                  <button
+                    key={reason}
+                    type="button"
+                    onClick={() => void cancelNow(detail, reason)}
+                    className="rounded-control border border-border-interactive px-3 py-1.5 text-sm text-text-primary hover:bg-surface-well"
+                  >
+                    {CANCEL_REASON_LABEL[reason]}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setDetailMode("actions")}
+                className="mt-2 rounded-control px-2 py-1 text-sm text-text-secondary"
+              >
+                Back
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                setDetailId(undefined);
-                blockRefs.current.get(detail.id)?.focus();
-              }}
-              className="rounded-control px-3 py-1.5 text-sm text-text-secondary"
-            >
-              Close
-            </button>
-          </div>
+          )}
+          {detailMode === "moveup" && (
+            <AddToMoveUpForm
+              key={detail.id}
+              practitionerId={detail.practitionerId}
+              practitionerName={
+                sheet.practitioners.find((p) => p.practitionerId === detail.practitionerId)
+                  ?.practitionerName
+              }
+              onAdd={(request) => addToMoveUp(detail, request)}
+              onBack={() => setDetailMode("actions")}
+            />
+          )}
         </div>
       )}
 
@@ -1486,15 +1812,17 @@ export function ScheduleView({
           role="status"
           className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-border-hairline bg-surface-card px-4 py-2.5 shadow-lg"
         >
-          <span className="text-sm text-text-primary">
-            {undo.kind === "status"
-              ? `${ACTION_DONE[undo.to]} — ${displayName(undo.appointment.patientName)}`
-              : undo.kind === "move"
-                ? `Moved — ${displayName(undo.appointment.patientName)}`
-                : `${undo.event.title ?? EVENT_TYPE_LABEL[undo.event.type]} ${
-                    undo.action === "added" ? "added" : "removed"
-                  }`}
-          </span>
+          <span className="text-sm text-text-primary">{undoToastLabel(undo, displayName)}</span>
+          {/* The freed window may serve someone waiting — one tap opens the list. */}
+          {undo.kind === "cancel" && undo.matches > 0 && (
+            <button
+              type="button"
+              onClick={() => setMoveUpOpen(true)}
+              className="rounded-control border border-border-interactive px-3 py-1 text-sm text-text-primary"
+            >
+              View list
+            </button>
+          )}
           <button
             type="button"
             onClick={undoNow}

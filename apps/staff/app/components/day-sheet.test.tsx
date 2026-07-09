@@ -929,3 +929,217 @@ describe("ScheduleView — live updates", () => {
     expect(scroller.scrollTop).not.toBe(999);
   });
 });
+
+describe("ScheduleView — cancel + move-up (S5.7)", () => {
+  beforeEach(() => {
+    push.mockClear();
+    refresh.mockClear();
+  });
+
+  const openDetail = (name: string) => {
+    fireEvent.click(screen.getByText(name));
+    return screen.getByRole("dialog", { name: new RegExp(name.split(" ")[0]!) });
+  };
+
+  it("offers cancel + move-up only on scheduled appointments", () => {
+    stubFetch(200, {});
+    render(<ScheduleView {...dayProps} />);
+    const scheduled = openDetail("Synthia Loginsmith");
+    expect(
+      within(scheduled).getByRole("button", { name: "Cancel appointment…" }),
+    ).toBeInTheDocument();
+    expect(
+      within(scheduled).getByRole("button", { name: "Add to move-up list" }),
+    ).toBeInTheDocument();
+    fireEvent.keyDown(scheduled, { key: "Escape" });
+    const arrived = openDetail("Aurelia Vandermeer-Castellanos");
+    expect(
+      within(arrived).queryByRole("button", { name: "Cancel appointment…" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(arrived).queryByRole("button", { name: "Add to move-up list" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("cancels with a coded reason: block gone, POST, toast with the match cue", async () => {
+    const calls = stubFetch(200, { id: "a1", status: "cancelled", moveUpMatches: 2 });
+    render(<ScheduleView {...dayProps} />);
+    const dialog = openDetail("Synthia Loginsmith");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel appointment…" }));
+    // The reason picker replaces the workflow actions — coded set only, no free text.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Patient asked" }));
+
+    const column = screen.getByRole("list", { name: "Riley Reyes appointments" });
+    expect(within(column).queryByText("Synthia Loginsmith")).not.toBeInTheDocument();
+    expect(
+      await screen.findByText(/Cancelled — Synthia Loginsmith · 2 move-up matches/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View list" })).toBeInTheDocument();
+    expect(calls[0]!.url).toBe("/api/staff/appointments/a1/cancel");
+    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({ reason: "patient" });
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("undo restores the booking: POST /restore, the block reappears", async () => {
+    const calls = stubFetch(200, { id: "a1", status: "cancelled", moveUpMatches: 0 });
+    render(<ScheduleView {...dayProps} />);
+    const dialog = openDetail("Synthia Loginsmith");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel appointment…" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Practice change" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Undo/ }));
+
+    const column = screen.getByRole("list", { name: "Riley Reyes appointments" });
+    expect(await within(column).findByText("Synthia Loginsmith")).toBeInTheDocument();
+    expect(calls[1]!.url).toBe("/api/staff/appointments/a1/restore");
+    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({ reason: "practice" });
+  });
+
+  it("surfaces an honestly-taken window on undo: block stays gone", async () => {
+    // Cancel succeeds; the restore 409s (someone booked the freed window).
+    const calls: { url: string; init?: RequestInit }[] = [];
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init });
+      const body = String(input).endsWith("/restore")
+        ? { error: "conflict", requestId: "r" }
+        : { id: "a1", status: "cancelled", moveUpMatches: 0 };
+      return Promise.resolve(
+        new Response(JSON.stringify(body), {
+          status: String(input).endsWith("/restore") ? 409 : 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    render(<ScheduleView {...dayProps} />);
+    const dialog = openDetail("Synthia Loginsmith");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel appointment…" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Patient asked" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Undo/ }));
+
+    expect(
+      await screen.findByText(
+        "Couldn't restore — the time may no longer be free. The appointment stays cancelled.",
+      ),
+    ).toBeInTheDocument();
+    const column = screen.getByRole("list", { name: "Riley Reyes appointments" });
+    expect(within(column).queryByText("Synthia Loginsmith")).not.toBeInTheDocument();
+  });
+
+  it("rolls the block back and explains when the cancel fails", async () => {
+    stubFetch(409, { error: "conflict", requestId: "r" });
+    render(<ScheduleView {...dayProps} />);
+    const dialog = openDetail("Synthia Loginsmith");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel appointment…" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "No longer needed" }));
+    expect(await screen.findByText(/changed on another station/)).toBeInTheDocument();
+    const column = screen.getByRole("list", { name: "Riley Reyes appointments" });
+    expect(within(column).getByText("Synthia Loginsmith")).toBeInTheDocument();
+  });
+
+  it("adds to the move-up list pinned to the current provider, with a bounded note", async () => {
+    const calls = stubFetch(201, {
+      id: "m1",
+      patientId: "pt1",
+      patientName: "Synthia Loginsmith",
+      appointmentId: "a1",
+      serviceCode: "svc-botox",
+      practitionerId: "pr1",
+      note: "mornings only",
+      createdAt: "2026-07-09T12:00:00.000Z",
+    });
+    render(<ScheduleView {...dayProps} />);
+    const dialog = openDetail("Synthia Loginsmith");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add to move-up list" }));
+    // The form states the non-PHI rule out loud, like the event-title microcopy.
+    expect(
+      within(dialog).getByText("Availability only — never patient details."),
+    ).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Availability note" }), {
+      target: { value: "mornings only" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add to move-up list" }));
+
+    expect(
+      await screen.findByText(/Added to the move-up list — Synthia Loginsmith/),
+    ).toBeInTheDocument();
+    expect(calls[0]!.url).toBe("/api/staff/move-up");
+    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({
+      appointmentId: "a1",
+      practitionerId: "pr1",
+      note: "mornings only",
+    });
+    // Undo compensates by resolving the fresh entry as removed.
+    fireEvent.click(screen.getByRole("button", { name: /Undo/ }));
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    expect(calls[1]!.url).toBe("/api/staff/move-up/m1");
+    expect(JSON.parse(String(calls[1]!.init?.body))).toEqual({ status: "removed" });
+  });
+
+  it("the any-provider toggle drops the practitioner pin", async () => {
+    const calls = stubFetch(201, {
+      id: "m1",
+      patientId: "pt1",
+      patientName: "Synthia Loginsmith",
+      appointmentId: "a1",
+      serviceCode: "svc-botox",
+      createdAt: "2026-07-09T12:00:00.000Z",
+    });
+    render(<ScheduleView {...dayProps} />);
+    const dialog = openDetail("Synthia Loginsmith");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add to move-up list" }));
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /Any provider/ }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add to move-up list" }));
+    await screen.findByText(/Added to the move-up list/);
+    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({ appointmentId: "a1" });
+  });
+
+  it("reads a duplicate add as already-listed, calmly", async () => {
+    stubFetch(409, { error: "conflict", requestId: "r" });
+    render(<ScheduleView {...dayProps} />);
+    const dialog = openDetail("Synthia Loginsmith");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add to move-up list" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add to move-up list" }));
+    expect(await screen.findByText("Already on the move-up list.")).toBeInTheDocument();
+  });
+
+  it("silences the add-undo when the entry was already resolved from the panel", async () => {
+    // Add succeeds (201); the later PATCH 404s (the panel resolved it first inside
+    // the undo window) — a legitimate no-op, so NO error notice may appear.
+    const calls: { url: string; init?: RequestInit }[] = [];
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init });
+      const isPatch = init?.method === "PATCH";
+      const body = isPatch
+        ? { error: "not_found", requestId: "r" }
+        : {
+            id: "m1",
+            patientId: "pt1",
+            patientName: "Synthia Loginsmith",
+            appointmentId: "a1",
+            serviceCode: "svc-botox",
+            createdAt: "2026-07-09T12:00:00.000Z",
+          };
+      return Promise.resolve(
+        new Response(JSON.stringify(body), {
+          status: isPatch ? 404 : 201,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    render(<ScheduleView {...dayProps} />);
+    const dialog = openDetail("Synthia Loginsmith");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add to move-up list" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add to move-up list" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Undo/ }));
+    await vi.waitFor(() => expect(calls.some((c) => c.init?.method === "PATCH")).toBe(true));
+    expect(
+      screen.queryByText("Couldn't undo that. Check the move-up list."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens the move-up panel from the toolbar", async () => {
+    stubFetch(200, { entries: [] });
+    render(<ScheduleView {...dayProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Move-up" }));
+    expect(await screen.findByText("No one is waiting for an earlier time.")).toBeInTheDocument();
+  });
+});

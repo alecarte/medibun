@@ -2,7 +2,12 @@ import { OperationOutcomeError, forbidden, notFound, unauthorized } from "@medpl
 import type { Patient } from "@medplum/fhirtypes";
 import { describe, expect, it } from "vitest";
 
-import { readPatientById, SessionExpiredError, type PatientReader } from "./patients.js";
+import {
+  readPatientById,
+  readPatientIfVisible,
+  SessionExpiredError,
+  type PatientReader,
+} from "./patients.js";
 
 const synthPatient: Patient = {
   resourceType: "Patient",
@@ -44,5 +49,44 @@ describe("readPatientById", () => {
       readResource: () => Promise.reject(new OperationOutcomeError(forbidden)),
     };
     await expect(readPatientById(client, "synth-1")).rejects.toBeInstanceOf(SessionExpiredError);
+  });
+});
+
+describe("readPatientIfVisible (per-row list degradation, S5.7)", () => {
+  it("returns the patient when Medplum resolves it", async () => {
+    const client: PatientReader = {
+      readResource: () => Promise.resolve(synthPatient),
+    };
+    await expect(readPatientIfVisible(client, "synth-1")).resolves.toEqual(synthPatient);
+  });
+
+  it("reads a policy denial (403) like not-found — one hidden patient must not abort a list", async () => {
+    const client: PatientReader = {
+      readResource: () => Promise.reject(new OperationOutcomeError(forbidden)),
+    };
+    await expect(readPatientIfVisible(client, "hidden")).resolves.toBeUndefined();
+  });
+
+  it("returns undefined on not-found", async () => {
+    const client: PatientReader = {
+      readResource: () => Promise.reject(new OperationOutcomeError(notFound)),
+    };
+    await expect(readPatientIfVisible(client, "missing")).resolves.toBeUndefined();
+  });
+
+  it("still throws SessionExpiredError on 401 (the token is dead for every row)", async () => {
+    const client: PatientReader = {
+      readResource: () => Promise.reject(new OperationOutcomeError(unauthorized)),
+    };
+    await expect(readPatientIfVisible(client, "synth-1")).rejects.toBeInstanceOf(
+      SessionExpiredError,
+    );
+  });
+
+  it("rethrows transient errors (never swallows a real failure as a hidden row)", async () => {
+    const client: PatientReader = {
+      readResource: () => Promise.reject(new Error("connection refused")),
+    };
+    await expect(readPatientIfVisible(client, "synth-1")).rejects.toThrow("connection refused");
   });
 });

@@ -42,3 +42,30 @@ export async function readPatientById(
     throw err;
   }
 }
+
+/**
+ * Read a Patient for a LIST surface that degrades per row (S5.7 move-up): a policy
+ * denial (403) reads like not-found — undefined — so one hidden patient neither
+ * aborts the whole list nor masquerades as a session expiry. A real 401 still throws
+ * SessionExpiredError (the caller's token is dead for every row, not just this one).
+ * readPatientById above keeps the strict mapping for single-resource surfaces.
+ */
+export async function readPatientIfVisible(
+  client: PatientReader,
+  id: string,
+): Promise<Patient | undefined> {
+  try {
+    return await client.readResource("Patient", id);
+  } catch (err) {
+    if (err instanceof OperationOutcomeError) {
+      const status = getStatus(err.outcome);
+      if (isNotFound(err.outcome) || status === 403) {
+        return undefined;
+      }
+      if (status === 401) {
+        throw new SessionExpiredError();
+      }
+    }
+    throw err;
+  }
+}
