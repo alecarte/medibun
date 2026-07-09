@@ -1,6 +1,7 @@
 import {
   INTERNAL_EVENT_TYPES,
   isValidDateString,
+  isValidWallTime,
   type CreateInternalEventRequest,
   type InternalEvent,
   type InternalEventType,
@@ -10,7 +11,7 @@ import {
   deleteInternalEvent,
   isInternalEvent,
   listSchedules,
-  practitionerTimezone,
+  practiceTimezone,
   readAppointmentById,
   type DaySheetReader,
   type FhirOpsClient,
@@ -64,9 +65,6 @@ export type EventsService = {
 
 const MAX_TITLE_LENGTH = 80;
 
-/** A 24h wall time, "HH:mm". Lexicographic comparison IS chronological in this form. */
-const WALL_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
-
 export function createEventsService(deps: {
   /** The service client — WRITES ONLY. */
   readonly getFhirClient: () => Promise<EventsWriter>;
@@ -109,8 +107,8 @@ export function createEventsService(deps: {
         !allDay &&
         (typeof request.startTime !== "string" ||
           typeof request.endTime !== "string" ||
-          !WALL_TIME.test(request.startTime) ||
-          !WALL_TIME.test(request.endTime) ||
+          !isValidWallTime(request.startTime) ||
+          !isValidWallTime(request.endTime) ||
           request.endTime <= request.startTime)
       ) {
         throw new InvalidEventRequestError();
@@ -121,12 +119,12 @@ export function createEventsService(deps: {
       // decides which practitioners' time they can block (org affinity rides the same
       // operational-read scoping tracked pre-second-tenant in DATA_MODEL.md).
       const schedules = await listSchedules(deps.userClient(user.accessToken));
-      const timezone =
-        schedules
-          .map(({ practitioner }) => practitioner && practitionerTimezone(practitioner))
-          .find(Boolean) ?? "UTC";
+      const timezone = practiceTimezone(schedules) ?? "UTC";
 
       // The BFF owns ALL wall-time → instant math (DST-safe), same as the day bounds.
+      // These windows are the LONGEST blocks the system mints (an all-day event on a
+      // DST fall-back day is 25h) — windowIsFree's MAX_BLOCK_MS conflict-scan bound
+      // depends on that; a future multi-day block MUST widen it (test pins the tie).
       const bounds = dayBoundsFor(request.date, timezone);
       const start = allDay
         ? bounds.start.toISOString()

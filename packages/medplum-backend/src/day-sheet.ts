@@ -30,7 +30,7 @@ export class StatusConflictError extends Error {
 }
 
 /** Map end-user-principal auth rejections to typed errors; rethrow everything else. */
-function rethrowAuth(err: unknown): never {
+export function rethrowAuth(err: unknown): never {
   if (err instanceof OperationOutcomeError) {
     const status = getStatus(err.outcome);
     if (status === 401) {
@@ -41,6 +41,19 @@ function rethrowAuth(err: unknown): never {
     }
   }
   throw err;
+}
+
+/** Map a failed appointment patch: a failed `test` op comes back as a client-error
+ *  outcome (400/409/412 across FHIR servers) — all mean "the resource moved under
+ *  us", never a server fault. Auth rejections map as usual; anything else rethrows. */
+export function rethrowPatchFailure(err: unknown): never {
+  if (err instanceof OperationOutcomeError) {
+    const status = getStatus(err.outcome);
+    if (isConflict(err.outcome) || status === 400 || status === 412) {
+      throw new StatusConflictError();
+    }
+  }
+  rethrowAuth(err);
 }
 
 /** Every Schedule (with its Practitioner actor) the caller's policy lets them see. */
@@ -186,14 +199,6 @@ export async function updateAppointmentStatus(
       { op: "replace", path: "/status", value: opts.to },
     ]);
   } catch (err) {
-    if (err instanceof OperationOutcomeError) {
-      const status = getStatus(err.outcome);
-      // A failed `test` op comes back as a client-error outcome (400/409/412 across
-      // FHIR servers) — all mean "the status moved under us", never a server fault.
-      if (isConflict(err.outcome) || status === 400 || status === 412) {
-        throw new StatusConflictError();
-      }
-    }
-    rethrowAuth(err);
+    rethrowPatchFailure(err);
   }
 }

@@ -1,4 +1,4 @@
-import { StatusConflictError } from "@medibun/medplum-backend";
+import { MAX_BLOCK_MS, StatusConflictError } from "@medibun/medplum-backend";
 import type { Appointment, Practitioner } from "@medibun/fhir-types";
 import { describe, expect, it, vi } from "vitest";
 
@@ -36,6 +36,14 @@ describe("zonedDayBounds", () => {
     expect(bounds.start.toISOString()).toBe("2026-11-01T04:00:00.000Z"); // still EDT
     expect(bounds.end.toISOString()).toBe("2026-11-02T05:00:00.000Z"); // now EST
     expect(bounds.end.getTime() - bounds.start.getTime()).toBe(25 * 3600_000);
+  });
+
+  it("the LONGEST day bounds fit windowIsFree's conflict-scan bound (MAX_BLOCK_MS)", () => {
+    // Day bounds are the longest blocks the system mints (all-day internal events).
+    // windowIsFree only scans back MAX_BLOCK_MS for conflicts — a future multi-day
+    // block must widen that bound or it silently escapes the overlap query.
+    const bounds = zonedDayBounds(new Date("2026-11-01T12:00:00.000Z"), TZ); // 25h worst case
+    expect(bounds.end.getTime() - bounds.start.getTime()).toBeLessThanOrEqual(MAX_BLOCK_MS);
   });
 
   it("gives the spring-forward day 23 hours (2026-03-08)", () => {

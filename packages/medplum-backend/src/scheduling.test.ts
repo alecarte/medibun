@@ -8,8 +8,10 @@ import {
   buildSchedule,
   findSlots,
   listSchedulesForService,
+  practiceTimezone,
   practitionerTimezone,
   SCHEDULING_PARAMETERS_URL,
+  serviceCodeOf,
   SERVICE_TYPE_REFERENCE_URL,
   SERVICES_CODE_SYSTEM,
   SlotTakenError,
@@ -230,5 +232,39 @@ describe("bookAppointment", () => {
     await expect(
       bookAppointment({ get: vi.fn(), post }, { slot, serviceCode: "svc-botox" }),
     ).rejects.toThrow(/no Appointment/);
+  });
+});
+
+describe("serviceCodeOf", () => {
+  it("extracts our CodeSystem's code from any serviceType[] carrier (schedule or appointment)", () => {
+    const carrier = {
+      serviceType: [
+        { coding: [{ system: "http://other", code: "nope" }] },
+        { coding: [{ system: SERVICES_CODE_SYSTEM, code: "svc-botox" }] },
+      ],
+    };
+    expect(serviceCodeOf(carrier)).toBe("svc-botox");
+    expect(serviceCodeOf({})).toBeUndefined();
+    expect(
+      serviceCodeOf({ serviceType: [{ coding: [{ system: "http://other" }] }] }),
+    ).toBeUndefined();
+  });
+});
+
+describe("practiceTimezone", () => {
+  const withTz = buildPractitioner({
+    given: "Riley",
+    family: "Reyes",
+    timezone: "America/New_York",
+  });
+  it("returns the first schedule actor's timezone", () => {
+    expect(practiceTimezone([{ practitioner: undefined }, { practitioner: withTz }])).toBe(
+      "America/New_York",
+    );
+  });
+  it("returns undefined when no actor carries one — the caller decides the posture", () => {
+    const bare = { ...withTz, extension: [] };
+    expect(practiceTimezone([{ practitioner: bare }])).toBeUndefined();
+    expect(practiceTimezone([])).toBeUndefined();
   });
 });

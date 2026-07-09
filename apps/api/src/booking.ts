@@ -9,7 +9,7 @@ import {
   bookAppointment,
   findSlots,
   listSchedulesForService,
-  practitionerTimezone,
+  practiceTimezone,
   type FhirOpsClient,
   type ScheduleWithActor,
 } from "@medibun/medplum-backend";
@@ -167,9 +167,7 @@ export function createBookingService(deps: {
         // One practice timezone for the whole payload (v0: single location; all actors
         // carry the same zone). Review fix: per-practitioner timezones let one missing
         // extension silently re-bucket the patient's calendar mid-flow.
-        timezone:
-          schedules.map(({ practitioner }) => practitionerTimezone(practitioner)).find(Boolean) ??
-          "UTC",
+        timezone: practiceTimezone(schedules) ?? "UTC",
         // The client renders exactly THIS window — it never mints its own clock.
         windowStart: windowStart.toISOString(),
         windowDays: BOOKING_WINDOW_DAYS,

@@ -16,6 +16,7 @@ import { createTokenCipher } from "./auth/crypto.js";
 import { createSessionStore } from "./auth/sessions.js";
 import { createBookingService, type BookingService } from "./booking.js";
 import { createEventsService, type EventsService } from "./events.js";
+import { createRescheduleService, type RescheduleService } from "./reschedule.js";
 import { createStaffService, type StaffService, type StaffUserClient } from "./staff.js";
 import { readApiConfigFromEnv } from "./config.js";
 import { checkMedplumConnection } from "./medplum.js";
@@ -34,6 +35,7 @@ function buildAuthDeps():
       booking: BookingService;
       staff: StaffService;
       events: EventsService;
+      reschedule: RescheduleService;
       pool: pg.Pool;
     }
   | undefined {
@@ -187,7 +189,18 @@ function buildAuthDeps():
     },
   });
 
-  return { auth, booking, staff, events, pool };
+  // Drag-to-reschedule (S5.5): same split-principal wiring as events — the appointment
+  // patch runs as the caller; only the busy-slot swap rides the cached service client.
+  const reschedule = createRescheduleService({
+    getFhirClient,
+    userClient: (accessToken) => {
+      const client = createMedplumClient(medplumConfig);
+      client.setAccessToken(accessToken);
+      return client;
+    },
+  });
+
+  return { auth, booking, staff, events, reschedule, pool };
 }
 
 const authWiring = buildAuthDeps();
@@ -199,6 +212,7 @@ const app = createApp({
   booking: authWiring?.booking,
   staff: authWiring?.staff,
   events: authWiring?.events,
+  reschedule: authWiring?.reschedule,
 });
 
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {

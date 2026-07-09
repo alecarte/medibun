@@ -84,6 +84,9 @@ const STAFF_APPOINTMENTS = [
   { id: "sa-11", practitionerId: "prac-riley", patientId: "pt-11", patientName: "Dana Okonkwo", patientPhone: "555-010-0196", patientEmail: "dana.ok@example.test", serviceCode: "svc-dysport", serviceName: "Dysport", serviceColor: "teal", ...at(135, 30), status: "scheduled", firstVisit: true, bookedAt: dayStart.toISOString() },
 ];
 const staffStatuses = new Map(STAFF_APPOINTMENTS.map((a) => [a.id, a.status]));
+// Drag-to-reschedule (S5.5): confirmed moves persist as absolute instants (never
+// re-anchored — same tradeoff as created events) so the live-update poll shows them.
+const staffMoves = new Map(); // id -> { practitionerId, start, end }
 
 // ---- Internal events (S5c): one seeded meeting (re-anchored like the appointments);
 // creates/deletes persist in memory so the live-update poll shows them cross-station.
@@ -137,10 +140,12 @@ createServer((req, res) => {
     const shift = rangeStart - dayStart.getTime();
     const appointments = STAFF_APPOINTMENTS.map((a, i) => {
       const dayOffset = (days > 1 ? i % days : 0) * 86400000;
+      const moved = staffMoves.get(a.id);
       return {
         ...a,
-        start: new Date(Date.parse(a.start) + shift + dayOffset).toISOString(),
-        end: new Date(Date.parse(a.end) + shift + dayOffset).toISOString(),
+        start: moved?.start ?? new Date(Date.parse(a.start) + shift + dayOffset).toISOString(),
+        end: moved?.end ?? new Date(Date.parse(a.end) + shift + dayOffset).toISOString(),
+        practitionerId: moved?.practitionerId ?? a.practitionerId,
         status: staffStatuses.get(a.id),
       };
     });
@@ -199,6 +204,29 @@ createServer((req, res) => {
     if (created >= 0) createdEvents.splice(created, 1);
     res.writeHead(204);
     return res.end();
+  }
+  const rescheduleMatch = url.pathname.match(/^\/staff\/appointments\/([^/]+)\/reschedule$/);
+  if (req.method === "POST" && rescheduleMatch) {
+    const id = decodeURIComponent(rescheduleMatch[1]);
+    const appointment = STAFF_APPOINTMENTS.find((a) => a.id === id);
+    if (!appointment) return json(res, 404, { error: "not_found", requestId: "stub" });
+    if (staffStatuses.get(id) !== "scheduled")
+      return json(res, 409, { error: "conflict", requestId: "stub" });
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      const { date, startTime, practitionerId } = JSON.parse(body);
+      const durationMs = Date.parse(appointment.end) - Date.parse(appointment.start);
+      const start = stubInstant(date, startTime);
+      const moved = {
+        practitionerId,
+        start,
+        end: new Date(Date.parse(start) + durationMs).toISOString(),
+      };
+      staffMoves.set(id, moved);
+      json(res, 200, { id, ...moved });
+    });
+    return;
   }
   const statusMatch = url.pathname.match(/^\/staff\/appointments\/([^/]+)\/status$/);
   if (req.method === "POST" && statusMatch) {

@@ -16,10 +16,10 @@ import {
   isInternalEvent,
   listDayAppointments,
   listSchedules,
-  practitionerTimezone,
+  practiceTimezone,
   readAppointmentById,
   readPractitionerById,
-  SERVICES_CODE_SYSTEM,
+  serviceCodeOf,
   updateAppointmentStatus,
   type AppointmentPatcher,
   type DaySheetReader,
@@ -169,12 +169,9 @@ export function zonedDayBounds(
 const telecomValue = (patient: Patient, system: "phone" | "email"): string | undefined =>
   patient.telecom?.find((t) => t.system === system && t.value)?.value;
 
-const ourServiceCode = (appointment: Appointment): string | undefined =>
-  appointment.serviceType
-    ?.flatMap((concept) => concept.coding ?? [])
-    .find((coding) => coding.system === SERVICES_CODE_SYSTEM)?.code;
-
-const practitionerParticipant = (appointment: Appointment): string | undefined =>
+/** The first Practitioner participant's reference — the day sheet's and the
+ *  reschedule route's shared "which participant is the practitioner" convention. */
+export const practitionerParticipant = (appointment: Appointment): string | undefined =>
   appointment.participant
     ?.map((p) => p.actor?.reference)
     .find((ref) => ref?.startsWith("Practitioner/"));
@@ -238,10 +235,9 @@ export function createStaffService(deps: {
         deps.catalog.listActive(),
       ]);
       const serviceByCode = new Map<string, ServiceRow>(services.map((s) => [s.code, s]));
-      const timezone =
-        schedules
-          .map(({ practitioner }) => practitioner && practitionerTimezone(practitioner))
-          .find(Boolean) ?? "UTC";
+      // Display path: a missing practice timezone shifts labels, never a write — the
+      // UTC fallback is tolerable here (the reschedule write path hard-fails instead).
+      const timezone = practiceTimezone(schedules) ?? "UTC";
       // Range start: the requested date (or today). Week view (days=7) snaps to the
       // week's Monday HERE — the BFF is the practice-timezone authority, so the client
       // never has to know "today" to land on a Monday.
@@ -347,7 +343,7 @@ export function createStaffService(deps: {
       const appointments: DaySheetAppointment[] = mappable.map(
         ({ appointment, status, patientRef, practitionerRef }) => {
           const patient = day.patients.get(patientRef);
-          const serviceCode = ourServiceCode(appointment);
+          const serviceCode = serviceCodeOf(appointment);
           const service = serviceCode ? serviceByCode.get(serviceCode) : undefined;
           return {
             id: appointment.id!,

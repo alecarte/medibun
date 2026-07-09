@@ -7,6 +7,7 @@ import {
   hasAppointmentBefore,
   listDayAppointments,
   listSchedules,
+  rethrowPatchFailure,
   StatusConflictError,
   updateAppointmentStatus,
 } from "./day-sheet.js";
@@ -144,5 +145,27 @@ describe("updateAppointmentStatus", () => {
     await expect(
       updateAppointmentStatus({ patchResource }, { id: "a1", from: "booked", to: "arrived" }),
     ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+});
+
+/** Shared by updateAppointmentStatus and the reschedule patch (apps/api) — the raw
+ *  SDK error class lives here, so the mapping is pinned here. */
+describe("rethrowPatchFailure", () => {
+  it("maps a failed test op (conflict outcome) to StatusConflictError", () => {
+    expect(() => rethrowPatchFailure(new OperationOutcomeError(conflict("moved")))).toThrow(
+      StatusConflictError,
+    );
+  });
+
+  it("maps auth rejections to the typed session errors", () => {
+    expect(() => rethrowPatchFailure(new OperationOutcomeError(unauthorized))).toThrow(
+      SessionExpiredError,
+    );
+    expect(() => rethrowPatchFailure(new OperationOutcomeError(forbidden))).toThrow(ForbiddenError);
+  });
+
+  it("rethrows anything it does not recognize unchanged", () => {
+    const err = new Error("boom");
+    expect(() => rethrowPatchFailure(err)).toThrow(err);
   });
 });

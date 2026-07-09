@@ -1,0 +1,118 @@
+import type { Appointment, Bundle, Slot } from "@medplum/fhirtypes";
+
+import { rethrowAuth } from "./day-sheet.js";
+import { bundleResources } from "./scheduling.js";
+import type { FhirOpsClient } from "./scheduling.js";
+
+/**
+ * Reschedule primitives (S5.5, drag-to-reschedule). No $reschedule operation exists at
+ * our Medplum pin — a move is an Appointment patch plus a busy-Slot swap; these helpers
+ * locate the booking's blocking slot(s) and check that a target window is actually free.
+ * Every read runs on the CALLER-CHOSEN client (the BFF decides the principal).
+ */
+
+/** Slot statuses that block a window. `free` (never minted by us) and `entered-in-error`
+ *  don't; everything busy-ish does. */
+const BLOCKING = new Set<Slot["status"]>(["busy", "busy-unavailable", "busy-tentative"]);
+
+/**
+ * The busy Slot reference(s) protecting a booking's window. Prefers the appointment's
+ * own `slot[]` references; falls back to searching the exact window ON THE
+ * APPOINTMENT'S OWN SCHEDULE (whether `$book` populates `Appointment.slot` is a
+ * live-verify item — the fallback makes the reschedule correct either way).
+ *
+ * The schedule scoping is a security control, not an optimization: an unscoped
+ * same-window search would return ANOTHER booking's protector slot as if it were
+ * ours — defeating the freeness check and deleting a foreign protector after the
+ * move (security review, 2026-07-06). No resolvable own schedule → no fallback:
+ * an empty result fails SAFE (identical-window slots then read as blockers, and
+ * nothing foreign is ever deleted).
+ */
+export async function resolveBookedSlots(
+  client: FhirOpsClient,
+  appointment: Appointment,
+  scheduleReference: string | undefined,
+): Promise<string[]> {
+  const refs = (appointment.slot ?? [])
+    .map((s) => s.reference)
+    .filter((r): r is string => Boolean(r));
+  if (refs.length > 0) {
+    return refs;
+  }
+  if (!scheduleReference) {
+    return [];
+  }
+  const params = new URLSearchParams({
+    schedule: scheduleReference,
+    start: appointment.start!,
+    _count: "100",
+  });
+  let bundle: Bundle;
+  try {
+    bundle = (await client.get(`fhir/R4/Slot?${params.toString()}`)) as Bundle;
+  } catch (err) {
+    rethrowAuth(err);
+  }
+  // Instant equality, not string equality: an offset-form or millis-less instant
+  // (external tooling, server normalization) is still this booking's window. An
+  // unparseable end never matches — fail-safe, same as no fallback at all.
+  const appointmentEnd = Date.parse(appointment.end ?? "");
+  return bundleResources(bundle)
+    .filter(
+      (r): r is Slot =>
+        r.resourceType === "Slot" &&
+        Boolean(r.id) &&
+        BLOCKING.has((r as Slot).status) &&
+        Date.parse((r as Slot).end ?? "") === appointmentEnd,
+    )
+    .map((slot) => `Slot/${slot.id}`);
+}
+
+/** No block we mint outlasts a practice-local day — the overlap query's lower bound,
+ *  so history can't push live conflicts past the page cap. The invariant is OWNED by
+ *  the minting sites (all-day internal events via dayBoundsFor; a DST fall-back day is
+ *  25h — the worst case). Exported so the minting side pins itself against this bound:
+ *  a future multi-day block MUST widen it or windowIsFree silently misses the block. */
+export const MAX_BLOCK_MS = 25 * 3600_000;
+
+/**
+ * Whether [start, end) on `scheduleReference` overlaps no blocking Slot, ignoring
+ * `ownSlotRefs` (moving within your own window is legal). Deliberately does NOT check
+ * schedule availability hours: patients can't book off-hours ($find enforces that),
+ * but the front desk placing a deliberate off-hours squeeze-in is staff judgment
+ * (decided at the S5.5 interview). Conflicts are what matter.
+ */
+export async function windowIsFree(
+  client: FhirOpsClient,
+  scheduleReference: string,
+  window: { readonly start: string; readonly end: string },
+  ownSlotRefs: readonly string[],
+): Promise<boolean> {
+  const params = new URLSearchParams({
+    schedule: scheduleReference,
+    _count: "100",
+  });
+  // Overlap = starts before the window ends AND ends after the window starts. The
+  // ge-bound keeps the query to slots that can still overlap — without it, a schedule's
+  // whole history matches `lt`, and past the page cap a real conflict could silently
+  // fall off the page (security review, 2026-07-06).
+  params.append("start", `lt${window.end}`);
+  params.append("start", `ge${new Date(Date.parse(window.start) - MAX_BLOCK_MS).toISOString()}`);
+  let bundle: Bundle;
+  try {
+    bundle = (await client.get(`fhir/R4/Slot?${params.toString()}`)) as Bundle;
+  } catch (err) {
+    rethrowAuth(err);
+  }
+  const own = new Set(ownSlotRefs);
+  const windowStart = Date.parse(window.start);
+  return !bundleResources(bundle).some((r) => {
+    if (r.resourceType !== "Slot" || !BLOCKING.has((r as Slot).status) || own.has(`Slot/${r.id}`)) {
+      return false;
+    }
+    // Instant comparison, not lexicographic: an offset-form end (external tooling)
+    // must still register as overlap. An unparseable end blocks — fail-safe.
+    const end = Date.parse((r as Slot).end ?? "");
+    return Number.isNaN(end) || end > windowStart;
+  });
+}

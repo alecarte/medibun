@@ -114,7 +114,7 @@ booking arrives with S11's assistant, or its own slice). ~~Live updates & privac
 1. **Overlap layout — shipped same day** (defect-class): overlapping appointments in one
    column cluster into side-by-side lanes (greedy lane reuse; solo blocks keep the full
    width). Prerequisite for drag — dropping onto occupied space creates overlaps.
-2. **S5.5 drag-to-reschedule** (unchanged in scope; now unblocked).
+2. **S5.5 drag-to-reschedule** — shipped, see §10.
 3. **S5.7 move-up list** — the 4D cancellation-backfill waitlist. Hidden dependency,
    recorded: **no cancellation affordance exists anywhere yet** (portal or staff; `$cancel`
    doesn't exist at our Medplum pin — cancel = staff status write to `cancelled` + slot
@@ -131,6 +131,25 @@ booking arrives with S11's assistant, or its own slice). ~~Live updates & privac
 
 Smaller 4D items keep their noted homes (COMPETITIVE_NOTES §6): calendar visibility
 toggles, jump-ahead nav, a plain Find-Openings affordance alongside S11, grid zoom.
+
+## 10. S5.5 — drag-to-reschedule (interview-approved Alec 2026-07-06, shipped)
+
+- **Mechanics**: patch + slot swap, identity-preserving (no `$reschedule` exists at our
+  pin). The BFF re-derives the target window is free against busy Slots, creates the new
+  protector slot, test-and-sets the Appointment's start (concurrent moves lose cleanly),
+  deletes the old slot. Reads + the patch run as the caller; slot writes ride the service
+  client. Availability _hours_ deliberately unchecked — off-hours squeeze-ins are staff
+  judgment; conflicts are what matter.
+- **Scope**: day view, time and/or practitioner column (target must offer the service).
+  **Scheduled blocks only** — others don't lift. **15-minute snap**, duration preserved.
+- **Interaction**: mouse press + ~6px travel lifts the block (a plain press stays a
+  click); a dashed ghost previews the snapped landing window with its time; `Esc`
+  cancels; drop executes immediately with the standard ~10s undo (a compensating reverse
+  move — which can itself hit a 409 if the old window got taken, surfaced honestly).
+  A 409 on drop explains and refreshes, never clobbers.
+- **Queued follow-ups**: touch drag (a finger on a block must keep scrolling the grid —
+  needs a long-press affordance) · keyboard reschedule (via the detail card) · week-view
+  drag (single-practitioner columns make it a date move — different interaction).
 
 ## Review log
 

@@ -26,6 +26,8 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 
 import { InvalidSlotError, UnknownScheduleError, UnknownServiceError } from "./booking.js";
 import { InvalidEventRequestError, UnknownEventError } from "./events.js";
+import type { RescheduledAppointment, RescheduleRequest } from "@medibun/api-client";
+import { InvalidRescheduleRequestError } from "./reschedule.js";
 import { InvalidTransitionError, UnknownAppointmentError } from "./staff.js";
 
 /**
@@ -123,6 +125,18 @@ export type EventsDeps = {
   ) => Promise<void>;
 };
 
+/** Drag-to-reschedule (S5.5): reads + the Appointment patch run AS THE CALLER; only
+ *  the busy-Slot swap rides the service client (see src/reschedule.ts). */
+export type RescheduleDeps = {
+  /** Throws InvalidRescheduleRequestError / UnknownAppointmentError /
+   *  InvalidTransitionError / StatusConflictError. */
+  readonly rescheduleAppointment: (
+    user: { profileReference: string; accessToken: string },
+    appointmentId: string,
+    request: RescheduleRequest,
+  ) => Promise<RescheduledAppointment>;
+};
+
 export type AppDeps = {
   readonly log: (entry: LogEntry) => void;
   /** Resolves true when Medplum is reachable and credentials are valid. */
@@ -133,6 +147,8 @@ export type AppDeps = {
   readonly booking?: BookingDeps;
   /** Staff routes mount only when provided ALONG WITH auth (sessions gate them). */
   readonly staff?: StaffDeps;
+  /** Reschedule route mounts only when provided ALONG WITH auth + staff. */
+  readonly reschedule?: RescheduleDeps;
   /** Internal-event routes mount only when provided ALONG WITH auth + staff. */
   readonly events?: EventsDeps;
 };
@@ -490,6 +506,36 @@ export function createApp(deps: AppDeps): Hono<Env> {
           return staffFailure(c, err);
         }
       });
+
+      // Drag-to-reschedule (S5.5): staff session gates it; the appointment patch runs
+      // as the caller, the slot swap under the service client (src/reschedule.ts).
+      const reschedule = deps.reschedule;
+      if (reschedule) {
+        app.post("/staff/appointments/:id/reschedule", async (c) => {
+          const gate = await staffUser(c);
+          if (!gate.user) {
+            return gate.fail;
+          }
+          const body = (await c.req.json().catch(() => undefined)) as unknown;
+          if (!body || typeof body !== "object") {
+            return fail(c, "invalid_request", 400);
+          }
+          try {
+            return c.json(
+              await reschedule.rescheduleAppointment(
+                gate.user,
+                c.req.param("id"),
+                body as RescheduleRequest,
+              ),
+            );
+          } catch (err) {
+            if (err instanceof InvalidRescheduleRequestError) {
+              return fail(c, "invalid_request", 400);
+            }
+            return staffFailure(c, err);
+          }
+        });
+      }
 
       // Internal events (S5c): the staff session gates the routes; the writes run
       // under the service client inside the events service (see src/events.ts).

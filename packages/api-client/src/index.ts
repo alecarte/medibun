@@ -133,6 +133,13 @@ export function isValidDateString(value: string): boolean {
   return new Date(Date.UTC(y!, m! - 1, d!)).toISOString().slice(0, 10) === value;
 }
 
+/** A 24h wall time in "HH:mm" form (lexicographic comparison IS chronological).
+ *  Shared by the BFF's event + reschedule validation — same judgment everywhere,
+ *  next to isValidDateString for the same reason. */
+export function isValidWallTime(value: string): boolean {
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
+
 /** Monday-of-the-week for a YYYY-MM-DD date (SCHEDULE_DESIGN.md: weeks start Monday).
  *  Pure calendar math, no timezone — these are practice-local date labels. The BFF
  *  snaps week ranges with this; the staff app pre-aligns URLs with the same function. */
@@ -209,6 +216,23 @@ export type CreateInternalEventRequest = {
   /** Ignored when allDay: practice-local wall times ("HH:mm", 24h) on `date`. */
   readonly startTime?: string;
   readonly endTime?: string;
+};
+
+/** Drag-to-reschedule (S5.5): practice-local target — the BFF owns timezone math and
+ *  preserves the appointment's duration. */
+export type RescheduleRequest = {
+  readonly date: string;
+  /** "HH:mm" wall time on `date` (15-minute snap in the UI). */
+  readonly startTime: string;
+  /** Target column — may equal the current practitioner (time-only move). */
+  readonly practitionerId: string;
+};
+
+export type RescheduledAppointment = {
+  readonly id: string;
+  readonly practitionerId: string;
+  readonly start: string;
+  readonly end: string;
 };
 
 export type DaySheet = {
@@ -348,6 +372,15 @@ export type ApiClient = {
     status: AppointmentStatus,
     auth?: SessionAuth,
   ) => Promise<{ id: string; status: AppointmentStatus }>;
+  /** Drag-to-reschedule (S5.5): moves a SCHEDULED appointment to a new practice-local
+   *  time and/or practitioner, duration preserved. Throws StaffError — "conflict" when
+   *  the target window is taken, the appointment moved under you, or it isn't
+   *  scheduled anymore (refetch and re-decide). */
+  readonly rescheduleAppointment: (
+    appointmentId: string,
+    request: RescheduleRequest,
+    auth?: SessionAuth,
+  ) => Promise<RescheduledAppointment>;
   /** Creates an internal event (day off / meeting / block) and its booking-blocking
    *  slots. Staff session required. Throws StaffError ("invalid_request" for bad
    *  windows/practitioners). */
@@ -498,6 +531,21 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
         throw new StaffError(await errorCodeFrom(res, STAFF_CODES), res.status);
       }
       return (await res.json()) as { id: string; status: AppointmentStatus };
+    },
+
+    async rescheduleAppointment(appointmentId, request, auth) {
+      const res = await fetchImpl(
+        `${baseUrl}/staff/appointments/${encodeURIComponent(appointmentId)}/reschedule`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", ...authHeaders(auth) },
+          body: JSON.stringify(request),
+        },
+      );
+      if (!res.ok) {
+        throw new StaffError(await errorCodeFrom(res, STAFF_CODES), res.status);
+      }
+      return (await res.json()) as RescheduledAppointment;
     },
 
     async createInternalEvent(request, auth) {

@@ -5,6 +5,7 @@ import {
   MultipleMembershipsError,
   SessionExpiredError,
   SlotTakenError,
+  StatusConflictError,
 } from "@medibun/medplum-backend";
 import { describe, expect, it } from "vitest";
 
@@ -14,10 +15,12 @@ import {
   type BookingDeps,
   type EventsDeps,
   type LogEntry,
+  type RescheduleDeps,
   type StaffDeps,
 } from "./app.js";
 import { InvalidSlotError, UnknownScheduleError, UnknownServiceError } from "./booking.js";
 import { InvalidEventRequestError, UnknownEventError } from "./events.js";
+import { InvalidRescheduleRequestError } from "./reschedule.js";
 import { InvalidTransitionError, UnknownAppointmentError } from "./staff.js";
 
 /** Build an app with a captured log sink and a stubbed Medplum check. */
@@ -28,6 +31,7 @@ function makeApp(
     booking?: Partial<BookingDeps>;
     staff?: Partial<StaffDeps>;
     events?: Partial<EventsDeps>;
+    reschedule?: Partial<RescheduleDeps>;
   } = {},
 ) {
   const logs: LogEntry[] = [];
@@ -72,6 +76,12 @@ function makeApp(
         ...opts.staff,
       }
     : undefined;
+  const reschedule: RescheduleDeps | undefined = opts.reschedule
+    ? {
+        rescheduleAppointment: () => Promise.reject(new Error("reschedule not stubbed")),
+        ...opts.reschedule,
+      }
+    : undefined;
   const events: EventsDeps | undefined = opts.events
     ? {
         createEvent: () => Promise.reject(new Error("createEvent not stubbed")),
@@ -86,6 +96,7 @@ function makeApp(
     booking,
     staff,
     events,
+    reschedule,
   });
   return { app, logs };
 }
@@ -838,6 +849,81 @@ describe("staff routes", () => {
           Origin: "https://evil.example",
         },
         body: JSON.stringify({ status: "arrived" }),
+      });
+      expect(res.status).toBe(403);
+      expect(((await res.json()) as { error: string }).error).toBe("forbidden_origin");
+    });
+  });
+
+  describe("POST /staff/appointments/:id/reschedule (S5.5)", () => {
+    const moved = {
+      id: "a1",
+      practitionerId: "pr2",
+      start: "2026-07-06T19:15:00.000Z",
+      end: "2026-07-06T19:45:00.000Z",
+    };
+    const request = { date: "2026-07-06", startTime: "15:15", practitionerId: "pr2" };
+    const post = (app: ReturnType<typeof makeApp>["app"], body: unknown) =>
+      app.request("/staff/appointments/a1/reschedule", {
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: "Bearer tok" },
+        body: JSON.stringify(body),
+      });
+
+    it("404s when reschedule deps are not wired; 401/403 gate the principal", async () => {
+      const unwired = makeApp({ auth: staffSession, staff: {} });
+      expect((await post(unwired.app, request)).status).toBe(404);
+      const noSession = makeApp({ auth: {}, staff: {}, reschedule: {} });
+      expect((await post(noSession.app, request)).status).toBe(401);
+      const patient = makeApp({ auth: patientSession, staff: {}, reschedule: {} });
+      expect((await post(patient.app, request)).status).toBe(403);
+    });
+
+    it("200s a move, 400s invalid requests, 409s taken windows, 404s unknown ids", async () => {
+      const ok = makeApp({
+        auth: staffSession,
+        staff: {},
+        reschedule: { rescheduleAppointment: () => Promise.resolve(moved) },
+      });
+      const res = await post(ok.app, request);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(moved);
+
+      const invalid = makeApp({
+        auth: staffSession,
+        staff: {},
+        reschedule: {
+          rescheduleAppointment: () => Promise.reject(new InvalidRescheduleRequestError()),
+        },
+      });
+      expect((await post(invalid.app, request)).status).toBe(400);
+      expect((await post(invalid.app, null)).status).toBe(400);
+
+      const taken = makeApp({
+        auth: staffSession,
+        staff: {},
+        reschedule: { rescheduleAppointment: () => Promise.reject(new StatusConflictError()) },
+      });
+      expect((await post(taken.app, request)).status).toBe(409);
+
+      const unknown = makeApp({
+        auth: staffSession,
+        staff: {},
+        reschedule: { rescheduleAppointment: () => Promise.reject(new UnknownAppointmentError()) },
+      });
+      expect((await post(unknown.app, request)).status).toBe(404);
+    });
+
+    it("keeps the reschedule mutation behind the global Origin guard", async () => {
+      const { app } = makeApp({ auth: staffSession, staff: {}, reschedule: {} });
+      const res = await app.request("/staff/appointments/a1/reschedule", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          Authorization: "Bearer tok",
+          Origin: "https://evil.example",
+        },
+        body: JSON.stringify(request),
       });
       expect(res.status).toBe(403);
       expect(((await res.json()) as { error: string }).error).toBe("forbidden_origin");

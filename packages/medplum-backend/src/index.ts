@@ -25,12 +25,14 @@ export {
   listSchedules,
   readAppointmentById,
   readPractitionerById,
+  rethrowPatchFailure,
   StatusConflictError,
   updateAppointmentStatus,
   type AppointmentPatcher,
   type DayAppointments,
   type DaySheetReader,
 } from "./day-sheet.js";
+export { MAX_BLOCK_MS, resolveBookedSlots, windowIsFree } from "./reschedule.js";
 export {
   createInternalEvent,
   deleteInternalEvent,
@@ -47,8 +49,10 @@ export {
   buildSchedule,
   findSlots,
   listSchedulesForService,
+  practiceTimezone,
   practitionerTimezone,
   SCHEDULING_PARAMETERS_URL,
+  serviceCodeOf,
   SERVICE_TYPE_REFERENCE_URL,
   SERVICES_CODE_SYSTEM,
   SlotTakenError,
