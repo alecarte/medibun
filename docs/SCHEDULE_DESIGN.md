@@ -143,7 +143,12 @@ toggles, jump-ahead nav, a plain Find-Openings affordance alongside S11, grid zo
   A 409 on drop explains and refreshes, never clobbers.
 - **Queued follow-ups**: touch drag (a finger on a block must keep scrolling the grid —
   needs a long-press affordance) · keyboard reschedule (via the detail card) · week-view
-  drag (single-practitioner columns make it a date move — different interaction).
+  drag (single-practitioner columns make it a date move — different interaction) ·
+  two S5.7-review observations on this pre-existing code (2026-07-09): the participant
+  remap rewrites EVERY Practitioner participant to the target (harmless while $book
+  mints exactly one, wrong the day multi-practitioner appointments exist), and a drag
+  whose first committed pointer move sits over the sticky time gutter defaults its
+  target to column 0 (drop there moves the appointment to the first practitioner).
 
 ## 11. S5.7 — staff cancel + move-up list (interview-approved Alec 2026-07-09, built)
 

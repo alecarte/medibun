@@ -95,3 +95,18 @@ describe("MoveUpPanel", () => {
     expect(await screen.findByText(/Couldn't load the list/)).toBeInTheDocument();
   });
 });
+
+describe("MoveUpPanel ordering", () => {
+  it("keeps oldest-first when a failed resolve puts the row back", async () => {
+    // entries[0] (Synthia) is the OLDEST; a failed resolve on it must reinsert it
+    // at the front, not append it after newer waiters.
+    const resolveMoveUp = () => Promise.reject(new Error("down"));
+    render(<MoveUpPanel api={makeApi({ resolveMoveUp })} {...props} />);
+    const row = (await screen.findByText("Synthia Loginsmith")).closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Fulfilled" }));
+    await screen.findByText("Synthia Loginsmith"); // rolled back
+    const items = screen.getAllByRole("listitem");
+    expect(within(items[0]!).getByText("Synthia Loginsmith")).toBeInTheDocument();
+    expect(within(items[1]!).getByText("Jo Park")).toBeInTheDocument();
+  });
+});

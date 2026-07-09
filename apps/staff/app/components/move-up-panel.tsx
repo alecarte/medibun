@@ -4,7 +4,7 @@ import type { ApiClient, MoveUpEntry, MoveUpResolution } from "@medibun/api-clie
 import { useEffect, useState } from "react";
 
 import { formatBookedAt } from "../lib/day-sheet";
-import { maskName } from "../lib/privacy";
+import { maskName, maskValue } from "../lib/privacy";
 
 /**
  * The move-up panel (S5.7): the desk-worked cancellation-backfill waitlist, oldest
@@ -47,12 +47,15 @@ export function MoveUpPanel({
   }, [api]);
 
   async function resolve(entry: MoveUpEntry, resolution: MoveUpResolution) {
-    // Optimistic removal; a failed write puts the row back (the desk re-decides).
+    // Optimistic removal; a failed write puts the row back IN ORDER — the list
+    // promises oldest-first, so the reinsert re-sorts by createdAt.
     setEntries((list) => list?.filter((e) => e.id !== entry.id));
     try {
       await api.resolveMoveUp(entry.id, resolution);
     } catch {
-      setEntries((list) => (list ? [...list, entry] : list));
+      setEntries((list) =>
+        list ? [...list, entry].sort((a, b) => a.createdAt.localeCompare(b.createdAt)) : list,
+      );
     }
   }
 
@@ -95,7 +98,7 @@ export function MoveUpPanel({
                   {displayName(entry.patientName)}
                 </span>
                 <span className="shrink-0 text-xs text-text-secondary tabular-nums">
-                  {masked && entry.patientPhone ? "Hidden" : (entry.patientPhone ?? "—")}
+                  {maskValue(masked, entry.patientPhone) ?? "—"}
                 </span>
               </div>
               <p className="mt-0.5 text-xs text-text-secondary">

@@ -1,5 +1,6 @@
 import { CANCELLATION_REASONS, type CancellationReason } from "@medibun/api-client";
 import {
+  findScheduleFor,
   isInternalEvent,
   listSchedules,
   readAppointmentById,
@@ -13,6 +14,7 @@ import {
 import type { Appointment, Slot } from "@medibun/fhir-types";
 
 import {
+  assertScheduled,
   InvalidTransitionError,
   practitionerParticipant,
   UnknownAppointmentError,
@@ -80,7 +82,8 @@ export function createCancelService(deps: {
   ) => Promise<number>;
 }): CancelService {
   /** The appointment's own schedule reference — scopes slot resolution the same way
-   *  S5.5 does (the security control against claiming a foreign protector). */
+   *  S5.5 does, via the SHARED findScheduleFor predicate (the security control
+   *  against claiming a foreign protector; one predicate, never forked). */
   const ownScheduleRef = async (
     caller: CancelUserClient,
     appointment: Appointment,
@@ -90,12 +93,7 @@ export function createCancelService(deps: {
     if (!practitionerId || !serviceCode) {
       return undefined;
     }
-    const schedules = await listSchedules(caller);
-    const own = schedules.find(
-      ({ schedule }) =>
-        schedule.actor?.[0]?.reference === `Practitioner/${practitionerId}` &&
-        serviceCodeOf(schedule) === serviceCode,
-    );
+    const own = findScheduleFor(await listSchedules(caller), practitionerId, serviceCode);
     return own ? `Schedule/${own.schedule.id}` : undefined;
   };
 
@@ -113,13 +111,18 @@ export function createCancelService(deps: {
       }
       // Scheduled-only (interview decision): arrived/roomed patients are in the
       // building; completed/no-show are history; cancelled is already done.
-      if (appointment.status !== "booked") {
-        throw new InvalidTransitionError();
-      }
+      assertScheduled(appointment);
 
       // Resolve the protectors BEFORE the patch (the cancel patch clears slot[]).
-      const scheduleRef = await ownScheduleRef(caller, appointment);
-      const ownSlots = await resolveBookedSlots(caller, appointment, scheduleRef);
+      // The schedules read only feeds resolveBookedSlots' window-search FALLBACK —
+      // skip that round-trip when the appointment carries its own protector refs
+      // (the common $book path; review finding, 2026-07-09).
+      const hasSlotRefs = (appointment.slot ?? []).some((s) => s.reference);
+      const ownSlots = await resolveBookedSlots(
+        caller,
+        appointment,
+        hasSlotRefs ? undefined : await ownScheduleRef(caller, appointment),
+      );
 
       try {
         await caller.patchResource("Appointment", appointmentId, [

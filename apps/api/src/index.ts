@@ -19,7 +19,7 @@ import { createCancelService, type CancelService } from "./cancel.js";
 import { createEventsService, type EventsService } from "./events.js";
 import { createMoveUpService, type MoveUpService } from "./move-up.js";
 import { createRescheduleService, type RescheduleService } from "./reschedule.js";
-import { createStaffService, type StaffService, type StaffUserClient } from "./staff.js";
+import { createStaffService, type StaffService } from "./staff.js";
 import { readApiConfigFromEnv } from "./config.js";
 import { checkMedplumConnection } from "./medplum.js";
 import { toPatientProfile } from "./patients.js";
@@ -169,63 +169,39 @@ function buildAuthDeps():
     getFhirClient,
   });
 
-  // Staff (S5): every FHIR call runs AS the signed-in staff member — a fresh client
-  // bound to their session's access token (same pattern as getMyProfile above), so
-  // AccessPolicy enforcement and AuditEvent attribution are the core's.
-  const staff = createStaffService({
-    catalog: createServiceCatalog(db),
-    userClient: (accessToken): StaffUserClient => {
-      const client = createMedplumClient(medplumConfig);
-      client.setAccessToken(accessToken);
-      return client;
-    },
-  });
+  // The shared per-caller client factory: a fresh client bound to the session's own
+  // access token, so AccessPolicy enforcement and AuditEvent attribution are the
+  // core's on every staff-surface read (one factory — wiring changes land once).
+  // Deliberately un-annotated: the concrete MedplumClient structurally satisfies each
+  // service's own capability slice (StaffUserClient, MoveUpUserClient, …).
+  const userClient = (accessToken: string) => {
+    const client = createMedplumClient(medplumConfig);
+    client.setAccessToken(accessToken);
+    return client;
+  };
 
-  // Internal events (S5c): reads as the caller (same per-user client pattern as staff),
-  // writes under the same cached service client as booking — staff Slot access is
-  // deliberately readonly (rationale + security-review remediation in src/events.ts).
-  const events = createEventsService({
-    getFhirClient,
-    userClient: (accessToken) => {
-      const client = createMedplumClient(medplumConfig);
-      client.setAccessToken(accessToken);
-      return client;
-    },
-  });
+  // Staff (S5): every FHIR call runs AS the signed-in staff member.
+  const staff = createStaffService({ catalog: createServiceCatalog(db), userClient });
+
+  // Internal events (S5c): reads as the caller, writes under the same cached service
+  // client as booking — staff Slot access is deliberately readonly (rationale +
+  // security-review remediation in src/events.ts).
+  const events = createEventsService({ getFhirClient, userClient });
 
   // Drag-to-reschedule (S5.5): same split-principal wiring as events — the appointment
   // patch runs as the caller; only the busy-slot swap rides the cached service client.
-  const reschedule = createRescheduleService({
-    getFhirClient,
-    userClient: (accessToken) => {
-      const client = createMedplumClient(medplumConfig);
-      client.setAccessToken(accessToken);
-      return client;
-    },
-  });
+  const reschedule = createRescheduleService({ getFhirClient, userClient });
 
   // Move-up list (S5.7): experience-DB rows (ids only), resolved against FHIR as the
   // caller on every read — nothing PHI-shaped is stored (src/move-up.ts).
-  const moveUp = createMoveUpService({
-    db,
-    catalog: createServiceCatalog(db),
-    userClient: (accessToken) => {
-      const client = createMedplumClient(medplumConfig);
-      client.setAccessToken(accessToken);
-      return client;
-    },
-  });
+  const moveUp = createMoveUpService({ db, catalog: createServiceCatalog(db), userClient });
 
   // Cancel + restore (S5.7): the split-principal pattern again — the status patch runs
   // as the caller, the protector-slot writes under the cached service client. The
   // cancel response's move-up match cue reads through the move-up service.
   const cancel = createCancelService({
     getFhirClient,
-    userClient: (accessToken) => {
-      const client = createMedplumClient(medplumConfig);
-      client.setAccessToken(accessToken);
-      return client;
-    },
+    userClient,
     countMoveUpMatches: moveUp.countMatches,
   });
 

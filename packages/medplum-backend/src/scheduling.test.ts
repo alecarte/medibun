@@ -2,6 +2,7 @@ import { OperationOutcomeError } from "@medplum/core";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  findScheduleFor,
   bookAppointment,
   buildHealthcareService,
   buildPractitioner,
@@ -266,5 +267,32 @@ describe("practiceTimezone", () => {
     const bare = { ...withTz, extension: [] };
     expect(practiceTimezone([{ practitioner: bare }])).toBeUndefined();
     expect(practiceTimezone([])).toBeUndefined();
+  });
+});
+
+describe("findScheduleFor (the shared practitioner+service resolution predicate)", () => {
+  const withCode = (id: string, practitioner: string, code: string) => ({
+    schedule: {
+      resourceType: "Schedule" as const,
+      id,
+      actor: [{ reference: `Practitioner/${practitioner}` }],
+      serviceType: [{ coding: [{ system: "https://medibun.com/fhir/CodeSystem/services", code }] }],
+    },
+  });
+  const schedules = [
+    withCode("s1", "pr1", "svc-botox"),
+    withCode("s2", "pr1", "svc-lip-filler"),
+    withCode("s3", "pr2", "svc-botox"),
+  ];
+
+  it("matches on BOTH the practitioner actor and our service code", () => {
+    expect(findScheduleFor(schedules, "pr1", "svc-botox")?.schedule.id).toBe("s1");
+    expect(findScheduleFor(schedules, "pr2", "svc-botox")?.schedule.id).toBe("s3");
+  });
+
+  it("returns undefined when either half misses (fail-safe: no schedule → no fallback)", () => {
+    expect(findScheduleFor(schedules, "pr2", "svc-lip-filler")).toBeUndefined();
+    expect(findScheduleFor(schedules, "pr-unknown", "svc-botox")).toBeUndefined();
+    expect(findScheduleFor([], "pr1", "svc-botox")).toBeUndefined();
   });
 });

@@ -48,7 +48,7 @@ import {
   ymdOf,
   type ScheduleView,
 } from "../lib/day-sheet";
-import { IDLE_MASK_MS, maskName, POLL_INTERVAL_MS } from "../lib/privacy";
+import { IDLE_MASK_MS, maskName, maskValue, POLL_INTERVAL_MS } from "../lib/privacy";
 import { EventForm } from "./event-form";
 import {
   ChevronDownIcon,
@@ -138,6 +138,36 @@ type Column = {
 /** Column order is time order — arrow-key movement and screen-reader reading depend on
  *  it, so sort here instead of trusting the wire order. */
 const byStart = (x: DaySheetAppointment, y: DaySheetAppointment) => x.start.localeCompare(y.start);
+
+/** A copy of `record` without `key` — the optimistic-overlay prune every rollback
+ *  path (cancel, restore, move-undo) shares. */
+function withoutKey<T>(record: Record<string, T>, key: string): Record<string, T> {
+  return Object.fromEntries(Object.entries(record).filter(([k]) => k !== key));
+}
+
+/** The undo toast's line, per variant — one switch, so a new undo kind is added
+ *  here and in undoNow, never re-balanced inside a nested ternary. */
+function undoToastLabel(undo: Undo, displayName: (name: string) => string): string {
+  switch (undo.kind) {
+    case "status":
+      return `${ACTION_DONE[undo.to]} — ${displayName(undo.appointment.patientName)}`;
+    case "move":
+      return `Moved — ${displayName(undo.appointment.patientName)}`;
+    case "cancel": {
+      const cue =
+        undo.matches > 0
+          ? ` · ${undo.matches} move-up ${undo.matches === 1 ? "match" : "matches"}`
+          : "";
+      return `Cancelled — ${displayName(undo.appointment.patientName)}${cue}`;
+    }
+    case "moveup":
+      return `Added to the move-up list — ${displayName(undo.entry.patientName)}`;
+    case "event":
+      return `${undo.event.title ?? EVENT_TYPE_LABEL[undo.event.type]} ${
+        undo.action === "added" ? "added" : "removed"
+      }`;
+  }
+}
 
 /** Longest event first: DOM order is paint order, so a meeting inside a day-off wash
  *  stays visible and clickable above it. */
@@ -608,9 +638,7 @@ export function ScheduleView({
       });
       router.refresh();
     } catch (err) {
-      setCancelledIds((s) =>
-        Object.fromEntries(Object.entries(s).filter(([id]) => id !== appointment.id)),
-      );
+      setCancelledIds((s) => withoutKey(s, appointment.id));
       if (err instanceof StaffError && err.code === "conflict") {
         setNotice("That appointment changed on another station. Refreshing the schedule.");
         router.refresh();
@@ -626,9 +654,7 @@ export function ScheduleView({
    *  which can honestly 409 if the freed time was taken inside the undo period. */
   async function undoCancel(appointment: DaySheetAppointment) {
     // Optimistic: the block reappears up front and re-hides if the restore loses.
-    setCancelledIds((s) =>
-      Object.fromEntries(Object.entries(s).filter(([id]) => id !== appointment.id)),
-    );
+    setCancelledIds((s) => withoutKey(s, appointment.id));
     pendingWrites.current += 1;
     try {
       await api.restoreAppointment(appointment.id);
@@ -636,7 +662,9 @@ export function ScheduleView({
     } catch (err) {
       setCancelledIds((s) => ({ ...s, [appointment.id]: true }));
       if (err instanceof StaffError && err.code === "conflict") {
-        setNotice("The freed time was already taken — the appointment stays cancelled.");
+        setNotice(
+          "Couldn't restore — the time may no longer be free. The appointment stays cancelled.",
+        );
         router.refresh();
       } else {
         // Restore the undo affordance — "Try again" must have a button to press.
@@ -678,7 +706,12 @@ export function ScheduleView({
   async function undoMoveUpAdd(entry: MoveUpEntry) {
     try {
       await api.resolveMoveUp(entry.id, "removed");
-    } catch {
+    } catch (err) {
+      // Already resolved from the panel (fulfilled/removed) inside the undo window:
+      // there is nothing left to undo — a legitimate no-op, never an error notice.
+      if (err instanceof StaffError && err.code === "not_found") {
+        return;
+      }
       setNotice("Couldn't undo that. Check the move-up list.");
     }
   }
@@ -689,7 +722,7 @@ export function ScheduleView({
    *  the original window immediately) and rolls back if the write fails. */
   async function undoMove(original: DaySheetAppointment) {
     const overlay = moves[original.id];
-    setMoves((m) => Object.fromEntries(Object.entries(m).filter(([id]) => id !== original.id)));
+    setMoves((m) => withoutKey(m, original.id));
     pendingWrites.current += 1;
     try {
       await api.rescheduleAppointment(original.id, {
@@ -1626,23 +1659,14 @@ export function ScheduleView({
           {/* While masked, present details read "Hidden" (never the value); a missing
               value keeps its honest em dash. */}
           <dl className="mt-3 border-t border-border-hairline pt-2">
-            <DetailRow
-              label="Phone"
-              value={masked && detail.patientPhone ? "Hidden" : detail.patientPhone}
-            />
-            <DetailRow
-              label="Email"
-              value={masked && detail.patientEmail ? "Hidden" : detail.patientEmail}
-            />
+            <DetailRow label="Phone" value={maskValue(masked, detail.patientPhone)} />
+            <DetailRow label="Email" value={maskValue(masked, detail.patientEmail)} />
             <DetailRow
               label="Booked"
-              value={
-                detail.bookedAt
-                  ? masked
-                    ? "Hidden"
-                    : formatBookedAt(detail.bookedAt, tz)
-                  : undefined
-              }
+              value={maskValue(
+                masked,
+                detail.bookedAt ? formatBookedAt(detail.bookedAt, tz) : undefined,
+              )}
             />
           </dl>
           {detailMode === "actions" && (
@@ -1788,23 +1812,7 @@ export function ScheduleView({
           role="status"
           className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-border-hairline bg-surface-card px-4 py-2.5 shadow-lg"
         >
-          <span className="text-sm text-text-primary">
-            {undo.kind === "status"
-              ? `${ACTION_DONE[undo.to]} — ${displayName(undo.appointment.patientName)}`
-              : undo.kind === "move"
-                ? `Moved — ${displayName(undo.appointment.patientName)}`
-                : undo.kind === "cancel"
-                  ? `Cancelled — ${displayName(undo.appointment.patientName)}${
-                      undo.matches > 0
-                        ? ` · ${undo.matches} move-up ${undo.matches === 1 ? "match" : "matches"}`
-                        : ""
-                    }`
-                  : undo.kind === "moveup"
-                    ? `Added to the move-up list — ${displayName(undo.entry.patientName)}`
-                    : `${undo.event.title ?? EVENT_TYPE_LABEL[undo.event.type]} ${
-                        undo.action === "added" ? "added" : "removed"
-                      }`}
-          </span>
+          <span className="text-sm text-text-primary">{undoToastLabel(undo, displayName)}</span>
           {/* The freed window may serve someone waiting — one tap opens the list. */}
           {undo.kind === "cancel" && undo.matches > 0 && (
             <button

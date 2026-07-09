@@ -148,7 +148,11 @@ createServer((req, res) => {
     // appointments across the days so every column has content to review.
     const rangeStart = Date.parse(`${date}T13:00:00Z`); // 9:00 AM EDT
     const shift = rangeStart - dayStart.getTime();
-    const appointments = STAFF_APPOINTMENTS.filter((a) => !cancelledIds.has(a.id)).map((a, i) => {
+    // Map with the FIXED index first, filter cancelled after: the week-view day
+    // bucket (i % days) must stay anchored to each appointment's position in
+    // STAFF_APPOINTMENTS, or a cancel would re-bucket every later appointment to a
+    // different weekday column (review finding, 2026-07-09).
+    const appointments = STAFF_APPOINTMENTS.map((a, i) => {
       const dayOffset = (days > 1 ? i % days : 0) * 86400000;
       const moved = staffMoves.get(a.id);
       return {
@@ -158,7 +162,7 @@ createServer((req, res) => {
         practitionerId: moved?.practitionerId ?? a.practitionerId,
         status: staffStatuses.get(a.id),
       };
-    });
+    }).filter((a) => !cancelledIds.has(a.id));
     const rangeEnd = rangeStart + days * 86400000;
     const events = [
       ...SEED_EVENTS.map((e) => ({

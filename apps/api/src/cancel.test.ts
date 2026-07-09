@@ -165,6 +165,30 @@ describe("cancelAppointment", () => {
     expect(countMoveUpMatches).toHaveBeenCalledWith("svc-botox", "pr1", "a1");
   });
 
+  it("skips the schedules read when the appointment carries its own protector refs", async () => {
+    // The schedules fetch only feeds resolveBookedSlots' window-search FALLBACK —
+    // the common $book path (slot[] populated) must not pay that round-trip.
+    const { service, userClient } = fakeClients();
+    await service.cancelAppointment(user, "a1", "patient");
+    const urls = userClient.get.mock.calls.map((call) => String(call[0]));
+    expect(urls.filter((u) => u.startsWith("fhir/R4/Schedule?"))).toEqual([]);
+  });
+
+  it("resolves protectors via the schedule-scoped fallback when slot refs are absent", async () => {
+    const { service, userClient, deleted } = fakeClients({
+      appointment: booking({ slot: undefined }),
+    });
+    await service.cancelAppointment(user, "a1", "patient");
+    const urls = userClient.get.mock.calls.map((call) => String(call[0]));
+    expect(urls.filter((u) => u.startsWith("fhir/R4/Schedule?"))).toHaveLength(1);
+    // The fallback search found nothing busy in the fake → nothing deleted, and
+    // crucially the search ran scoped to the appointment's own schedule.
+    expect(urls.some((u) => u.startsWith("fhir/R4/Slot?") && u.includes("Schedule%2Fs1"))).toBe(
+      true,
+    );
+    expect(deleted).toEqual([]);
+  });
+
   it("rejects a reason outside the coded set (never free text)", async () => {
     const { service, patches } = fakeClients();
     await expect(

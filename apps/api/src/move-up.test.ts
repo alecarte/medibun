@@ -1,6 +1,7 @@
 import type { Appointment, Patient, Practitioner } from "@medibun/fhir-types";
+import { ForbiddenError } from "@medibun/medplum-backend";
 import type { drizzle } from "drizzle-orm/pglite";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as schema from "./db/schema.js";
 import { bootTestDb } from "./db/test-db.js";
@@ -156,6 +157,25 @@ describe("addMoveUp", () => {
     ).rejects.toBeInstanceOf(InvalidTransitionError);
   });
 
+  it("commits NO row when a pre-insert read fails (no phantom 'couldn't add' rows)", async () => {
+    // A transient FHIR failure on the patient read must fail the add BEFORE the
+    // insert — a committed-then-errored add would show "couldn't add" and then 409
+    // the retry as a duplicate (review finding, 2026-07-09).
+    const flaky = createMoveUpService({
+      db,
+      catalog,
+      userClient: () =>
+        ({
+          readResource: (type: string, id: string) =>
+            type === "Patient"
+              ? Promise.reject(new Error("connection refused"))
+              : Promise.resolve(defaultResources[`${type}/${id}` as keyof typeof defaultResources]),
+        }) as unknown as MoveUpUserClient,
+    });
+    await expect(flaky.add(user, { appointmentId: "a1" })).rejects.toThrow("connection refused");
+    await expect(db.select().from(schema.moveUpRequests)).resolves.toEqual([]);
+  });
+
   it("bounds the note and requires a known practitioner preference", async () => {
     await expect(
       service().add(user, { appointmentId: "a1", note: "x".repeat(121) }),
@@ -187,6 +207,45 @@ describe("listMoveUp", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ patientName: "Unknown" });
     expect(entries[0]!.appointmentStart).toBeUndefined();
+  });
+
+  it("degrades a POLICY-HIDDEN row field-by-field — one 403 never aborts the list", async () => {
+    const s = service();
+    await s.add(user, { appointmentId: "a1" });
+    await s.add(user, { appointmentId: "a2" });
+    // The caller's policy refuses a1's reads (ForbiddenError is what the
+    // medplum-backend read helpers map a FHIR 403 to); a2 stays readable.
+    const denying = createMoveUpService({
+      db,
+      catalog,
+      userClient: () =>
+        ({
+          readResource: (type: string, id: string) =>
+            `${type}/${id}` === "Appointment/a1"
+              ? Promise.reject(new ForbiddenError())
+              : Promise.resolve(defaultResources[`${type}/${id}` as keyof typeof defaultResources]),
+        }) as unknown as MoveUpUserClient,
+    });
+    const entries = await denying.list(user);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]!.appointmentStart).toBeUndefined(); // hidden appointment degrades
+    expect(entries[1]).toMatchObject({ patientName: "Synthia Loginsmith" }); // a2 intact
+  });
+
+  it("resolves each service code once per list, not once per row", async () => {
+    const getByCode = vi.fn((code: string) =>
+      Promise.resolve(code === "svc-botox" ? ({ name: "Botox" } as { name: string }) : undefined),
+    );
+    const counting = createMoveUpService({
+      db,
+      catalog: { getByCode } as unknown as Parameters<typeof createMoveUpService>[0]["catalog"],
+      userClient: () => fakeUserClient(defaultResources),
+    });
+    await counting.add(user, { appointmentId: "a1" });
+    await counting.add(user, { appointmentId: "a2" });
+    getByCode.mockClear();
+    await counting.list(user);
+    expect(getByCode).toHaveBeenCalledTimes(1); // both rows share svc-botox
   });
 
   it("hides resolved entries", async () => {

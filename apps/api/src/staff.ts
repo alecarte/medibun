@@ -73,6 +73,17 @@ export class UnknownAppointmentError extends Error {
   }
 }
 
+/** The scheduled-only precondition shared by reschedule (S5.5), cancel, and
+ *  move-up add (S5.7): arrived/roomed patients are in the building; completed /
+ *  no-show / cancelled are history. ONE guard, so a future workflow change (e.g.
+ *  cancelling a same-day arrived patient) is a one-place decision. Same client
+ *  recovery as a stale status move: 409 → refetch and re-decide. */
+export function assertScheduled(appointment: Appointment): void {
+  if (appointment.status !== "booked") {
+    throw new InvalidTransitionError();
+  }
+}
+
 /** Per-timezone cached Intl formatters — construction is expensive and the day-bounds
  *  math calls these several times per request. */
 const wallClockFormatters = new Map<string, Intl.DateTimeFormat>();

@@ -5,9 +5,10 @@ import {
   type MoveUpResolution,
 } from "@medibun/api-client";
 import {
+  ForbiddenError,
   isInternalEvent,
   readAppointmentById,
-  readPatientById,
+  readPatientIfVisible,
   readPractitionerById,
   serviceCodeOf,
   type DaySheetReader,
@@ -20,13 +21,13 @@ import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { moveUpRequests } from "./db/schema.js";
 import { humanNameDisplay } from "./patients.js";
 import {
-  InvalidTransitionError,
+  assertScheduled,
   patientParticipant,
   telecomValue,
   UnknownAppointmentError,
   type SessionUser,
 } from "./staff.js";
-import type { ServiceCatalog } from "./services/catalog.js";
+import type { ServiceCatalog, ServiceRow } from "./services/catalog.js";
 
 /**
  * The move-up list (S5.7): the desk-worked cancellation-backfill waitlist. Experience
@@ -75,6 +76,48 @@ export type MoveUpUserClient = DaySheetReader & PatientReader;
 
 type MoveUpRow = typeof moveUpRequests.$inferSelect;
 
+/** Per-call memo for the row-resolution reads, so repeat ids cost one read each. */
+type ResolveCaches = {
+  patients: Map<string, Patient | undefined>;
+  practitioners: Map<string, Practitioner | undefined>;
+  appointments: Map<string, Appointment | undefined>;
+  services: Map<string, ServiceRow | undefined>;
+};
+
+const emptyCaches = (): ResolveCaches => ({
+  patients: new Map(),
+  practitioners: new Map(),
+  appointments: new Map(),
+  services: new Map(),
+});
+
+/** A read whose POLICY DENIAL degrades to undefined, per row — one resource the
+ *  caller can't see must render as missing ("Unknown"), never abort the whole
+ *  list or masquerade as a session problem (review finding, 2026-07-09). A real
+ *  401 (SessionExpiredError) still propagates: the token is dead for every row. */
+async function visible<T>(read: () => Promise<T | undefined>): Promise<T | undefined> {
+  try {
+    return await read();
+  } catch (err) {
+    if (err instanceof ForbiddenError) {
+      return undefined;
+    }
+    throw err;
+  }
+}
+
+/** Memoized read-through. */
+async function cached<T>(
+  cache: Map<string, T | undefined>,
+  key: string,
+  read: () => Promise<T | undefined>,
+): Promise<T | undefined> {
+  if (!cache.has(key)) {
+    cache.set(key, await read());
+  }
+  return cache.get(key);
+}
+
 export type MoveUpService = {
   /** Waiting entries, oldest first (fairness), resolved against FHIR as the caller. */
   readonly list: (user: SessionUser) => Promise<MoveUpEntry[]>;
@@ -115,39 +158,29 @@ export function createMoveUpService(deps: {
   /** A Medplum client authenticated with the GIVEN access token (the end user's). */
   readonly userClient: (accessToken: string) => MoveUpUserClient;
 }): MoveUpService {
-  /** Resolve one stored row against FHIR + the catalog. Not-founds degrade field by
-   *  field (a since-deleted patient must not brick the whole panel); auth errors
-   *  propagate to the route's 401/403 mapping. */
+  /** Resolve one stored row against FHIR + the catalog. The three FHIR reads and the
+   *  catalog read are independent — run together. Not-founds AND policy denials
+   *  degrade field by field (a hidden or since-deleted resource must not brick the
+   *  panel); only a dead token (401) aborts, via the route's mapping. */
   const toEntry = async (
     client: MoveUpUserClient,
     row: MoveUpRow,
-    caches: {
-      patients: Map<string, Patient | undefined>;
-      practitioners: Map<string, Practitioner | undefined>;
-      appointments: Map<string, Appointment | undefined>;
-    },
+    caches: ResolveCaches,
   ): Promise<MoveUpEntry> => {
-    if (!caches.patients.has(row.patientId)) {
-      caches.patients.set(row.patientId, await readPatientById(client, row.patientId));
-    }
-    if (!caches.appointments.has(row.appointmentId)) {
-      caches.appointments.set(
-        row.appointmentId,
-        await readAppointmentById(client, row.appointmentId),
-      );
-    }
-    if (row.practitionerId && !caches.practitioners.has(row.practitionerId)) {
-      caches.practitioners.set(
-        row.practitionerId,
-        await readPractitionerById(client, row.practitionerId),
-      );
-    }
-    const patient = caches.patients.get(row.patientId);
-    const appointment = caches.appointments.get(row.appointmentId);
-    const practitioner = row.practitionerId
-      ? caches.practitioners.get(row.practitionerId)
-      : undefined;
-    const service = await deps.catalog.getByCode(row.serviceCode);
+    const [patient, appointment, practitioner, service] = await Promise.all([
+      cached(caches.patients, row.patientId, () =>
+        visible(() => readPatientIfVisible(client, row.patientId)),
+      ),
+      cached(caches.appointments, row.appointmentId, () =>
+        visible(() => readAppointmentById(client, row.appointmentId)),
+      ),
+      row.practitionerId
+        ? cached(caches.practitioners, row.practitionerId, () =>
+            visible(() => readPractitionerById(client, row.practitionerId!)),
+          )
+        : Promise.resolve(undefined),
+      cached(caches.services, row.serviceCode, () => deps.catalog.getByCode(row.serviceCode)),
+    ]);
     const phone = patient && telecomValue(patient, "phone");
     return {
       id: row.id,
@@ -173,13 +206,9 @@ export function createMoveUpService(deps: {
         .where(eq(moveUpRequests.status, "waiting"))
         .orderBy(asc(moveUpRequests.createdAt));
       const client = deps.userClient(user.accessToken);
-      const caches = {
-        patients: new Map<string, Patient | undefined>(),
-        practitioners: new Map<string, Practitioner | undefined>(),
-        appointments: new Map<string, Appointment | undefined>(),
-      };
-      // Sequential on purpose: the list is short (a desk works it by phone), and the
-      // caches dedupe repeat reads — no need for the day sheet's batching machinery.
+      const caches = emptyCaches();
+      // Rows resolve sequentially (each row's reads run in parallel inside toEntry);
+      // the caches dedupe repeat ids. The list is desk-sized — no batching machinery.
       const entries: MoveUpEntry[] = [];
       for (const row of rows) {
         entries.push(await toEntry(client, row, caches));
@@ -210,9 +239,7 @@ export function createMoveUpService(deps: {
       }
       // Scheduled-only: an arrived/roomed patient is in the building; completed /
       // no-show / cancelled have nothing to move up. Same recovery as a stale move.
-      if (appointment.status !== "booked") {
-        throw new InvalidTransitionError();
-      }
+      assertScheduled(appointment);
       const patientId = patientParticipant(appointment)?.split("/")[1];
       const serviceCode = serviceCodeOf(appointment);
       if (!patientId || !serviceCode) {
@@ -225,6 +252,13 @@ export function createMoveUpService(deps: {
           throw new InvalidMoveUpRequestError();
         }
       }
+      // Resolve EVERYTHING the response needs BEFORE the insert: a read that fails
+      // after the commit would report "couldn't add" for a row that WAS added — and
+      // the retry would then 409 as a duplicate (review finding, 2026-07-09).
+      const [patient, service] = await Promise.all([
+        readPatientIfVisible(client, patientId),
+        deps.catalog.getByCode(serviceCode),
+      ]);
 
       const inserted = await deps.db
         .insert(moveUpRequests)
@@ -242,11 +276,14 @@ export function createMoveUpService(deps: {
       if (!row) {
         throw new DuplicateMoveUpError();
       }
-      return toEntry(deps.userClient(user.accessToken), row, {
-        patients: new Map(),
-        practitioners: new Map([[request.practitionerId ?? "", practitioner]]),
-        appointments: new Map([[request.appointmentId, appointment]]),
-      });
+      const caches = emptyCaches();
+      caches.patients.set(patientId, patient);
+      caches.appointments.set(request.appointmentId, appointment);
+      caches.services.set(serviceCode, service);
+      if (request.practitionerId) {
+        caches.practitioners.set(request.practitionerId, practitioner);
+      }
+      return toEntry(client, row, caches);
     },
 
     async resolve(entryId, resolution) {

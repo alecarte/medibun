@@ -1017,7 +1017,7 @@ describe("ScheduleView — cancel + move-up (S5.7)", () => {
 
     expect(
       await screen.findByText(
-        "The freed time was already taken — the appointment stays cancelled.",
+        "Couldn't restore — the time may no longer be free. The appointment stays cancelled.",
       ),
     ).toBeInTheDocument();
     const column = screen.getByRole("list", { name: "Riley Reyes appointments" });
@@ -1099,6 +1099,41 @@ describe("ScheduleView — cancel + move-up (S5.7)", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Add to move-up list" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Add to move-up list" }));
     expect(await screen.findByText("Already on the move-up list.")).toBeInTheDocument();
+  });
+
+  it("silences the add-undo when the entry was already resolved from the panel", async () => {
+    // Add succeeds (201); the later PATCH 404s (the panel resolved it first inside
+    // the undo window) — a legitimate no-op, so NO error notice may appear.
+    const calls: { url: string; init?: RequestInit }[] = [];
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init });
+      const isPatch = init?.method === "PATCH";
+      const body = isPatch
+        ? { error: "not_found", requestId: "r" }
+        : {
+            id: "m1",
+            patientId: "pt1",
+            patientName: "Synthia Loginsmith",
+            appointmentId: "a1",
+            serviceCode: "svc-botox",
+            createdAt: "2026-07-09T12:00:00.000Z",
+          };
+      return Promise.resolve(
+        new Response(JSON.stringify(body), {
+          status: isPatch ? 404 : 201,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    render(<ScheduleView {...dayProps} />);
+    const dialog = openDetail("Synthia Loginsmith");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add to move-up list" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add to move-up list" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Undo/ }));
+    await vi.waitFor(() => expect(calls.some((c) => c.init?.method === "PATCH")).toBe(true));
+    expect(
+      screen.queryByText("Couldn't undo that. Check the move-up list."),
+    ).not.toBeInTheDocument();
   });
 
   it("opens the move-up panel from the toolbar", async () => {

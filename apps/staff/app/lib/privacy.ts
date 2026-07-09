@@ -19,3 +19,11 @@ export function maskName(name: string): string {
     .map((part) => `${part[0]!}.`);
   return initials.length > 0 ? initials.join(" ") : "•";
 }
+
+/** A masked contact/detail value: "Hidden" while the mask is on (never the value);
+ *  the value otherwise; a missing value stays missing (its honest em dash is the
+ *  caller's). THE one place the mask's replacement text lives — the detail card and
+ *  the move-up panel must never drift apart on it. */
+export function maskValue(masked: boolean, value: string | undefined): string | undefined {
+  return masked && value ? "Hidden" : value;
+}

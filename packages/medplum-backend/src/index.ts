@@ -5,7 +5,12 @@ export {
   authenticatedMedplumClient,
 } from "./client.js";
 export { handler as helloWorldBot } from "./bots/hello-world.bot.js";
-export { readPatientById, SessionExpiredError, type PatientReader } from "./patients.js";
+export {
+  readPatientById,
+  readPatientIfVisible,
+  SessionExpiredError,
+  type PatientReader,
+} from "./patients.js";
 export {
   directUserLogin,
   refreshUserTokens,
@@ -45,6 +50,7 @@ export {
 export {
   bookAppointment,
   buildHealthcareService,
+  findScheduleFor,
   buildPractitioner,
   buildSchedule,
   findSlots,

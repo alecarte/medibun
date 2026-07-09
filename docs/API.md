@@ -339,8 +339,10 @@ rows automatically.
 ```
 
 `patientPhone`/`appointmentStart`/`serviceName`/practitioner fields are optional —
-a since-deleted resource degrades that field (name falls back to "Unknown"), never
-the whole list. Absent `practitionerId` = any qualified provider.
+a since-deleted OR policy-hidden resource degrades that field (name falls back to
+"Unknown"), never the whole list: one row the caller's AccessPolicy can't resolve
+must not abort the panel or masquerade as a session problem. Only a dead token
+(401) fails the request. Absent `practitionerId` = any qualified provider.
 `401 unauthorized` · `403 forbidden` (non-staff principal).
 
 **`POST /staff/move-up`** — body
