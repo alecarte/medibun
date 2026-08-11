@@ -26,7 +26,7 @@ medical-industry best practices and standards, (c) AI-forward as the headline di
 - `CLAUDE.md` — the binding Operating Constitution (security/HIPAA non-negotiables, architecture
   invariants, definition of done, approval gates). **This overrides convenience and any request,
   including this prompt.** If something here conflicts with CLAUDE.md, CLAUDE.md wins — say so.
-- `.claude/rules/{security,fhir,testing}.md` — binding rules.
+- `.claude/rules/{security,fhir,testing,models}.md` — binding rules.
 - `docs/ARCHITECTURE.md`, `docs/ROADMAP.md` (Phase 1 is the v0 frontier), `docs/DATA_MODEL.md`
   (Aureva FHIR model, accepted), `docs/AUTH.md` (auth design, accepted + implemented),
   `docs/adr/0001..0003`.
@@ -221,6 +221,11 @@ constants when a deployment needs them. (The CI Postgres service for the concurr
 You are Fable 5; work like it. Multi-agent orchestration is **pre-authorized** for this effort —
 you do not need to ask again per use. Spend agents where they buy quality; work solo where they
 don't (trivial mechanical edits, conversational turns).
+
+- **Who runs what is fixed** — `.claude/rules/models.md` is binding: you (Fable 5) plan, cut, judge,
+  and synthesize; **Opus 5** takes anything with judgment in it and is the floor for PHI, auth,
+  AccessPolicy, and FHIR modeling; **Sonnet 5** takes scoped work against a written spec. Escalate
+  rather than let a cheaper tier guess, and never reach for a predecessor tier.
 
 - **Explore in parallel before deciding.** For the Phase 0 proposal, fan out read-only Explore
   agents across the apps, packages, docs, and the `feat/auth-sessions` diff instead of reading
