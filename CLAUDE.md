@@ -118,6 +118,9 @@ These follow from the brief and decisions made during bootstrap. Treat them like
 
 - Repeatable workflows are skills, not memory: `slice` (start-to-done slice ritual) and
   `visual-check` (screenshot-review harness, `tools/visual-check/`). Use them.
+- Which model runs which work is `.claude/rules/models.md` (binding): **Fable 5 orchestrates and
+  plans; Opus 5 and Sonnet 5 execute**, with Opus 5 the floor for anything PHI-touching. No
+  predecessor tiers.
 - When compacting or summarizing a session, always preserve: the active slice + branch, the
   modified-file list, gate/checklist state (what's run, what's still owed), approval-gate
   decisions pending or granted, and live-verify items. `docs/V0_PROPOSAL.md` §9 is the durable
