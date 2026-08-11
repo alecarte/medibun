@@ -2,6 +2,7 @@ import type { CategoryColor } from "@medibun/design-tokens";
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  date,
   index,
   integer,
   pgTable,
@@ -90,6 +91,159 @@ export const moveUpRequests = pgTable(
     // The list reads oldest-first (fairness) over waiting rows.
     index("move_up_status_created_idx").on(t.status, t.createdAt),
   ],
+);
+
+/**
+ * Recovery ingestion (R1, RECOVERY_DESIGN.md §2–3). Source systems we can stage from;
+ * one adapter per member. Widening this union is what adding an adapter looks like.
+ */
+export type SourceSystem = "4d";
+
+/** The entities a source adapter can produce — one staging table each. */
+export type StagedEntity = "patients" | "appointments" | "inquiries" | "consults";
+
+/**
+ * Append-only import run ledger: one row per (file, entity) import run, written even
+ * when nothing changed. This is the reconciliation evidence behind every attribution
+ * claim ("which export, which counts, when"). NO PHI: `fileName` is a basename only
+ * (never a path), `rejectsUri` is the local path of the rejects file — the rejects
+ * FILE holds raw rows, this table holds counts and identifiers only.
+ */
+export const imports = pgTable("imports", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  sourceSystem: text("source_system").$type<SourceSystem>().notNull(),
+  entity: text("entity").$type<StagedEntity>().notNull(),
+  /** Basename of the imported file — never a filesystem path. */
+  fileName: text("file_name").notNull(),
+  /** sha256 of the file content: the same export re-imported is provably the same bytes. */
+  fileHash: text("file_hash").notNull(),
+  /** Data rows read from the file (header excluded) = stagedCount + rejectedCount. */
+  rowCount: integer("row_count").notNull(),
+  stagedCount: integer("staged_count").notNull(),
+  rejectedCount: integer("rejected_count").notNull(),
+  /** Local path of the rejects file; null when the run was clean. */
+  rejectsUri: text("rejects_uri"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Staged patient roster (R1). PHI — administrative identity + contact ONLY (name, date
+ * of birth, phone, email); no clinical content ever enters the experience DB
+ * (RECOVERY_DESIGN.md §3, the two-store rule). Values are staged verbatim after trim;
+ * normalization is a later concern. `(source_system, source_identity)` is the
+ * idempotency key: a re-import reconciles onto the existing row.
+ */
+export const stagedPatients = pgTable(
+  "staged_patients",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** Untyped text (not the `SourceSystem` union) on purpose: staged rows from a
+     *  retired adapter must stay readable after its union member is removed. */
+    sourceSystem: text("source_system").notNull(),
+    /** The source system's own patient id — the reconciliation key across imports. */
+    sourceIdentity: text("source_identity").notNull(),
+    /** The last import run that wrote this row. */
+    importId: uuid("import_id")
+      .notNull()
+      .references(() => imports.id),
+    firstName: text("first_name"),
+    lastName: text("last_name"),
+    dob: date("dob"),
+    phone: text("phone"),
+    email: text("email"),
+    /** Medplum Patient id once identity is promoted — UNUSED in R1 (promotion and the
+     *  manual-merge queue land before R5 enrollment; the link column exists now so the
+     *  staging table never needs a second migration for it). */
+    medplumPatientId: text("medplum_patient_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("staged_patients_source_idx").on(t.sourceSystem, t.sourceIdentity)],
+);
+
+/**
+ * Staged appointment history (R1) — the dormant-pool input. PHI-adjacent: times,
+ * status, and the source's raw service category/provider labels, never what was
+ * treated. `patientSourceIdentity` joins staging-side with NO foreign key on purpose:
+ * a source export may carry appointments for patients missing from the roster, and
+ * segmentation treats those as degraded rows rather than losing them at import.
+ * `startAt` is parsed from the source's practice-local wall time (unparseable → the
+ * row is rejected, never silently coerced).
+ */
+export const stagedAppointments = pgTable(
+  "staged_appointments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sourceSystem: text("source_system").notNull(),
+    sourceIdentity: text("source_identity").notNull(),
+    importId: uuid("import_id")
+      .notNull()
+      .references(() => imports.id),
+    /** Staging-side join key to `staged_patients.source_identity` (no FK by design). */
+    patientSourceIdentity: text("patient_source_identity").notNull(),
+    startAt: timestamp("start_at", { withTimezone: true }).notNull(),
+    /** Source labels, verbatim — R2 owns mapping raw categories to service_categories. */
+    statusRaw: text("status_raw").notNull(),
+    serviceCategoryRaw: text("service_category_raw"),
+    providerRaw: text("provider_raw"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("staged_appointments_source_idx").on(t.sourceSystem, t.sourceIdentity)],
+);
+
+/**
+ * Staged inbound inquiries (R1) — the missed-inquiry pool's input. PHI (contact only):
+ * an inquirer may never have become a patient, so `patientSourceIdentity` is nullable
+ * and a name/phone may be all we have. Columns are PROVISIONAL until R0 records the
+ * real 4D field mapping (RECOVERY_DESIGN.md §2); adjustments are a follow-up migration
+ * at the same gate.
+ */
+export const stagedInquiries = pgTable(
+  "staged_inquiries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sourceSystem: text("source_system").notNull(),
+    sourceIdentity: text("source_identity").notNull(),
+    importId: uuid("import_id")
+      .notNull()
+      .references(() => imports.id),
+    /** Null when the inquirer was never matched to a patient record. */
+    patientSourceIdentity: text("patient_source_identity"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    channelRaw: text("channel_raw"),
+    outcomeRaw: text("outcome_raw"),
+    name: text("name"),
+    phone: text("phone"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("staged_inquiries_source_idx").on(t.sourceSystem, t.sourceIdentity)],
+);
+
+/**
+ * Staged consult outcomes (R1) — the unconverted-consult pool's input. PHI-adjacent:
+ * when the consult happened and the source's raw category/outcome labels, never the
+ * clinical content of the consult. Columns are PROVISIONAL until R0's field mapping,
+ * same as `staged_inquiries`.
+ */
+export const stagedConsults = pgTable(
+  "staged_consults",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sourceSystem: text("source_system").notNull(),
+    sourceIdentity: text("source_identity").notNull(),
+    importId: uuid("import_id")
+      .notNull()
+      .references(() => imports.id),
+    patientSourceIdentity: text("patient_source_identity").notNull(),
+    consultAt: timestamp("consult_at", { withTimezone: true }).notNull(),
+    serviceCategoryRaw: text("service_category_raw"),
+    outcomeRaw: text("outcome_raw"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("staged_consults_source_idx").on(t.sourceSystem, t.sourceIdentity)],
 );
 
 export const loginAttempts = pgTable(
