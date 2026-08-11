@@ -33,7 +33,5 @@ export const csvCell = (value: string): string =>
 export const csvRow = (...cells: readonly string[]): string => cells.map(csvCell).join(",");
 
 /** A whole CSV file: header line + data lines, CRLF-free and newline-terminated. */
-export const csvFile = (
-  headers: readonly string[],
-  rows: readonly (readonly string[])[],
-): string => [csvRow(...headers), ...rows.map((r) => csvRow(...r))].join("\n") + "\n";
+export const csvFile = (headers: readonly string[], rows: readonly (readonly string[])[]): string =>
+  [csvRow(...headers), ...rows.map((r) => csvRow(...r))].join("\n") + "\n";

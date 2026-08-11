@@ -135,7 +135,10 @@ describe("4D adapter — patients", () => {
   });
 
   it("ignores columns it does not map and nulls the optional ones a file omits", () => {
-    const content = csvFile(["patient_id", "last_name", "loyalty_points"], [["p-1", "Fakeman", "9"]]);
+    const content = csvFile(
+      ["patient_id", "last_name", "loyalty_points"],
+      [["p-1", "Fakeman", "9"]],
+    );
 
     const { rows, rejects } = adapter.parse("patients", content);
 
@@ -313,7 +316,13 @@ describe("4D adapter — PHI discipline", () => {
 
     expect(rejects).toHaveLength(1);
     const [reject] = rejects;
-    for (const value of [badDate, "Zzyzxine", "Quibbleworth", "555-0177", "leaky@example.invalid"]) {
+    for (const value of [
+      badDate,
+      "Zzyzxine",
+      "Quibbleworth",
+      "555-0177",
+      "leaky@example.invalid",
+    ]) {
       expect(reject?.reason).not.toContain(value);
     }
     // The raw line is preserved verbatim — it is what the rejects FILE reports.
