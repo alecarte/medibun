@@ -20,6 +20,7 @@
     "@medibun/design-tokens": "workspace:*",
     "@medibun/fhir-types": "workspace:*",
     "@medibun/medplum-backend": "workspace:*",
+    "csv-parse": "catalog:",
     "drizzle-orm": "catalog:",
     "hono": "catalog:",
     "pg": "catalog:"

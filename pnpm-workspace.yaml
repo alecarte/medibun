@@ -35,6 +35,9 @@ catalog:
   "@types/pg": ^8.11.0
   "@electric-sql/pglite": ^0.3.0
 
+  # Ingestion (apps/api) — RECOVERY_DESIGN.md §2, R1: RFC-4180 CSV parsing for source adapters
+  csv-parse: ^5.6.0
+
   # Styling (web)
   tailwindcss: ^4.0.0
   "@tailwindcss/postcss": ^4.0.0
