@@ -1,88 +1,79 @@
 # Roadmap
 
-Seeded from `PROJECT_BRIEF.md` §5. Phase floor is set by **external dependencies** (BAA turnaround,
-DoseSpot EPCS identity proofing, App Store review, 4D export quality, clinical validation), not
-coding speed — so every paperwork clock starts on day one and runs in parallel with the build.
+Rewritten 2026-08-11 with the v1 revenue re-cut (`V1_PROPOSAL.md`, supersedes the phase
+sequence below the line in the 2026-05-29 version; Phase-0 bootstrap history preserved in git).
+Phase floor remains set by **external dependencies** — now led by the BAA chain, which gates
+_revenue_ (R6), not just launch. Every paperwork clock starts at R0.
 
-## Phase 0 — Foundation (weeks 1–3)
+## Phase R — Revenue engine (weeks 1–7 build, campaign through ~W12)
 
-Core, auth, org model (Handal + Aureva). Start the slow paperwork **now**: BAAs (Medplum, Vercel,
-comms, Sentry, PostHog), DoseSpot enrollment, Apple Developer. Verify 4D's export capability.
+The R-track (V1_PROPOSAL.md §5): 4D ingestion → Handal Leak Report → comms boundary → guest
+booking → sequencer + attribution ledger + recovery queue → **engagement zero** at Handal with
+holdout measurement against the §10 go/adjust/kill criteria. Real PHI runs local-only until
+the BAA chain completes (RECOVERY_DESIGN.md §7). Stripe stays deferred; mobile stays stubbed;
+the schedule family is frozen (V1 §4).
 
-_Bootstrap status (2026-05-29):_ monorepo scaffold ✅ · CLAUDE.md ✅ · `.claude/` hardening ✅ ·
-`/docs` stubs ✅ · Medplum wiring ✅ (self-hosted local dev; Subscription→Bot proven end to end).
-All §6 bootstrap steps done. **Dev = self-hosted Medplum (`infra/medplum/`); prod = Medplum Cloud
-later (needs BAA).** Outstanding paperwork: start the Medplum **BAA** clock + Cloud account for
-Phase 1; DoseSpot enrollment; Apple Developer; verify 4D export.
+**Why first:** no Aureva date pressure; Handal's 4D data is the only real dataset; the
+diagnostic + adapters are simultaneously the sellable wedge, the benchmark dataset, and the
+Phase-H migration tooling.
 
-## Phase 1 — Aureva launch (months 1–3)
+## Phase L — Aureva launch spine (starts ~W7, overlapping the campaign; done ~W14–16)
 
-Patient portal + patient app v0; Aureva clinical capture v1 in the staff app; owned online booking;
-Stripe memberships. Handal stays on 4D. First real data work: the Aureva FHIR model
-(`DATA_MODEL.md`) — ask before modeling.
+The surviving V0 slices S6–S12, content and gates unchanged (V0 §8 demo script remains the
+bar): AI boundary + ADR-0004 → face-map manual + ambient capture → history timeline →
+patient concierge → staff assistant → demo polish. Plus the un-frozen launch prerequisites in
+their V0 order: patient self-signup (now largely covered by R4's SMS identity), GFE /
+medical-director oversight (**required before real operations** — unchanged), before/after
+photos (first post-spine candidate).
 
-## Phase 2 — Growth + experience (months 3–6)
+## Phase G — Growth + lab track (post-L, plus continuous Handal/Aureva lab work)
 
-QR check-in, geofence reminders, loyalty/packages, lifecycle automation on Bots, patient-app
-polish. The "Starbucks for MedSpa" mechanics (loyalty, proactive recommendations) land here. No
-external gate — pure build.
+Two lanes, one spine:
 
-Added 2026-07-02 (competitive scan, approved by Alec — see `COMPETITIVE_NOTES.md`):
+- **Sold lane — lapse prevention:** the recovery engine's retention tail (maintenance-cadence
+  nudges, rebooking proposals, waitlist backfill) productized for R-track customers; the
+  Phase-2 growth-engine mechanics land here _with a dollar frame_, on Bots/Subscriptions as
+  originally designed. Commerce (Stripe memberships, card-on-file holds, deposits) joins this
+  lane when a customer or Aureva's opening needs it.
+- **Lab lane (Handal/Aureva only, feature-flagged, no multi-tenant polish):** loyalty,
+  marketing, QR check-in, geofence, embedded relationship components (PATIENT_SURFACE.md),
+  consumer-app ambitions. Graduates to the sold lane only on customer pull (PROJECT_BRIEF
+  amendment, V1 §8).
 
-- **Before/after photos** (Media + the clinical-vs-marketing Consent split already modeled in
-  `DATA_MODEL.md`) — first post-spine slice candidate; universal aesthetics table stake.
-- **GFE / medical-director oversight** — good-faith-exam review + chart sign-off workflow for
-  non-physician injectors (cf. Aesthetic Record "MD Rooms"). Compliance-adjacent: data-model
-  amendment + approval gate when scheduled; **required before real (non-synthetic) operations**,
-  wherever that lands relative to phases.
+## Phase H — Handal migration (pullable forward)
 
-Added 2026-07-03 (booking-conversion research, approved by Alec — see `BOOKING_DESIGN.md` §4
-for the full parked list with rationale). The post-v0 conversion levers, in rough order of
-leverage:
+Unchanged in content (surgical charting, DoseSpot EPCS, 4D history migration, retire 4D) but
+no longer strictly sequential: **B6(a) puts Handal's recovered-booking front office on Medibun
+during Phase R**, and the R1 4D adapter is the migration's ingestion foundation — so Phase H
+becomes a staged widening (front office → clinical) rather than a one-time cut-over. EPCS
+compliance gates unchanged. Bus-factor rule: Handal's _clinical_ record does not move while
+the platform has a single-person sev-1 response.
 
-- **Guest booking with SMS-code identity** (lands with the signup slice; folds into the
-  deferred phone-OTP decision — AUTH.md review log). Biggest single new-patient friction lever.
-- **Card-on-file hold at booking** with reassurance-worded policy (lands with Stripe; pairs
-  with no-show fees + deposits already in the Phase-2 backlog).
-- **Reminder cadence** (SMS/email, RCT-backed no-show reduction; comms vendor needs BAA) and
-  **confirmation-to-arrival prep content** as its first touchpoint.
-- **New-patient consultation-first entry** (the GFE requirement above, expressed as the booking
-  flow's front door for new injectable patients — how every premium competitor does it).
-- **Slot-ranking IP** (Boulevard-style calendar-packing availability ordering in the BFF) and
-  **waitlist backfill** — growth-engine material, event-driven on Bots.
-- **Funnel instrumentation** (lands with PostHog; BOOKING_DESIGN.md §5 lists the evidence gaps
-  we owe ourselves A/B tests on).
+## Phase P — Productize (gated on R6 = Go)
 
-Added 2026-07-04 (patient-surface distribution research — see `PATIENT_SURFACE.md`, approved
-by Alec 2026-07-04):
+The external offer, in the memo's shape: paid Leak Report diagnostic → outcome-priced recovery
+engagement → platform modules behind it. First external diagnostic triggers: the external-
+tenancy ADR (separate Medplum Project vs closing the standing "before the second tenant"
+hardening list), the LICENSE decision (standing note), pricing per the memo (diagnostic
+$1.5–2.5K; ~$1.5K/mo base + per-recovered-appointment), and the adapter for whatever the
+client runs (Boulevard/Zenoti/Pabau/AR/PatientNow, one at a time, on demand).
 
-- **Booking overlay snippet** (Boulevard parity): full-viewport branded overlay iframing our
-  booking flow on the practice's WordPress site; guest-first, PHI only inside our origin.
-  Depends on guest/SMS identity above; adds embed-aware origin config to the BFF
-  (approval-gated auth change).
-- **Embedded relationship components** (the differentiator): membership join, wallet/loyalty
-  state, orders, "message your injector" entry as brandable components on the practice's own
-  site — guest-visible states embedded, one first-party hop for authenticated depth. WordPress
-  plugin packaging for agency ergonomics; branded custom domain (CNAME) for continuity.
+## Standing compliance gates (every phase — unchanged)
 
-## Phase 3 — Handal migration (months 6–10)
+Adding any PHI-touching vendor/dependency is a human-approval, BAA-gated decision. Stripe
+signs no BAA → it never receives PHI. Outbound messages follow the B3 messaging standard.
+Unsure on HIPAA/access/audit → STOP and ask. See `.claude/rules/security.md`.
 
-Surgical charting in the staff app, DoseSpot EPCS live, migrate history off 4D, retire it. EPCS is
-heavily compliance-gated (DEA identity proofing IAL3, two-factor at signing) — approval-gated, not
-a feature toggle.
+## Standing pre-external-tenant hardening list (carry-forward)
 
-## Phase 4 — Productize (12 months+)
+Org-scope the unscoped operational reads; org-scope the check-in Bot's Encounter write;
+tenant-scope move-up queries; validate `slot[]` schedule ownership once the $book slot-ref
+live-verify lands; move-up `resolvedBy` attribution. Owed before any non-family tenant shares
+the Project — or mooted by the separate-Project ADR.
 
-Harden multi-tenant isolation; onboard a third practice under its own brand (brand = token set +
-config, consuming the same platform API).
+## Live-verify debt (carry-forward, schedule at R6 prod stand-up)
 
-> **LICENSE (do at productization).** The repo is currently `UNLICENSED` (private, proprietary). As
-> we productize / onboard external practices, add an explicit `LICENSE` file — likely "All Rights
-> Reserved" proprietary, or a commercial license if the platform is sold to other practices. Decide
-> deliberately at this phase. (Medplum itself remains Apache-2.0 as a dependency — unaffected.)
-
-## Standing compliance gates (every phase)
-
-Adding any PHI-touching vendor/dependency is a human-approval, BAA-gated decision. Stripe signs no
-BAA → it never receives PHI. Unsure on HIPAA/access/audit → STOP and ask. See
-`.claude/rules/security.md`.
+The accumulated "live verify owed on a real stack" items from S4–S5.7 run as one batch when
+the prod stack stands up for R6 — booking $book participant/serviceType/slot-ref behavior,
+`meta.accounts` propagation, versionId test-and-set honoring, staff policy denials, two-station
+polling. Recorded per-slice in V0 §9; check them off there.

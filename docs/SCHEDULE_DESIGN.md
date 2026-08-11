@@ -186,6 +186,13 @@ toggles, jump-ahead nav, a plain Find-Openings affordance alongside S11, grid zo
 
 ## Review log
 
+- 2026-08-11 — **Schedule family FROZEN for v1** (`V1_PROPOSAL.md` §4, approved with the
+  re-cut): S5.8 room/resource columns, Month view, the Today staff dashboard, touch drag,
+  keyboard reschedule, week-view drag, and S5.7's Phase-2 auto-match Bot are **parked, not
+  dropped** — none may be picked up before R6 ships without a re-cut from Alec. Rationale:
+  the schedule already exceeds competitive table stakes (COMPETITIVE_NOTES §1); marginal
+  hours belong to the revenue thesis. The staff app's one v1 addition is the `/recovery`
+  queue (`RECOVERY_DESIGN.md` §6) — a new destination, not a schedule-family change.
 - 2026-07-09 — **S5.7 shipped** (§11): staff cancel end to end (coded-reason detail-card
   action, undo-over-confirm with honest restore-409, protector-slot freeing) + the
   move-up list (approved `move_up_requests` experience-DB migration — ids only, live

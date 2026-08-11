@@ -47,6 +47,20 @@ core, and regulated commodity services (prescribing, payments) are integrated, n
   PS migrates off 4D last (heavy, regulated, one-time cut-over). Build what 4D can't cover
   first; defer what it already does.
 
+Amended 2026-08-11 (v1 revenue re-cut — `docs/V1_PROPOSAL.md` §8, approved with B1):
+
+- **The productization wedge is the recovery engine, not the platform.** The sellable offer is
+  a paid Leak Report diagnostic followed by an outcome-priced recovery engagement; the platform
+  (front office → clinical) is sold _behind_ it, module by module, to customers the engine has
+  already won. Every ingestion adapter doubles as migration tooling for the corresponding EMR.
+- **Marketing/loyalty/consumer-app features are lab-track only** until R-track customers create
+  pull: built as Medibun modules for Handal/Aureva behind flags, with no speculative
+  multi-tenant polish, entering the sold product only as **lapse prevention** (the retention
+  tail of recovery).
+- **External-client data isolation**: the first _non-family_ diagnostic runs in a separate
+  Medplum Project per ADR-0003's escape valve unless the standing "before the second tenant"
+  hardening list is closed first — decided by a new ADR when that sale exists.
+
 ## 3. Locked tech stack
 
 - **Monorepo:** pnpm workspaces + Turborepo. TypeScript everywhere, `strict` on.
