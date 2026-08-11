@@ -62,7 +62,7 @@ Experience DB (Drizzle migrations, A6/B2 discipline):
 - `enrollments` — (campaign, patient) with state (§4), holdout flag, exclusion reason.
 - `touches` — enrollment, step #, channel, template code + params (PHI-minimal by B3),
   vendor message id, sent/delivered/failed timestamps, Medplum Communication id.
-- `recoveries` — enrollment, appointment id (Medplum), booked_at, first_visit_value_cents,
+- `recoveries` — enrollment, appointment id (Medplum), `booked_at`, `first_visit_value_cents`,
   attribution basis (which touch, token id), report period. Append-only; corrections are new
   rows with reversal links, never updates — this table _is_ the invoice evidence.
 
