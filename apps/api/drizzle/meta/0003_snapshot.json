@@ -331,9 +331,7 @@
         "services_code_unique": {
           "name": "services_code_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "code"
-          ]
+          "columns": ["code"]
         }
       },
       "policies": {},
@@ -504,12 +502,8 @@
           "name": "staged_appointments_import_id_imports_id_fk",
           "tableFrom": "staged_appointments",
           "tableTo": "imports",
-          "columnsFrom": [
-            "import_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["import_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -616,12 +610,8 @@
           "name": "staged_consults_import_id_imports_id_fk",
           "tableFrom": "staged_consults",
           "tableTo": "imports",
-          "columnsFrom": [
-            "import_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["import_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -740,12 +730,8 @@
           "name": "staged_inquiries_import_id_imports_id_fk",
           "tableFrom": "staged_inquiries",
           "tableTo": "imports",
-          "columnsFrom": [
-            "import_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["import_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -864,12 +850,8 @@
           "name": "staged_patients_import_id_imports_id_fk",
           "tableFrom": "staged_patients",
           "tableTo": "imports",
-          "columnsFrom": [
-            "import_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["import_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
