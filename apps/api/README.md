@@ -13,6 +13,10 @@ wallet), translates domain operations to/from FHIR, and shapes responses for the
 pnpm --filter @medibun/api dev          # tsx watch (needs infra/medplum/.env — see root README)
 pnpm --filter @medibun/api db:migrate   # experience-DB migrations (Drizzle)
 pnpm --filter @medibun/api test         # Vitest (PGlite for DB tests — no Docker needed)
+
+# Recovery ingestion (R1) — LOCAL ONLY, see docs/RECOVERY_DESIGN.md §7
+pnpm --filter @medibun/api import:4d -- \
+  --entity patients --file ./roster.csv --timezone America/New_York
 ```
 
 Env: `MEDPLUM_*` + `EXPERIENCE_DATABASE_URL` + `SESSION_ENCRYPTION_KEY` + `API_ALLOWED_ORIGINS`

@@ -160,11 +160,12 @@ canonical home**; this section is the historical record of what was applied:
 
 ## 9. Slice status log
 
-| Slice  | Status                  | Notes                                                                                                                                                                                       |
-| ------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R0     | In progress (Alec)      | Blocks R1 verification (not R1 build — synthetic fixtures first). B7 (2026-08-11): Alec is pulling the 4D exports and starting every §7 clock in parallel — the build does not wait on him. |
-| R1–R6  | Not started             |                                                                                                                                                                                             |
-| S6–S12 | Parked pending R5 merge | All V0 decisions (A2–A7) carry over unchanged.                                                                                                                                              |
+| Slice  | Status                  | Notes                                                                                                                                                                                                    |
+| ------ | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R0     | In progress (Alec)      | Blocks R1 verification (not R1 build — synthetic fixtures first). B7 (2026-08-11): Alec is pulling the 4D exports and starting every §7 clock in parallel — the build does not wait on him.              |
+| R1     | Built — in review       | Staging migration (B2's first), `SourceAdapter` + 4D CSV adapter, local import CLI with rejects report. Synthetic fixtures only; real-export verification waits on R0 and runs via the §7 local runbook. |
+| R2–R6  | Not started             |                                                                                                                                                                                                          |
+| S6–S12 | Parked pending R5 merge | All V0 decisions (A2–A7) carry over unchanged.                                                                                                                                                           |
 
 ## 10. Engagement-zero success criteria (the go/adjust/kill bar)
 

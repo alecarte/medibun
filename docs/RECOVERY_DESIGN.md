@@ -152,6 +152,13 @@ campaign-builder UI · automation levels above approve-every-touch · external-c
 
 ## Review log
 
+- 2026-08-12 — **R1 shipped**: the §3 staging tables (`imports` + the four `staged_*`) landed as
+  the B2 gate's first migration, with the §2 `SourceAdapter` contract, the 4D CSV adapter as
+  adapter #1, and a local-only import CLI (`pnpm --filter @medibun/api import:4d`) writing a
+  row-level rejects file — §7's local-only runbook satisfied by construction. Verified on
+  synthetic 4D-shaped fixtures only; the 4D headers and the inquiry/consult columns stay
+  provisional until R0's field mapping. No Medplum write and no HTTP surface in R1. Tables +
+  reconciliation keys are documented in `DATA_MODEL.md` ("Recovery staging (R1)").
 - 2026-08-12 — Doc-consistency pass (code review; Alec: "apply the fixes"): status header
   slimmed to the V1 §12 pointer with the B4 gate stated correctly (ADR decision, not a PR);
   §5's dangling "(§below)" now points at AUTH.md as the token rules' authoritative home and
