@@ -116,7 +116,8 @@ booking arrives with S11's assistant, or its own slice). ~~Live updates & privac
    width). Prerequisite for drag — dropping onto occupied space creates overlaps.
 2. **S5.5 drag-to-reschedule** — shipped, see §10.
 3. **S5.7 move-up list — shipped, see §11** (interview-approved + built 2026-07-09).
-4. **S5.8 room/resource columns** — rooms as first-class calendars ("OR 2"). Direction:
+4. **S5.8 room/resource columns — FROZEN (V1 §4, 2026-08-11; no pickup before R6 ships
+   without a re-cut from Alec)** — rooms as first-class calendars ("OR 2"). Direction:
    rooms are `Location` resources with their own Schedules (FHIR allows a Location actor;
    **verify `$find` accepts non-Practitioner actors against the v5.1.9 source at build
    time**), appointments carry the room as a participant. **FHIR data-model amendment,
@@ -141,7 +142,7 @@ toggles, jump-ahead nav, a plain Find-Openings affordance alongside S11, grid zo
   cancels; drop executes immediately with the standard ~10s undo (a compensating reverse
   move — which can itself hit a 409 if the old window got taken, surfaced honestly).
   A 409 on drop explains and refreshes, never clobbers.
-- **Queued follow-ups**: touch drag (a finger on a block must keep scrolling the grid —
+- **Queued follow-ups (all FROZEN per V1 §4 until R6 ships)**: touch drag (a finger on a block must keep scrolling the grid —
   needs a long-press affordance) · keyboard reschedule (via the detail card) · week-view
   drag (single-practitioner columns make it a date move — different interaction) ·
   two S5.7-review observations on this pre-existing code (2026-07-09): the participant

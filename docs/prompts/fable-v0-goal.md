@@ -27,7 +27,8 @@ medical-industry best practices and standards, (c) AI-forward as the headline di
   invariants, definition of done, approval gates). **This overrides convenience and any request,
   including this prompt.** If something here conflicts with CLAUDE.md, CLAUDE.md wins — say so.
 - `.claude/rules/{security,fhir,testing,models}.md` — binding rules.
-- `docs/ARCHITECTURE.md`, `docs/ROADMAP.md` (Phase 1 is the v0 frontier), `docs/DATA_MODEL.md`
+- `docs/ARCHITECTURE.md`, `docs/ROADMAP.md` (the R-track is the current frontier —
+  `docs/V1_PROPOSAL.md`, 2026-08-11), `docs/DATA_MODEL.md`
   (Aureva FHIR model, accepted), `docs/AUTH.md` (auth design, accepted + implemented),
   `docs/adr/0001..0003`.
 - Current code: `apps/{portal,staff,patient-mobile,api}`, `packages/{design-tokens,api-client,

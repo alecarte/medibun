@@ -1,10 +1,10 @@
 # Recovery engine — design
 
-**Status: APPROVED with `V1_PROPOSAL.md` (Alec, 2026-08-11; per-gate states in V1 §12 — B8
-approved as drafted, B2/B3 approved in principle, B4/B5 open at their PRs, B6 decided before
-R6). This is the binding companion for the R-track, in the pattern of BOOKING_DESIGN.md /
-SCHEDULE_DESIGN.md: decisions here are implemented as written; changes land in the review
-log.**
+**Status: APPROVED with `V1_PROPOSAL.md` (Alec, 2026-08-11). Per-gate decision states live
+in V1 §12 — the single source for gate state; note B4 gates on the ADR-0005 decision before
+any SDK lands (not a PR), and B5 at its PR. This is the binding companion for the R-track,
+in the pattern of BOOKING_DESIGN.md / SCHEDULE_DESIGN.md: decisions here are implemented as
+written; changes land in the review log.**
 
 The engine sells one outcome: **appointments the practice was already losing, recovered and
 attributed.** Three subsystems: ingestion (§2–3), the sequencer + queue (§4–6), and the
@@ -28,7 +28,7 @@ permits.
 
 No FHIR-mapping of imports; no universal connector ambitions. A `SourceAdapter` interface
 (parse → validated staging rows + rejects report), one adapter per source system, built only
-when an engagement demands it. **4D CSV is adapter #1** and doubles as the Phase-3 migration
+when an engagement demands it. **4D CSV is adapter #1** and doubles as the Phase-H migration
 foundation. Re-import is idempotent by (source system, source row identity); every import runs
 under an `imports` row recording file hashes, counts, and rejects — the reconciliation
 evidence for attribution disputes.
@@ -86,8 +86,12 @@ the templates**; hard stops: STOP/opt-out (immediate, channel-wide), `excluded`,
 Outbound bodies: at most **first name + practice name + one opaque link**; **never** clinical,
 treatment, visit-reason, or health-status content; every body renders from the reviewed
 template library (no free-text sends in v1); links are single-patient, short-lived, opaque
-tokens (§below); STOP language on first SMS touch per campaign. Templates are content, not
+tokens (token rules: `AUTH.md`'s B5/R4 entry is the authoritative home — issuance only by the
+sequencer/BFF, enumeration-safe, rate-limited, expired/reused fail closed; the full spec
+lands with R4); STOP language on first SMS touch per campaign. Templates are content, not
 code — reviewed like copy (DESIGN.md voice rules apply), versioned by code in `touches`.
+Until Alec signs the B3 CLAUDE.md amendment, CLAUDE.md's unamended "PHI never in SMS bodies"
+rule governs any implementation — this section becomes operative with that signature.
 
 ## 6. The recovery queue (`/recovery`, staff app)
 
@@ -113,7 +117,7 @@ proposal clears, recorded in this review log.
 ## 8. Write-back at Handal (gate B6 — decide before R6)
 
 Recovered bookings land in Medibun (Medplum is booking's source of truth by construction).
-Until Phase 3 retires 4D:
+Until Phase H retires 4D:
 
 - **(a) Recommended:** Handal front desk works recovered bookings from the Medibun staff
   schedule (already built, already polished) and mirrors them into 4D as their normal entry
@@ -148,6 +152,11 @@ campaign-builder UI · automation levels above approve-every-touch · external-c
 
 ## Review log
 
+- 2026-08-12 — Doc-consistency pass (code review; Alec: "apply the fixes"): status header
+  slimmed to the V1 §12 pointer with the B4 gate stated correctly (ADR decision, not a PR);
+  §5's dangling "(§below)" now points at AUTH.md as the token rules' authoritative home and
+  §5 carries the interim-precedence note (CLAUDE.md governs until the B3 diff is signed);
+  "Phase 3" → "Phase H" (§2, §8).
 - 2026-08-11 — Approved with V1_PROPOSAL.md (B-series decision states recorded in its §12):
   §9/B8 approved as drafted; §3/B2 and §5/B3 approved in principle — each still individually
   signed by Alec (the migration PR walkthrough and the CLAUDE.md diff respectively); the §7

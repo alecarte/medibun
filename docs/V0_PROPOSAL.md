@@ -1,7 +1,9 @@
 # v0 Proposal — the Aureva launch cut
 
-**Status: APPROVED (Alec, 2026-07-02, with amendments recorded in the review log) — in
-execution. §9 tracks slice status; auth/AccessPolicy PRs still merge only with Alec's sign-off.**
+**Status: APPROVED (Alec, 2026-07-02, with amendments recorded in the review log). S1–S5.7
+built; the unbuilt remainder (S6–S12) is SUPERSEDED and resequenced by `V1_PROPOSAL.md`
+(approved 2026-08-11) — v1 slice status lives in V1 §9; this document remains the S1–S5.7
+record and live-verify ledger. Auth/AccessPolicy PRs still merge only with Alec's sign-off.**
 
 Author: Fable session, 2026-07-02. Inputs: whole-repo exploration (docs, all four apps, packages,
 infra, CI), an adversarial skeptic pass on this cut (findings folded in below, several verified
@@ -9,8 +11,8 @@ against the Medplum **v5.1.9 source tag**, not docs), and a 4-concept / 3-judge 
 the design language. Step zero is done: PR #9 (auth sessions) is merged to `main` (`e46f825`,
 merged by Alec 2026-07-02), CI green.
 
-This document is the living record of v0: as slices land, their status is updated here so any
-fresh session can resume from the repo alone.
+This document was the living record of v0 through S5.7; `V1_PROPOSAL.md` §9 is the living
+status log now. A fresh session resumes from V1, using this file for S1–S5.7 history.
 
 ---
 
@@ -100,6 +102,8 @@ BAA paperwork), and event volume; a synthetic single-patient demo of it would be
 smoke-and-mirrors this proposal bans. v0 already demos the engine's _taste_ honestly — the
 concierge's grounded "when should I come back?" rebooking proposal — and S6's AI boundary plus
 the Bots/Subscriptions rails are the engine's foundation. First post-v0 work alongside Stripe.
+_(2026-08-11: this deferral reasoning was inverted by the v1 re-cut — outbound messaging +
+measurement are now the wedge; `V1_PROPOSAL.md` §2 governs. Kept for the record.)_
 
 **The AI boundary is part of the work:** one module (`packages/ai` or `apps/api/src/ai`) is the
 only place the Anthropic SDK is imported — provider/model swappable, PHI gate shut by
@@ -337,6 +341,11 @@ the demo is grounded and cited (no smoke-and-mirrors); all writes audited and at
 
 ## 10. Review log
 
+- 2026-08-12 — **Supersession recorded** (v1 re-cut approved 2026-08-11, `V1_PROPOSAL.md`;
+  entry added at the doc-consistency pass): S6–S12 resequenced behind the R-track; the S5
+  schedule family frozen (V1 §4); §3's growth-engine deferral reasoning inverted by V1 §2
+  (annotated in place). This log stays authoritative for S1–S5.7 and the live-verify debt;
+  everything else lives in V1.
 - 2026-07-04 — **Staff IA re-cut at S5a review** (Alec): the schedule is its own destination —
   page, nav item, and endpoint renamed **Schedule** (`/schedule`, `GET /staff/schedule?date=…`)
   with day switching (prev/next/Today) added in the same PR. **"Today" is reserved for a future
