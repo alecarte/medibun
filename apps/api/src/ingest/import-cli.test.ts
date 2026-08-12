@@ -161,6 +161,10 @@ describe("import CLI — what reaches the operator", () => {
     expect(printed).toContain("roster.csv");
     expect(printed).toContain("2 rows · 1 new · 0 reconciled · 1 rejected");
     expect(printed).toContain(result.importId);
+    // Names the rejects file, never the directory it sits in (the rule the ledger
+    // columns and the unreadable-input error already follow).
+    expect(printed).toContain("roster.csv.rejects.csv written beside the input");
+    expect(printed).not.toContain(dir);
     for (const value of Object.values(LEAKY)) {
       expect(printed).not.toContain(value);
     }

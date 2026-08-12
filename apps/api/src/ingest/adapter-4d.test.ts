@@ -153,6 +153,18 @@ describe("4D adapter — patients", () => {
     });
   });
 
+  it("reads the first of a repeated column and ignores the later one", () => {
+    const content = csvFile(
+      ["patient_id", "phone", "last_name", "phone"],
+      [["p-1", "555-0100", "Fakeman", "555-0199"]],
+    );
+
+    const { rows, rejects } = adapter.parse("patients", content);
+
+    expect(rejects).toEqual([]);
+    expect(rows[0]).toMatchObject({ sourceIdentity: "p-1", phone: "555-0100" });
+  });
+
   it("rejects a ragged row rather than staging fields that may have shifted", () => {
     const short = ["p-2", "Testerly", "Fakeman"];
     const long = [...patientRow("p-3", ymd(1972, 6, 14)), "surplus"];

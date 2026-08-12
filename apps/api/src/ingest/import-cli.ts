@@ -151,7 +151,9 @@ export async function runImportCli(deps: {
       `${summary.updatedCount} reconciled · ${summary.rejectedCount} rejected`,
   );
   if (summary.rejects.length > 0) {
-    deps.out(`  rejects written to ${rejectsPath} (raw rows — keep it local)`);
+    // Basename only, same rule as the ledger columns and the unreadable-input error:
+    // captured terminal output must not carry the directory an export was filed under.
+    deps.out(`  ${basename(rejectsPath)} written beside the input (raw rows — keep it local)`);
   }
   return {
     importId: summary.importId,
