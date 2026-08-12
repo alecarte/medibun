@@ -114,6 +114,12 @@ directly. The import CLI must therefore run fully local (it already will — loc
 local Postgres). Cloud promotion of real data is a single explicit cut-over once §7 of the
 proposal clears, recorded in this review log.
 
+**Cut-over checklist (added as items are found):** BAAs signed for every touched service ·
+**import actor attribution** — `imports` records what ran, not who ran it, which is tolerable
+for one operator on one machine but not once an endpoint, a second person, or a hosted stack can
+trigger an import (an actor column lands before any of those, per CLAUDE.md's "every PHI write
+attributable to an authenticated principal").
+
 ## 8. Write-back at Handal (gate B6 — decide before R6)
 
 Recovered bookings land in Medibun (Medplum is booking's source of truth by construction).
@@ -152,13 +158,21 @@ campaign-builder UI · automation levels above approve-every-touch · external-c
 
 ## Review log
 
-- 2026-08-12 — **R1 shipped**: the §3 staging tables (`imports` + the four `staged_*`) landed as
-  the B2 gate's first migration, with the §2 `SourceAdapter` contract, the 4D CSV adapter as
-  adapter #1, and a local-only import CLI (`pnpm --filter @medibun/api import:4d`) writing a
-  row-level rejects file — §7's local-only runbook satisfied by construction. Verified on
-  synthetic 4D-shaped fixtures only; the 4D headers and the inquiry/consult columns stay
-  provisional until R0's field mapping. No Medplum write and no HTTP surface in R1. Tables +
-  reconciliation keys are documented in `DATA_MODEL.md` ("Recovery staging (R1)").
+- 2026-08-12 — **R1 built, at its gate**: the §3 staging tables (`imports` + the four
+  `staged_*`) are proposed as the B2 gate's first migration — approved when Alec walks the
+  schema and merges the R1 PR, not before — with the §2 `SourceAdapter` contract, the 4D CSV
+  adapter as adapter #1, and a local-only import CLI (`pnpm --filter @medibun/api import:4d`)
+  writing a row-level rejects file. §7's local-only runbook is satisfied by construction (a file
+  on disk, the local Postgres, nothing else), and raw exports plus `*.rejects.csv` are
+  gitignored as a backstop. Verified on synthetic 4D-shaped fixtures only; the 4D headers and
+  the inquiry/consult columns stay provisional until R0's field mapping. No Medplum write and no
+  HTTP surface in R1. Two items carried forward: **(R0)** confirm the source's
+  category/status/outcome/channel fields are coded labels — if any is free text an operator can
+  type into, the adapter must map it through an allow-list rather than staging it verbatim, or
+  the two-store rule stops holding; **(§7 cut-over checklist)** `imports` records what ran, not
+  **who** ran it — an actor column is required before any HTTP import surface, a second
+  operator, or cloud promotion. Tables + reconciliation keys are documented in `DATA_MODEL.md`
+  ("Recovery staging (R1)").
 - 2026-08-12 — Doc-consistency pass (code review; Alec: "apply the fixes"): status header
   slimmed to the V1 §12 pointer with the B4 gate stated correctly (ADR decision, not a PR);
   §5's dangling "(§below)" now points at AUTH.md as the token rules' authoritative home and
