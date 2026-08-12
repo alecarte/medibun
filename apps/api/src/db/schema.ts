@@ -105,9 +105,9 @@ export type StagedEntity = "patients" | "appointments" | "inquiries" | "consults
 /**
  * Append-only import run ledger: one row per (file, entity) import run, written even
  * when nothing changed. This is the reconciliation evidence behind every attribution
- * claim ("which export, which counts, when"). NO PHI: `fileName` is a basename only
- * (never a path), `rejectsUri` is the local path of the rejects file — the rejects
- * FILE holds raw rows, this table holds counts and identifiers only.
+ * claim ("which export, which counts, when"). NO PHI: `fileName` and `rejectsUri` are
+ * basenames only — never paths, because a directory a human chose can itself name a
+ * patient. The rejects FILE holds raw rows; this table holds counts and names only.
  */
 export const imports = pgTable("imports", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -121,7 +121,7 @@ export const imports = pgTable("imports", {
   rowCount: integer("row_count").notNull(),
   stagedCount: integer("staged_count").notNull(),
   rejectedCount: integer("rejected_count").notNull(),
-  /** Local path of the rejects file; null when the run was clean. */
+  /** Basename of the rejects file the run wrote; null when the run was clean. */
   rejectsUri: text("rejects_uri"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

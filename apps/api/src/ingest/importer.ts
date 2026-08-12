@@ -64,7 +64,8 @@ export type ImportRequest<E extends StagedEntity> = {
   /** Recorded in the ledger; reduced to a basename so no local path is stored. */
   readonly fileName: string;
   readonly content: string;
-  /** Where the caller will write rejects. Stored only if the run produced any. */
+  /** Where the caller will write rejects. Stored — as a basename, same reason as
+   *  fileName — only if the run produced any. */
   readonly rejectsUri?: string;
 };
 
@@ -73,6 +74,10 @@ export type ImportService = {
    *  when the file cannot be staged at all — nothing is written in that case. */
   readonly runImport: <E extends StagedEntity>(request: ImportRequest<E>) => Promise<ImportSummary>;
 };
+
+/** Path chain out, filename in: a directory a human chose can itself name a patient
+ *  ("~/exports/jane-doe/roster.csv"), so nothing path-shaped reaches a column. */
+const fileNameOnly = (value: string): string => value.split(/[\\/]/).pop() || value;
 
 const chunk = <T>(items: readonly T[], size: number): T[][] => {
   const out: T[][] = [];
@@ -111,12 +116,13 @@ export function createImportService(deps: { readonly db: Db }): ImportService {
           .values({
             sourceSystem,
             entity: request.entity,
-            fileName: request.fileName.split(/[\\/]/).pop() ?? request.fileName,
+            fileName: fileNameOnly(request.fileName),
             fileHash: createHash("sha256").update(request.content).digest("hex"),
             rowCount: values.length + rejects.length,
             stagedCount: values.length,
             rejectedCount: rejects.length,
-            rejectsUri: rejects.length > 0 ? (request.rejectsUri ?? null) : null,
+            rejectsUri:
+              rejects.length > 0 && request.rejectsUri ? fileNameOnly(request.rejectsUri) : null,
           })
           .returning({ id: imports.id });
         const importId = run!.id;

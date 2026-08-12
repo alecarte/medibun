@@ -116,21 +116,34 @@ describe("import service — the run ledger", () => {
     expect(second.importId).not.toBe(first.importId);
   });
 
-  it("records the rejects file path only when the run produced rejects", async () => {
+  it("records the rejects file by name only, and only when the run produced rejects", async () => {
     const clean = await runPatients(
       roster([patientRow("p-1", "Testerly", ymd(1970, 4, 12))]),
-      "/tmp/roster.csv.rejects.csv",
+      "/home/someone/handal-exports/roster.csv.rejects.csv",
     );
     const dirty = await runPatients(
       roster([patientRow("p-2", "Testerly", "not-a-date")]),
-      "/tmp/roster.csv.rejects.csv",
+      "/home/someone/handal-exports/roster.csv.rejects.csv",
     );
 
     const runs = await db.select().from(schema.imports);
     expect(runs.find((r) => r.id === clean.importId)?.rejectsUri).toBeNull();
-    expect(runs.find((r) => r.id === dirty.importId)?.rejectsUri).toBe(
-      "/tmp/roster.csv.rejects.csv",
-    );
+    // The directory chain a human chose can itself name a patient — basename only.
+    expect(runs.find((r) => r.id === dirty.importId)?.rejectsUri).toBe("roster.csv.rejects.csv");
+  });
+
+  it("stores a path-shaped file name as its basename", async () => {
+    const run = await runPatients(roster([patientRow("p-1", "Testerly", ymd(1970, 4, 12))]));
+    await importer.runImport({
+      adapter,
+      entity: "patients",
+      fileName: "/home/someone/handal-exports/roster.csv",
+      content: roster([patientRow("p-9", "Testerly", ymd(1970, 4, 12))]),
+    });
+
+    const runs = await db.select().from(schema.imports);
+    expect(runs.map((r) => r.fileName)).toEqual(["roster.csv", "roster.csv"]);
+    expect(run.importId).toBeDefined();
   });
 });
 
