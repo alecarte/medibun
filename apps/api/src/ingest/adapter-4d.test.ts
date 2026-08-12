@@ -153,6 +153,24 @@ describe("4D adapter — patients", () => {
     });
   });
 
+  it("rejects a ragged row rather than staging fields that may have shifted", () => {
+    const short = ["p-2", "Testerly", "Fakeman"];
+    const long = [...patientRow("p-3", ymd(1972, 6, 14)), "surplus"];
+    const content = csvFile(PATIENT_HEADERS, [patientRow("p-1", ymd(1970, 4, 12)), short, long]);
+
+    const { rows, rejects } = adapter.parse("patients", content);
+
+    expect(rows.map((r) => r.sourceIdentity)).toEqual(["p-1"]);
+    expect(rejects.map((r) => r.line)).toEqual([3, 4]);
+    expect(rejects[0]?.reason).toBe("row has 3 fields, header has 6");
+    expect(rejects[1]?.reason).toBe("row has 7 fields, header has 6");
+    // Counts describe the shape; no field value reaches the reason.
+    for (const reject of rejects) {
+      expect(reject.reason).not.toContain("Testerly");
+      expect(reject.reason).not.toContain("surplus");
+    }
+  });
+
   it("fails the whole file when a required column is missing", () => {
     const content = csvFile(["first_name", "last_name"], [["Testerly", "Fakeman"]]);
 

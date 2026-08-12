@@ -159,48 +159,51 @@ function columnMaps(timeZone: string): EntityMaps {
   return { patients, appointments, inquiries, consults };
 }
 
-type CsvRecord = Record<string, string | undefined>;
+/** csv-parse output with `info` + `raw`: the fields, the line number, and the verbatim
+ *  source line. Records are read as ARRAYS (not keyed by header) so a ragged row is
+ *  visible: keyed mode silently drops a long row's extra fields and nulls a short row's
+ *  missing ones, which is how a misaligned export stages shifted values. */
+type CsvItem = { record: string[]; raw: string; info: { lines: number } };
 
-/** csv-parse output with `info` + `raw`: the line number and the verbatim source line. */
-type CsvItem = { record: CsvRecord; raw: string; info: { lines: number } };
-
-/** Reads the file once: captures the (normalized) header row even when there are no
- *  data rows, and turns any parser failure into a file-level error carrying the
- *  parser's CODE only — its message can quote row content. */
+/** Reads the file once and normalizes the header row (trimmed, lowercased); any parser
+ *  failure becomes a file-level error carrying the parser's CODE only — its message can
+ *  quote row content. */
 function readCsv(content: string): { headers: string[]; items: CsvItem[] } {
-  let headers: string[] | undefined;
   let items: CsvItem[];
   try {
     items = parseCsv(content, {
-      columns: (header: string[]) => {
-        headers = header.map((h) => h.trim().toLowerCase());
-        return headers;
-      },
       bom: true,
       info: true,
       raw: true,
       skipEmptyLines: true,
-      // Short/long rows are a ROW problem (rejected below), not a file problem.
+      // A ragged row must reach us AS a row (rejected below, with its field count),
+      // not abort the whole file.
       relaxColumnCount: true,
     }) as CsvItem[];
   } catch (err) {
     const code = (err as { code?: string }).code ?? "CSV_PARSE_FAILED";
     throw new SourceFileError(`file is not readable as CSV (${code})`);
   }
-  if (!headers) {
+  const header = items.shift();
+  if (!header) {
     throw new SourceFileError("file has no header row");
   }
-  return { headers, items };
+  return { headers: header.record.map((h) => h.trim().toLowerCase()), items };
 }
 
 type RowResult<Row> = { ok: true; row: Row } | { ok: false; reason: string };
 
 /** Applies one entity's column map to one record. Reasons name the COLUMN, never the
  *  value — the raw line is the rejects file's job. */
-function buildRow<Row>(map: EntityMap<Row>, record: CsvRecord): RowResult<Row> {
+function buildRow<Row>(
+  map: EntityMap<Row>,
+  columnAt: ReadonlyMap<string, number>,
+  record: readonly string[],
+): RowResult<Row> {
   const row: Record<string, unknown> = {};
   for (const [key, field] of Object.entries(map) as [string, Field<unknown>][]) {
-    const value = (record[field.column] ?? "").trim();
+    const at = columnAt.get(field.column);
+    const value = (at === undefined ? "" : (record[at] ?? "")).trim();
     if (value === "") {
       if (field.required) {
         return { ok: false, reason: `${field.column} is required` };
@@ -247,13 +250,31 @@ export function createFourDAdapter(timeZone: string): SourceAdapter {
         throw new SourceFileError(`file is missing required columns: ${missing.join(", ")}`);
       }
 
+      // First occurrence wins if an export repeats a header name.
+      const columnAt = new Map<string, number>();
+      headers.forEach((name, at) => {
+        if (!columnAt.has(name)) {
+          columnAt.set(name, at);
+        }
+      });
+
       const rows: StagedRowByEntity[E][] = [];
       const rejects: RejectedRow[] = [];
       const seen = new Set<string>();
       for (const item of items) {
         const line = item.info.lines;
         const raw = item.raw.replace(/\r?\n$/, "");
-        const result = buildRow(map, item.record);
+        // A field count that disagrees with the header is a misalignment: every column
+        // after the discrepancy may hold a neighbour's value. Counts are safe to name.
+        if (item.record.length !== headers.length) {
+          rejects.push({
+            line,
+            reason: `row has ${item.record.length} fields, header has ${headers.length}`,
+            raw,
+          });
+          continue;
+        }
+        const result = buildRow(map, columnAt, item.record);
         if (!result.ok) {
           rejects.push({ line, reason: result.reason, raw });
           continue;
