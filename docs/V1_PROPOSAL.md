@@ -200,6 +200,15 @@ established slice cadence; the true floor is §7 paperwork + R6 calendar time, n
 
 ## 12. Review log
 
+- 2026-08-13 — **Division of labor (Alec)**: sessions spend effort only on development;
+  admin/business/compliance paperwork is Alec's queue, tracked as a small note instead of
+  in-session interviews — `docs/BAA_CHECKLIST.md` is that note. Parked on his queue
+  accordingly: the B3 signature (the unamended CLAUDE.md rule governs any implementation
+  meanwhile, per RECOVERY_DESIGN §5), the B4 vendor pick (ADR-0005 written when he picks),
+  the "Minduo" definition, and the multi-tenant hardening-deadline confirmation. Engineering
+  defaults adopted to keep building (flag if wrong): R4's pre-BAA verify uses a local stub
+  behind the channel interface — no real sends before the comms BAA, which the §7 runbook
+  forces anyway; the S4–S5.7 live-verify batch runs at R5 stack-up.
 - 2026-08-13 — **Three of the flagged calls decided (Alec, in-session interview)**: the data
   window is **≥ 24 months** — RECOVERY_DESIGN §2 governs; §1's "twelve months" corrected to
   two-plus years. §10 measurement is **two reads** — preliminary at campaign end (~W12, early
