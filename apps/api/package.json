@@ -9,6 +9,7 @@
     "db:generate": "drizzle-kit generate",
     "e2e:harness": "tsx scripts/e2e-harness.ts",
     "demo:seed": "tsx --env-file-if-exists=../../infra/medplum/.env scripts/seed-demo.ts",
+    "import:4d": "tsx --env-file-if-exists=../../infra/medplum/.env scripts/import-4d.ts",
     "db:migrate": "tsx --env-file-if-exists=../../infra/medplum/.env src/db/migrate.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
@@ -20,6 +21,7 @@
     "@medibun/design-tokens": "workspace:*",
     "@medibun/fhir-types": "workspace:*",
     "@medibun/medplum-backend": "workspace:*",
+    "csv-parse": "catalog:",
     "drizzle-orm": "catalog:",
     "hono": "catalog:",
     "pg": "catalog:"

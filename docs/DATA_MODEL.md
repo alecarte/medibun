@@ -195,6 +195,61 @@ later as its own approval-gated design.
   disputes/chargebacks force it, and never patient/diagnosis/service context in
   metadata/descriptors/customer fields.
 
+### Recovery staging (R1)
+
+The ingestion half of the recovery engine, landed as experience-DB tables (full design:
+`RECOVERY_DESIGN.md` §2–3). Five tables holding **administrative and financial fields only** —
+no clinical column exists, and the engine never asks for one. That guarantee is **structural for
+every typed column and conditional for the `*_raw` ones**: `status_raw`, `service_category_raw`,
+`outcome_raw`, `channel_raw`, `provider_raw` and the inquiry `name` stage the source's own text
+verbatim, so the two-store rule holds only as long as those columns really are coded labels in
+4D. **R0 gate item:** the field-mapping assessment must confirm that; if any of them is a
+free-text field an operator can type a reason into, the adapter maps it through an **allow-list
+of known labels** (unrecognized → rejected row) instead of staging it verbatim — a change to
+`adapter-4d.ts`'s column map, not to the schema.
+
+| Table                 | Holds                                                                                                            | PHI status                                                      |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `imports`             | One row per (file, entity) import run: source system, basename, sha256, row/staged/rejected counts, rejects path | **No PHI** — counts and identifiers only                        |
+| `staged_patients`     | Source patient id, name, date of birth, phone, email, the (unused) Medplum link                                  | **PHI** — administrative identity + contact only                |
+| `staged_appointments` | Source appointment id, patient source id, start instant, raw status/category/provider labels                     | **PHI-adjacent** — times, statuses, category labels             |
+| `staged_inquiries`    | Source inquiry id, occurrence instant, raw channel/outcome, optional name + phone                                | **PHI** — contact only (an inquirer may never become a patient) |
+| `staged_consults`     | Source consult id, patient source id, consult instant, raw category/outcome labels                               | **PHI-adjacent** — times and category labels                    |
+
+- **Reconciliation keys.** `(source_system, source_identity)` identifies a staged row — a unique
+  index on the pair, and the idempotency key below. `staged_appointments` / `staged_consults` /
+  `staged_inquiries` carry `patient_source_identity` and join staging-side **with no foreign
+  key**: a source export routinely names patients missing from the roster it shipped, and
+  segmentation treats those as degraded rows rather than losing them at import. Promotion to a
+  Medplum `Patient` reconciles by `medplum_patient_id`, which stays **null through R1** —
+  identity promotion and its manual-merge queue land before R5 enrollment.
+- **Idempotency rule.** Re-import upserts by `(source_system, source_identity)`: a fresh export
+  supersedes the last one, reconciling changed values onto the existing row (including clearing
+  a value the newer export dropped) and re-stamping `import_id` / `updated_at`. Rows are never
+  duplicated and never deleted by an import. **Every run appends an `imports` row even when
+  nothing changed** — that ledger, with its file hash and counts, is the reconciliation evidence
+  behind an attribution dispute.
+- **Times.** Source exports carry practice-local wall times with no offset, so the adapter is
+  told the practice's zone explicitly and converts through the BFF's existing timezone helper.
+  An unparseable time is a **rejected row**, never a silent UTC reading — a bad conversion moves
+  appointments across days and quietly corrupts segmentation.
+- **Rejects.** Row-level validation failures come back to the caller as `{ line, reason, raw }`.
+  The `reason` names the **column** at fault and never the value; the `raw` line reaches only the
+  local `<file>.rejects.csv` the CLI writes (owner-readable). No raw source content is logged or
+  stored in any column. `imports.rejects_uri` records that file's **basename** (a directory a
+  human chose can itself name a patient, so nothing path-shaped is stored — same rule as
+  `file_name`); it is null for a clean run, and the CLI deletes any stale rejects file before
+  each run so a "clean" ledger row never sits beside the previous run's raw rows.
+- **Provisional columns.** `staged_inquiries` and `staged_consults` (and every 4D header the
+  adapter maps) are modeled from `RECOVERY_DESIGN.md` §2's shopping list, not from a real export.
+  R0's field-mapping assessment confirms or corrects them; corrections are a follow-up migration
+  at the same gate.
+- **Attribution debt (before any HTTP surface or cloud promotion).** An `imports` row records
+  _what_ ran, not _who_ ran it — acceptable while ingestion is one operator on one local machine
+  (§7), but "every PHI write attributable to an authenticated principal" needs an actor column
+  the moment a second person, an endpoint, or a hosted stack can trigger an import. Tracked in
+  the §7 cut-over checklist.
+
 ### AccessPolicy & audit expectations (per resource family)
 
 | Resource family                                | Patient (self)         | Front desk (org-scoped) | Clinician (org-scoped) | Audit                        |
@@ -220,6 +275,15 @@ must be verified per environment — see `docs/AUTH.md` (attribution section).
 
 ### Review log
 
+- **2026-08-12 — recovery staging tables proposed for landing (R1; the B2 gate's first
+  migration) — PENDING Alec's schema walkthrough and merge.** The five staging tables above
+  (`imports`, `staged_patients`, `staged_appointments`, `staged_inquiries`, `staged_consults`)
+  ship as migration `0003` on the R1 PR, which **is** the B2/A6 gate: nothing here is approved
+  until Alec has walked the schema and merged. Scope held to the V1 §5 R1 list:
+  `service_categories` (R2) and the attribution ledger (R5) stay unbuilt, and
+  `medplum_patient_id` lands as an unused column — **no Medplum write happens in R1**, identity
+  promotion is its own slice. Two open items carried to that walkthrough: the `*_raw`
+  free-text question above (R0) and the missing import-actor attribution (§7 checklist).
 - **2026-08-11 — v1 re-cut: recovery staging + attribution ledger (B2, approved in principle
   — pending its migration PR).** The recovery engine adds experience-DB **staging tables**
   (`imports`, `staged_patients`, `staged_appointments`, `staged_inquiries`, `staged_consults`,
