@@ -1,10 +1,10 @@
-# BAA checklist
+# BAA checklist — the paperwork queue
 
-Everywhere the current stack needs a signed BAA before real PHI touches it, on one screen.
-**Owner: Alec** — admin/business paperwork is his queue (decided 2026-08-13); sessions build
-against local/stub services and don't chase these. Timing clocks and detail:
-[`V1_PROPOSAL.md`](V1_PROPOSAL.md) §7. Until a row is signed, the real-PHI runbook governs
-(`.claude/rules/security.md`): real data stays on practice-controlled hardware.
+The single admin queue: every BAA the stack needs before real PHI touches it, plus the non-BAA
+paperwork clocks. **Owner: Alec** — admin/business paperwork is his queue (decided 2026-08-13);
+sessions build against local/stub services and don't chase these. All clocks started at R0
+(2026-08-11). Until a row is signed, the real-PHI runbook governs (`.claude/rules/security.md`):
+real data stays on practice-controlled hardware.
 
 | Service                                  | Why it needs a BAA                                                    | Status                                                 |
 | ---------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------ |
@@ -19,6 +19,15 @@ against local/stub services and don't chase these. Timing clocks and detail:
 | Minduo ↔ Handal                          | Business-associate agreement between the operating entity + practice  | Practice-side paperwork (B7)                           |
 
 Never on this list: **Stripe** — signs no BAA; PHI never reaches it (constitution invariant).
+
+## Other paperwork (non-BAA)
+
+| Item                                                    | Why                                                         | When it gates                  |
+| ------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------ |
+| TCPA/consent counsel review (B3 templates + STOP flow)  | Outbound texting to patients; verify the relationship basis | Before R6 sends (days)         |
+| 10DLC brand + campaign registration (or toll-free)      | Carrier sender registration; healthcare draws extra vetting | After B4 vendor pick; gates R6 |
+| DoseSpot enrollment + DEA EPCS identity proofing (IAL3) | E-prescribing                                               | Phase H (months — slow clock)  |
+| Apple Developer enrollment                              | Mobile, later                                               | L-track mobile (days–weeks)    |
 
 When a BAA lands, flip its row here and record any real-data cut-over in
 [`RECOVERY_DESIGN.md`](RECOVERY_DESIGN.md)'s review log (its §7 rule).
