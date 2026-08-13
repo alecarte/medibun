@@ -33,9 +33,12 @@ needed after implementation.
 
 ## Security & HIPAA — non-negotiable
 
-- PHI never leaks into: logs, error messages, analytics/telemetry, URLs or query params, push or
-  SMS bodies, plaintext client storage, prompts to any non-BAA service, or any third party without
-  a signed BAA.
+- PHI never leaks into: logs, error messages, analytics/telemetry, URLs or query params,
+  plaintext client storage, prompts to any non-BAA service, or any third party without a signed
+  BAA. Outbound push/SMS/email bodies follow the B3 messaging standard (RECOVERY_DESIGN.md §5):
+  at most first name + practice name + one opaque link; never clinical, treatment, visit-reason,
+  or health-status content; every body renders from the reviewed template library — no free-text
+  sends.
 - Least privilege, default-deny, enforced through Medplum AccessPolicy; every PHI read/write
   attributable to an authenticated principal; never widen a policy without human approval.
 - Audit always on — FHIR `AuditEvent` / `Provenance` on PHI access; never disable, bypass, or

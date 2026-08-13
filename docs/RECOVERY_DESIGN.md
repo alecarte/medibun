@@ -90,8 +90,7 @@ tokens (token rules: `AUTH.md`'s B5/R4 entry is the authoritative home — issua
 sequencer/BFF, enumeration-safe, rate-limited, expired/reused fail closed; the full spec
 lands with R4); STOP language on first SMS touch per campaign. Templates are content, not
 code — reviewed like copy (DESIGN.md voice rules apply), versioned by code in `touches`.
-Until Alec signs the B3 CLAUDE.md amendment, CLAUDE.md's unamended "PHI never in SMS bodies"
-rule governs any implementation — this section becomes operative with that signature.
+Signed into CLAUDE.md 2026-08-13 (B3, Alec) — this section is operative.
 
 ## 6. The recovery queue (`/recovery`, staff app)
 
@@ -121,7 +120,7 @@ for one operator on one machine but not once an endpoint, a second person, or a 
 trigger an import (an actor column lands before any of those, per CLAUDE.md's "every PHI write
 attributable to an authenticated principal").
 
-## 8. Write-back at Handal (gate B6 — decide before R6)
+## 8. Write-back at Handal (gate B6 — **decided: (a)**, Alec 2026-08-13, V1 §12)
 
 Recovered bookings land in Medibun (Medplum is booking's source of truth by construction).
 Until Phase H retires 4D:
@@ -159,6 +158,14 @@ campaign-builder UI · automation levels above approve-every-touch · external-c
 
 ## Review log
 
+- 2026-08-13 — **R1 merged (PR #21, Alec)**: the B2 gate's first migration (the §3 staging
+  tables) is approved per the gate's own rule — Alec walked the schema and merged. The two
+  carried items below (the `*_raw` allow-list question → R0; import-actor attribution → §7
+  cut-over checklist) remain open. Same day: 4D **does** export pricing, per Alec — the R0
+  pull includes the service menu with prices, and R2's `service_categories.typical_ticket_cents`
+  seeds from the export rather than hand entry (expected-return intervals stay hand-set —
+  they're clinical-cadence judgment, not export data). ADR-0005 (B4) drafted with the vendor
+  evaluation; decision states in V1 §12.
 - 2026-08-12 — **R1 built, at its gate**: the §3 staging tables (`imports` + the four
   `staged_*`) are proposed as the B2 gate's first migration — approved when Alec walks the
   schema and merges the R1 PR, not before — with the §2 `SourceAdapter` contract, the 4D CSV
