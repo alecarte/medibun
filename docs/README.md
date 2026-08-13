@@ -26,6 +26,7 @@ Write docs so that migration is mechanical: plain GitHub-flavored markdown, rela
 | [`V0_PROPOSAL.md`](V0_PROPOSAL.md)             | The v0 cut + S1–S5.7 history and live-verify debt; unbuilt remainder superseded by V1.                         |
 | [`V1_PROPOSAL.md`](V1_PROPOSAL.md)             | The v1 revenue re-cut (approved 2026-08-11): R-slices, B-gates, status log — the living project record.        |
 | [`RECOVERY_DESIGN.md`](RECOVERY_DESIGN.md)     | Recovery-engine spec (approved): pools, ingestion adapters, sequencer, messaging standard, queue, attribution. |
+| [`BAA_CHECKLIST.md`](BAA_CHECKLIST.md)         | The paperwork queue (BAAs + admin clocks) — Alec's; sessions build local/stub meanwhile.                       |
 | [`adr/`](adr/)                                 | Architecture decision records (numbered, immutable once accepted).                                             |
 
 Package-level docs live next to the code: each app and package has a short `README.md` saying

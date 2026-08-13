@@ -116,6 +116,13 @@ These follow from the brief and decisions made during bootstrap. Treat them like
 
 ## Session hygiene
 
+- **Cut the PRs before the code (Alec, 2026-08-13).** Open each working session by naming the
+  PR(s) it will produce — each one's scope, rough title, and verify step — and keep every PR
+  single-purpose. An approval-gated migration, an adapter, a UI change are separate PRs unless
+  genuinely inseparable; if scope grows mid-PR, split it rather than stack it. No kitchen sinks.
+- **Development only.** Admin/business/compliance paperwork is Alec's queue
+  (`docs/BAA_CHECKLIST.md`) — note what's owed there and keep building against local/stub
+  services; don't run approval interviews for paperwork items.
 - Repeatable workflows are skills, not memory: `slice` (start-to-done slice ritual) and
   `visual-check` (screenshot-review harness, `tools/visual-check/`). Use them.
 - Which model runs which work is `.claude/rules/models.md` (binding): **Fable 5 orchestrates and
@@ -123,5 +130,6 @@ These follow from the brief and decisions made during bootstrap. Treat them like
   predecessor tiers.
 - When compacting or summarizing a session, always preserve: the active slice + branch, the
   modified-file list, gate/checklist state (what's run, what's still owed), approval-gate
-  decisions pending or granted, and live-verify items. `docs/V0_PROPOSAL.md` §9 is the durable
-  copy — update it before pausing long-running work.
+  decisions pending or granted, and live-verify items. Durable copies, by kind: slice status →
+  V1_PROPOSAL §9; decisions and gate state → V1_PROPOSAL §12 + `docs/BAA_CHECKLIST.md`;
+  live-verify ledger → V0_PROPOSAL §9. Update them before pausing long-running work.

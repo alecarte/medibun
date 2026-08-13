@@ -114,10 +114,10 @@ dropping a slice is a re-cut → Alec. R3 and R4 may be built in parallel branch
   R5): recovered bookings land in Medibun — (a, recommended) Handal front desk works
   recovered bookings from the Medibun staff schedule and mirrors to 4D until Phase H (the
   Handal migration), or (b) front-desk confirm loop with manual 4D entry per booking.
-- **B7 — Paperwork (Alec-only, clocks start at R0)**: Minduo↔Handal **BA agreement**; Medplum
-  Cloud + BAA; Vercel HIPAA; Neon Scale BAA; comms vendor BAA(s); Anthropic BAA (no longer
-  R-critical — template sends need no LLM — but still gates L-track real-PHI AI and optional
-  LLM-drafted outreach later); Apple Developer (unchanged, slow clock).
+- **B7 — Paperwork (Alec-only, clocks start at R0)**: the full queue — BAAs and non-BAA
+  clocks alike — is **`docs/BAA_CHECKLIST.md`** (single source; not enumerated here). One
+  scoping note kept with the gate: the Anthropic BAA is no longer R-critical (template sends
+  need no LLM) but still gates L-track real-PHI AI and optional LLM-drafted outreach later.
 - **B8 — The contractual definition of "recovered" + holdout**: _an appointment booked by a
   contact this system initiated, from a defined pool snapshot, by a patient not in the holdout,
   within the campaign's attribution window (default 45 days from last touch), excluding
@@ -125,21 +125,18 @@ dropping a slice is a re-cut → Alec. R3 and R4 may be built in parallel branch
   randomized at enrollment, immutable for the campaign. This definition is implemented
   verbatim in R5 and quoted verbatim in every report.
 
-## 7. External asks — start every clock at R0
+## 7. External asks — Alec's paperwork queue
 
-| Ask                                                                                            | Why                                                                                                                                         | Lead time                      |
-| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| Minduo ↔ Handal **BA agreement**                                                               | Minduo processes Handal PHI as a business associate                                                                                         | Days (template + signatures)   |
-| **Medplum Cloud + BAA**                                                                        | Prod clinical core before any real PHI in cloud                                                                                             | Weeks — start now              |
-| **Vercel Pro + HIPAA**                                                                         | Hosting BFF/portal/staff with real PHI                                                                                                      | Days–weeks                     |
-| **Neon Scale + BAA**                                                                           | Experience DB holds PHI-adjacent staging + ledger (ADR-0002)                                                                                | Days–weeks                     |
-| **Comms vendor BAA(s)** (per ADR-0005)                                                         | Real SMS/email cannot send without it — gates R6                                                                                            | Weeks                          |
-| **Anthropic BAA**                                                                              | Gates L-track real-PHI AI + optional LLM outreach drafting; not R-critical                                                                  | Weeks                          |
-| TCPA/consent counsel review of the B3 templates + STOP flow                                    | Outbound texting to patients; existing-relationship basis, but verify                                                                       | Days                           |
-| **Comms 10DLC brand + campaign registration** (or toll-free verification as the fast fallback) | Carrier sender registration — cannot start before the B4 vendor pick; healthcare campaigns draw extra vetting                               | Days–4 weeks, downstream of B4 |
-| **Sentry + PostHog BAAs**                                                                      | Observability on the R6 prod stack (PHI-scrubbed by design); wire in only after BAAs — or R6 runs without observability (decide explicitly) | Days–weeks                     |
-| **DoseSpot enrollment + DEA EPCS identity proofing (IAL3)**                                    | Gates Phase H prescribing (pullable forward); uncompressible multi-month clock                                                              | Months — slow clock            |
-| Apple Developer enrollment                                                                     | Unchanged from V0 (slow clock, mobile later)                                                                                                | Days–weeks                     |
+The full queue — every BAA plus the non-BAA clocks (TCPA counsel, 10DLC, DoseSpot, Apple
+Developer) — lives in **[`BAA_CHECKLIST.md`](BAA_CHECKLIST.md)**, the single admin file, with
+per-row gates and lead times. Owner: Alec; every clock started at R0 **except 10DLC**, which
+starts only at the B4 vendor pick. The complete R6 gate (uniting this section and §5's R6
+row): the BAA chain for every service on the real-data and send paths, the Minduo↔Handal BA
+agreement, carrier registration, the B6 write-back decision, and the prod stack. **Sentry and
+PostHog are the explicit exception** — R6 may launch without observability; that is Alec's
+call to make explicitly (flagged in ROADMAP), not an automatic blocker. The Anthropic BAA
+gates only L-track real-PHI AI, not the R-track; DoseSpot's multi-month clock gates Phase H
+(pullable forward — hence its R0 start).
 
 ## 8. PROJECT_BRIEF amendments (applied on B1 approval)
 
@@ -200,45 +197,36 @@ established slice cadence; the true floor is §7 paperwork + R6 calendar time, n
 
 ## 12. Review log
 
-- 2026-08-13 — **Three of the flagged calls decided (Alec, in-session interview)**: the data
-  window is **≥ 24 months** — RECOVERY_DESIGN §2 governs; §1's "twelve months" corrected to
-  two-plus years. §10 measurement is **two reads** — preliminary at campaign end (~W12, early
-  Go allowed), binding Go/Adjust/Kill and any invoice-grade number at attribution-window
-  close (~W17–18); never Kill on the preliminary read. **GFE does not bind R6** — scoped
-  exemption recorded in ROADMAP (R6 rebooks existing patients of a physician-led practice
-  under its own medical oversight); the floor stays hard for Aureva and any new-injectable
-  entry. Also recorded for B4: **Resend evaluated and disqualified** (offers no BAA). Still
-  open: B4's vendor pair (Twilio+SendGrid recommended; Vercel-vs-AWS platform question
-  answered separately — no replatform), R4's pre-BAA verify channel, S4 live-verify batch
-  timing, "Minduo" (§7), B3 signature, multi-tenant hardening-deadline confirmation.
-- 2026-08-12 — **Doc-consistency pass applied** (multi-angle code review of the re-cut docs;
-  Alec: "apply the fixes"). In this doc: **B2's landing plan clarified** — the B2 tables land
-  via approval-gated migration PRs at their slices (R1 staging, five tables, built; R2
-  `service_categories`; R5 ledger), each walked with Alec, superseding the singular
-  "migration PR" phrasing below; R5's verify wording aligned to B8 (holdout members are
-  enrolled with the immutable flag and receive zero touches — not "never enrolled"); §7 gains
-  the 10DLC (downstream of B4), Sentry/PostHog, and DoseSpot clock rows; §8 marked
-  applied-and-canonical-in-PROJECT_BRIEF; "Phase 3" → "Phase H". Cross-doc fixes landed in
-  ROADMAP, RECOVERY_DESIGN, AUTH, V0_PROPOSAL, SCHEDULE_DESIGN, DATA_MODEL, the slice skill,
-  and rules files (see the PR). **Still open for Alec** (flagged, not fixed): §1's "twelve
-  months" vs RECOVERY_DESIGN §2's "≥ 24 months"; final §10 measurement at campaign end (~W12)
-  vs attribution-window close (~W17–18); whether R4's verify may use a stubbed/local code
-  channel pre-BAA; who "Minduo" is (define in §7); pulling the S4 live-verify batch ahead of
-  R4/R5; whether GFE binds R6's real operations.
-- 2026-08-11 — **APPROVED (Alec), B-series decided**: **B1** approved — the cut stands as
-  written (R-track first, S6–S12 behind R5, §4 freeze binding, Stripe deferred, mobile
-  stubbed). **B8** approved as drafted (the contractual "recovered" definition, 45-day
-  attribution window, 20% randomized immutable holdout). **B3** approved in principle — the
-  CLAUDE.md messaging-standard amendment is drafted exactly per RECOVERY_DESIGN.md §5 and the
-  diff shown to Alec before committing (a constitution edit; he signs it explicitly). **B2**
-  approved in principle — the staging + ledger migration lands via the normal approval-gated
-  migration PR (A6 discipline), schema walkthrough at that PR. **B4** open — ADR-0005 to be
-  written with a real evaluation of Twilio + Postmark (BAA availability, pricing,
-  STOP-handling webhooks, 10DLC registration lead time), presented before any SDK lands.
-  **B5** open until its PR — guest identity built per the design; Alec merges, as with all
-  auth. **B6** deferred — decide-by gate is "before R6 launch". **B7** Alec's — 4D exports
-  (R0) being pulled and every §7 clock started in parallel.
-- 2026-08-11 — Proposed (this document), from the strategy synthesis of the same date:
-  Medibun re-aimed as the delivery machine for the Recovered Revenue thesis; two tracks, one
-  spine; revenue before differentiation; schedule family frozen; paperwork reclassified as
-  revenue-critical.
+Terse by design (simplified 2026-08-13, Alec: "clear out the clutter") — one decision block
+per bullet, newest first, multiple bullets per date allowed; the git history holds the long
+form.
+
+- 2026-08-13 — **Minduo defined (Alec)**: his other company, a consulting group unrelated to
+  the practices — the group running the Medibun implementation, possibly the product's owning
+  company (which one is settled in the BA agreement itself). It processes Handal PHI either
+  way, hence the Minduo↔Handal BA agreement in `BAA_CHECKLIST.md`.
+- 2026-08-13 — **Division of labor (Alec)**: sessions do development only; admin/paperwork is
+  Alec's queue (`BAA_CHECKLIST.md`). Same day, also Alec's: the **cut-the-PRs-before-the-code**
+  session rule added to CLAUDE.md's session hygiene (single-purpose PRs, named at session
+  open). Parked for Alec: B3 signature (unamended CLAUDE.md rule
+  governs meanwhile), B4 vendor pick (Twilio+SendGrid recommended; Resend disqualified — no
+  BAA), tenant-hardening deadline. Engineering defaults adopted: R4
+  pre-BAA verify = local stub channel; S4–S5.7 live-verify batch runs at R5 stack-up.
+- 2026-08-13 — **Decided (Alec)**: data window ≥ 24 months (RECOVERY_DESIGN §2 governs); §10
+  is two reads — preliminary ~W12 (early Go allowed), binding Go/Adjust/Kill at
+  attribution-window close ~W17–18, never Kill on the preliminary; GFE does not bind R6
+  (scoped exemption in ROADMAP — the floor stays hard for Aureva/new-injectable entry). The
+  Vercel-vs-AWS platform question was answered separately: **no replatform** — Vercel stands.
+- 2026-08-12 — **Doc-consistency pass applied** (Alec: "apply the fixes"): B2 tables land via
+  per-slice approval-gated migration PRs (R1 staging · R2 `service_categories` · R5 ledger);
+  R5 verify wording aligned to B8 (holdout enrolled with the immutable flag, zero touches);
+  the §7 clock list gained 10DLC/Sentry/PostHog/DoseSpot rows (that list now lives in
+  `BAA_CHECKLIST.md`); "Phase 3" → "Phase H"; cross-doc fixes in
+  ROADMAP, RECOVERY_DESIGN, AUTH, V0/SCHEDULE/DATA_MODEL and the rules files.
+- 2026-08-11 — **APPROVED (Alec), B-series decided**: B1 ✓ as written; B8 ✓ as drafted; B2 +
+  B3 approved in principle (B2 walked at each migration PR; B3 diff signed explicitly at
+  commit); B4 open — ADR-0005 with a real vendor evaluation on **BAA availability, pricing,
+  STOP-handling webhooks, and 10DLC registration lead time** (Twilio + Postmark the original
+  pair; SendGrid recommended over Postmark 2026-08-13), presented before any SDK lands; B5 open
+  until its PR (Alec merges auth); B6 decide before R6; B7 Alec's, all clocks started at R0.
+- 2026-08-11 — Proposed, from the strategy synthesis of the same date.

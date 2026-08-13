@@ -12,7 +12,9 @@ description: The start-to-done ritual for building a slice (R-numbered work from
    `docs/DATA_MODEL.md`, and any spec the slice names (BOOKING_DESIGN.md, AUTH.md,
    PATIENT_SURFACE.md, RECOVERY_DESIGN.md). The docs are the project's memory — trust them
    over assumptions.
-2. Branch off latest `main`. One slice, one branch, one PR.
+2. Branch off latest `main`. One slice, one branch, one PR per purpose — an approval-gated
+   migration rides its own PR, separate from the slice's code (CLAUDE.md session hygiene:
+   cut the PRs before the code). A slice with no migration is still one PR.
    R-slices carry the standing rule: **real PHI never enters a fixture, seed, log, or cloud
    environment** — real-data verification only via the local runbook (RECOVERY_DESIGN.md §7).
 3. Before non-trivial building, state the plan with a verify step per item, and surface any
