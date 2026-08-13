@@ -160,7 +160,8 @@ canonical home**; this section is the historical record of what was applied:
 | Slice  | Status                  | Notes                                                                                                                                                                                       |
 | ------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | R0     | In progress (Alec)      | Blocks R1 verification (not R1 build — synthetic fixtures first). B7 (2026-08-11): Alec is pulling the 4D exports and starting every §7 clock in parallel — the build does not wait on him. |
-| R1–R6  | Not started             |                                                                                                                                                                                             |
+| R1     | Merged (PR #21)         | 2026-08-13, merged by Alec — the B2 schema walkthrough; the five staging tables + 4D adapter + local import CLI are approved and on `main`. Real-export verification still owed to R0.      |
+| R2–R6  | Not started             | R2 (segmentation + Leak Report) is next; its `service_categories` table lands via its own B2 migration PR.                                                                                  |
 | S6–S12 | Parked pending R5 merge | All V0 decisions (A2–A7) carry over unchanged.                                                                                                                                              |
 
 ## 10. Engagement-zero success criteria (the go/adjust/kill bar)
