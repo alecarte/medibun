@@ -13,6 +13,12 @@ wallet), translates domain operations to/from FHIR, and shapes responses for the
 pnpm --filter @medibun/api dev          # tsx watch (needs infra/medplum/.env — see root README)
 pnpm --filter @medibun/api db:migrate   # experience-DB migrations (Drizzle)
 pnpm --filter @medibun/api test         # Vitest (PGlite for DB tests — no Docker needed)
+
+# Recovery ingestion (R1) — LOCAL ONLY, see docs/RECOVERY_DESIGN.md §7.
+# Keep exports OUTSIDE the repo: the rejects file is written beside the input and
+# carries raw source rows (`exports/`, `*.csv` are gitignored as a backstop only).
+pnpm --filter @medibun/api import:4d -- \
+  --entity patients --file ~/handal-exports/roster.csv --timezone America/New_York
 ```
 
 Env: `MEDPLUM_*` + `EXPERIENCE_DATABASE_URL` + `SESSION_ENCRYPTION_KEY` + `API_ALLOWED_ORIGINS`

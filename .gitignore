@@ -42,6 +42,15 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
+# source-system exports + import rejects (RECOVERY_DESIGN.md §7: raw exports are never
+# committed, never uploaded — keep them outside the repo entirely; these rules are the
+# backstop for when someone runs the importer from inside it anyway). No CSV is tracked
+# today and test fixtures are composed in code, not checked in, so ignoring the whole
+# extension costs nothing; committing one has to be a deliberate `git add -f`.
+exports/
+*.csv
+*.rejects.csv
+
 # local env files
 .env
 .env.*
