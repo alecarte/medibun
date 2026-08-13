@@ -21,7 +21,8 @@ can resume from the repo alone.
 to feel like medical software) is unchanged and still gets proven — but _after_ the platform
 proves it can recover measurable revenue at a real practice:
 
-> Handal's twelve months of 4D data are ingested and classified into three leak pools →
+> Handal's two-plus years of 4D data (R0 pulls ≥ 24 months, per RECOVERY_DESIGN §2) are
+> ingested and classified into three leak pools →
 > a Leak Report states, in dollars, what the practice is losing → a sequenced, PHI-minimal,
 > multi-touch recovery campaign works the dormant pool over 4–6 weeks, every touch terminating
 > in the already-built one-tap booking flow → every contact, response, and booking lands in an
@@ -167,7 +168,11 @@ canonical home**; this section is the historical record of what was applied:
 
 ## 10. Engagement-zero success criteria (the go/adjust/kill bar)
 
-Measured at R6 campaign end, against the holdout:
+Measured against the holdout in two reads (decided 2026-08-13): a **preliminary readout at
+campaign end (~W12)**, where an early Go may be called if the bar is already cleared, and the
+**binding Go/Adjust/Kill — and any invoice-grade recovered number — at attribution-window
+close (~W17–18**, per B8's 45-day window from last touch). Deliberately asymmetric: never
+Kill on data the B8 definition itself calls incomplete.
 
 - **Go** (sell the first external diagnostic): ≥ 10 incremental recovered appointments vs
   holdout-adjusted baseline, OR incremental first-visit revenue ≥ 3× the R-track's
@@ -190,10 +195,22 @@ established slice cadence; the true floor is §7 paperwork + R6 calendar time, n
 - **W5–6** — R5. Prod stack stands up as BAAs land.
 - **W6–7** — R6 launches (hard-gated on the BAA chain + B6). Campaign runs W7–12.
 - **W7+** — L-track resumes (S6 onward) while the campaign runs.
-- **W12** — R6 measured against §10. **W14–16** — L-track spine complete; Aureva launch-ready.
+- **W12** — R6 preliminary readout against §10 (early Go allowed). **W14–16** — L-track spine
+  complete; Aureva launch-ready. **~W17–18** — attribution window closes; binding §10 decision.
 
 ## 12. Review log
 
+- 2026-08-13 — **Three of the flagged calls decided (Alec, in-session interview)**: the data
+  window is **≥ 24 months** — RECOVERY_DESIGN §2 governs; §1's "twelve months" corrected to
+  two-plus years. §10 measurement is **two reads** — preliminary at campaign end (~W12, early
+  Go allowed), binding Go/Adjust/Kill and any invoice-grade number at attribution-window
+  close (~W17–18); never Kill on the preliminary read. **GFE does not bind R6** — scoped
+  exemption recorded in ROADMAP (R6 rebooks existing patients of a physician-led practice
+  under its own medical oversight); the floor stays hard for Aureva and any new-injectable
+  entry. Also recorded for B4: **Resend evaluated and disqualified** (offers no BAA). Still
+  open: B4's vendor pair (Twilio+SendGrid recommended; Vercel-vs-AWS platform question
+  answered separately — no replatform), R4's pre-BAA verify channel, S4 live-verify batch
+  timing, "Minduo" (§7), B3 signature, multi-tenant hardening-deadline confirmation.
 - 2026-08-12 — **Doc-consistency pass applied** (multi-angle code review of the re-cut docs;
   Alec: "apply the fixes"). In this doc: **B2's landing plan clarified** — the B2 tables land
   via approval-gated migration PRs at their slices (R1 staging, five tables, built; R2

@@ -11,7 +11,8 @@ numbering: Phase 1 ≈ L · Phase 2 ≈ G · Phase 3 ≈ H · Phase 4 ≈ P.
 
 The R-track (V1_PROPOSAL.md §5): 4D ingestion → Handal Leak Report → comms boundary → guest
 booking → sequencer + attribution ledger + recovery queue → **engagement zero** at Handal with
-holdout measurement against the §10 go/adjust/kill criteria. Real PHI runs local-only until
+holdout measurement against the §10 go/adjust/kill criteria (preliminary read ~W12; binding
+decision at attribution-window close, ~W17–18). Real PHI runs local-only until
 the BAA chain completes (RECOVERY_DESIGN.md §7). Stripe stays deferred; mobile stays stubbed;
 the schedule family is frozen (V1 §4).
 
@@ -26,9 +27,11 @@ bar): AI boundary + ADR-0004 → face-map manual + ambient capture → history t
 patient concierge → staff assistant → demo polish. Plus the un-frozen launch prerequisites in
 their V0 order: patient self-signup (now largely covered by R4's SMS identity), GFE /
 medical-director oversight (**required before real (non-synthetic) operations, wherever that
-lands relative to phases** — the original phase-independent floor, unchanged; whether R6's
-recovered-booking operations at Handal trigger it is an open call for Alec, owed before R6),
-before/after photos (first post-spine candidate).
+lands relative to phases** — the original phase-independent floor, with one scoped exemption
+decided by Alec 2026-08-13: **R6's recovered-booking operations at Handal do not trigger it**,
+because R6 rebooks existing patients of a physician-led surgical practice under its own
+medical oversight; the floor binds Aureva and any new-patient / new-injectable entry
+unchanged), before/after photos (first post-spine candidate).
 
 ## Phase G — Growth + lab track (post-L, plus continuous Handal/Aureva lab work)
 
