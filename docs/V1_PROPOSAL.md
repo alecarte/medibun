@@ -201,12 +201,16 @@ Terse by design (simplified 2026-08-13, Alec: "clear out the clutter") — one d
 per bullet, newest first, multiple bullets per date allowed; the git history holds the long
 form.
 
+- 2026-08-13 — **Minduo defined (Alec)**: his other company, a consulting group unrelated to
+  the practices — the group running the Medibun implementation, possibly the product's owning
+  company (which one is settled in the BA agreement itself). It processes Handal PHI either
+  way, hence the Minduo↔Handal BA agreement in `BAA_CHECKLIST.md`.
 - 2026-08-13 — **Division of labor (Alec)**: sessions do development only; admin/paperwork is
   Alec's queue (`BAA_CHECKLIST.md`). Same day, also Alec's: the **cut-the-PRs-before-the-code**
   session rule added to CLAUDE.md's session hygiene (single-purpose PRs, named at session
   open). Parked for Alec: B3 signature (unamended CLAUDE.md rule
   governs meanwhile), B4 vendor pick (Twilio+SendGrid recommended; Resend disqualified — no
-  BAA), "Minduo" definition, tenant-hardening deadline. Engineering defaults adopted: R4
+  BAA), tenant-hardening deadline. Engineering defaults adopted: R4
   pre-BAA verify = local stub channel; S4–S5.7 live-verify batch runs at R5 stack-up.
 - 2026-08-13 — **Decided (Alec)**: data window ≥ 24 months (RECOVERY_DESIGN §2 governs); §10
   is two reads — preliminary ~W12 (early Go allowed), binding Go/Adjust/Kill at

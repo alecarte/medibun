@@ -13,17 +13,17 @@ in [`RECOVERY_DESIGN.md`](RECOVERY_DESIGN.md)'s review log. Rows here track pape
 only. When a BAA signs, append `✓ signed YYYY-MM-DD` to its Status cell and add a review-log
 line below.
 
-| Service                           | Why it needs a BAA                                                    | Status · lead time                                                                                                  |
-| --------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Medplum Cloud                     | Clinical source of truth — holds all PHI                              | Needed before prod PHI · weeks — the long pole, start first                                                         |
-| Vercel (Pro + HIPAA)              | Hosts the BFF + web apps; PHI transits it                             | Needed before prod PHI · days–weeks                                                                                 |
-| Neon (Scale plan, ADR-0002)       | Experience DB; recovery staging holds patient identity + contact info | Needed before prod data (ADR-0002) · days–weeks                                                                     |
-| SMS vendor (B4 pending; ADR-0005) | Outbound texts to patient phone numbers                               | Gates R6 sends · weeks                                                                                              |
-| Email vendor (B4 pending)         | Outbound email to patients                                            | Gates R6 sends · weeks; Resend disqualified (no BAA)                                                                |
-| Sentry                            | Error monitoring on the prod stack (PHI-scrubbed by design)           | Not an automatic R6 blocker: launch-without-observability is Alec's explicit call (flagged in ROADMAP) · days–weeks |
-| PostHog                           | Product analytics (no PHI by design)                                  | Same explicit call as Sentry · days–weeks                                                                           |
-| Anthropic                         | AI modules (S8/S10/S11), post-ADR-0004/A5                             | Gates L-track real-PHI AI only, not R6 · weeks                                                                      |
-| Minduo ↔ Handal                   | Minduo processes Handal's PHI as a business associate (B7)            | Gates R6 · days (template + signatures)                                                                             |
+| Service                           | Why it needs a BAA                                                                                                                 | Status · lead time                                                                                                  |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Medplum Cloud                     | Clinical source of truth — holds all PHI                                                                                           | Needed before prod PHI · weeks — the long pole, start first                                                         |
+| Vercel (Pro + HIPAA)              | Hosts the BFF + web apps; PHI transits it                                                                                          | Needed before prod PHI · days–weeks                                                                                 |
+| Neon (Scale plan, ADR-0002)       | Experience DB; recovery staging holds patient identity + contact info                                                              | Needed before prod data (ADR-0002) · days–weeks                                                                     |
+| SMS vendor (B4 pending; ADR-0005) | Outbound texts to patient phone numbers                                                                                            | Gates R6 sends · weeks                                                                                              |
+| Email vendor (B4 pending)         | Outbound email to patients                                                                                                         | Gates R6 sends · weeks; Resend disqualified (no BAA)                                                                |
+| Sentry                            | Error monitoring on the prod stack (PHI-scrubbed by design)                                                                        | Not an automatic R6 blocker: launch-without-observability is Alec's explicit call (flagged in ROADMAP) · days–weeks |
+| PostHog                           | Product analytics (no PHI by design)                                                                                               | Same explicit call as Sentry · days–weeks                                                                           |
+| Anthropic                         | AI modules (S8/S10/S11), post-ADR-0004/A5                                                                                          | Gates L-track real-PHI AI only, not R6 · weeks                                                                      |
+| Minduo ↔ Handal                   | Minduo — Alec's consulting company, the group implementing/operating Medibun — processes Handal's PHI as a business associate (B7) | Gates R6 · days (template + signatures)                                                                             |
 
 Never on this list: **Stripe** — signs no BAA; PHI never reaches it (constitution invariant).
 
@@ -38,6 +38,10 @@ Never on this list: **Stripe** — signs no BAA; PHI never reaches it (constitut
 
 ## Review log
 
+- 2026-08-13 — **Minduo defined (Alec)**: his other company — a consulting group unrelated to
+  the practices — acting here as the group running the Medibun implementation, possibly as the
+  product's owning company (Alec settles which in the BA agreement itself). Either way it
+  processes Handal PHI, hence the BA-agreement row above.
 - 2026-08-13 — Created (Alec's division-of-labor decision), consolidating V1_PROPOSAL §7's
   clock table as the single queue. Nothing signed yet; all clocks running except 10DLC
   (blocked on B4).
