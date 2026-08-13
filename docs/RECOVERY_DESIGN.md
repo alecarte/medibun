@@ -111,8 +111,9 @@ practice-controlled hardware (Alec's machine against the local docker stack); ra
 never committed, never uploaded, never pasted into cloud tools; fixtures and seeds are
 synthetic-only (existing rule, restated); the Leak Report is generated locally and delivered
 directly. The import CLI must therefore run fully local (it already will — local stack +
-local Postgres). Cloud promotion of real data is a single explicit cut-over once §7 of the
-proposal clears, recorded in this review log.
+local Postgres). Cloud promotion of real data is a single explicit cut-over once every BAA
+required for the touched services is signed (`docs/BAA_CHECKLIST.md` rows — the all-signed
+release rule stated there and in `security.md`), recorded in this review log.
 
 ## 8. Write-back at Handal (gate B6 — decide before R6)
 

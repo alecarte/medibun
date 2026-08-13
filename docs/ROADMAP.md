@@ -3,8 +3,8 @@
 Rewritten 2026-08-11 with the v1 revenue re-cut (`V1_PROPOSAL.md`, supersedes the phase
 sequence below the line in the 2026-05-29 version; Phase-0 bootstrap history preserved in git).
 Phase floor remains set by **external dependencies** — now led by the BAA chain, which gates
-_revenue_ (R6), not just launch. Every paperwork clock starts at R0 (V1 §7; the 10DLC clock
-alone is downstream of the B4 vendor pick). Legend for older docs still using the 2026-05-29
+_revenue_ (R6), not just launch. Every paperwork clock starts at R0 (queue + lead times:
+`BAA_CHECKLIST.md`; the 10DLC clock alone is downstream of the B4 vendor pick). Legend for older docs still using the 2026-05-29
 numbering: Phase 1 ≈ L · Phase 2 ≈ G · Phase 3 ≈ H · Phase 4 ≈ P.
 
 ## Phase R — Revenue engine (weeks 1–7 build, campaign through ~W12)
@@ -60,7 +60,8 @@ puts Handal's recovered-booking front office on Medibun during Phase R**, and th
 adapter is the migration's ingestion foundation — so Phase H becomes a staged widening (front
 office → clinical) rather than a one-time cut-over. EPCS compliance gates unchanged; the
 DoseSpot enrollment + DEA identity-proofing (IAL3) clock is months long and uncompressible —
-it sits in V1 §7's day-one clock list and gates any pull-forward of prescribing. Bus-factor rule: Handal's _clinical_ record does not move while
+it sits in `BAA_CHECKLIST.md`'s queue (started at R0) and gates any pull-forward of
+prescribing. Bus-factor rule: Handal's _clinical_ record does not move while
 the platform has a single-person sev-1 response.
 
 ## Phase P — Productize (gated on R6 = Go)
@@ -94,9 +95,10 @@ canonical list + deadline live in DATA_MODEL.md's AccessPolicy notes), and befor
 external tenant regardless; the separate-Project ADR (V1 §8) moots it only for external
 clients, never for Handal.
 
-## Live-verify debt (carry-forward, schedule at R6 prod stand-up)
+## Live-verify debt (carry-forward, schedule at R5 prod stand-up)
 
 The accumulated "live verify owed on a real stack" items from S4–S5.7 run as one batch when
-the prod stack stands up for R6 — booking $book participant/serviceType/slot-ref behavior,
+the prod stack stands up during R5 (it stands up as BAAs land, ahead of R6 — V1 §11; timing
+decided in V1 §12, 2026-08-13) — booking $book participant/serviceType/slot-ref behavior,
 `meta.accounts` propagation, versionId test-and-set honoring, staff policy denials, two-station
 polling. Recorded per-slice in V0 §9; check them off there.

@@ -31,9 +31,10 @@ blocks SSN/MRN/DOB-shaped values, and asks for confirmation on edits to sensitiv
 
 ## Vendors
 
-Approved in principle (BAA still required before prod PHI): Medplum Cloud, Vercel (Pro+HIPAA),
-Sentry, PostHog, Neon (Scale plan — ADR-0002). A comms vendor (SMS/email) joins via ADR-0005
-(gate B4) — BAA signed before any real send. Full paperwork queue: `docs/BAA_CHECKLIST.md` (owner: Alec). Stripe signs no BAA — the "Stripe never receives PHI" invariant (no
+The approved-in-principle vendor set, per-vendor gates, lead times, and signing status live in
+`docs/BAA_CHECKLIST.md` (owner: Alec) — the single queue; it is not restated here. A comms
+vendor (SMS/email) joins via ADR-0005 (gate B4) — BAA signed before any real send. Stripe
+signs no BAA — the "Stripe never receives PHI" invariant (no
 patient/diagnosis/service context in metadata, descriptors, or customer fields) lives in
 CLAUDE.md's architecture invariants.
 

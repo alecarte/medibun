@@ -130,5 +130,6 @@ These follow from the brief and decisions made during bootstrap. Treat them like
   predecessor tiers.
 - When compacting or summarizing a session, always preserve: the active slice + branch, the
   modified-file list, gate/checklist state (what's run, what's still owed), approval-gate
-  decisions pending or granted, and live-verify items. `docs/V1_PROPOSAL.md` §9 is the durable
-  copy — update it before pausing long-running work.
+  decisions pending or granted, and live-verify items. Durable copies, by kind: slice status →
+  V1_PROPOSAL §9; decisions and gate state → V1_PROPOSAL §12 + `docs/BAA_CHECKLIST.md`;
+  live-verify ledger → V0_PROPOSAL §9. Update them before pausing long-running work.
