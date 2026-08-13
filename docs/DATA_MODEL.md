@@ -220,6 +220,19 @@ must be verified per environment — see `docs/AUTH.md` (attribution section).
 
 ### Review log
 
+- **2026-08-11 — v1 re-cut: recovery staging + attribution ledger (B2, approved in principle
+  — pending its migration PR).** The recovery engine adds experience-DB **staging tables**
+  (`imports`, `staged_patients`, `staged_appointments`, `staged_inquiries`, `staged_consults`,
+  `service_categories`) and the **attribution ledger** (`campaigns`, `enrollments`, `touches`,
+  `recoveries`) — restricted by rule to **administrative/financial** fields (identity, contact,
+  appointment times/statuses/service category, inquiry outcomes, ticket values); clinical
+  content never enters the experience DB. PHI-bearing outbound message content lives
+  clinical-side as org-tagged Medplum **`Communication`** resources (the ledger keeps ids);
+  new CodeSystems `…/recovery-pools` and `…/outreach-templates`. Full design:
+  `RECOVERY_DESIGN.md` §3. The migrations stay approval-gated (A6/B2 discipline) and land
+  staged at their slices — R1 staging, R2 `service_categories`, R5 ledger — Alec walks each
+  schema at its landing PR (clarified 2026-08-12; this entry records the in-principle
+  decision, not the landings).
 - **2026-07-09 — cancellation + move-up list (S5.7) added** (design
   interview-approved by Alec in-session: detail-card cancel with a **coded reason**
   over free text; the approved `move_up_requests` migration — the A6-family gate;

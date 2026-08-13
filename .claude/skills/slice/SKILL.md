@@ -1,17 +1,20 @@
 ---
 name: slice
-description: The start-to-done ritual for building a v0 slice (S-numbered work from docs/V0_PROPOSAL.md). Use when starting a new slice, resuming one, or checking whether a slice is actually done.
+description: The start-to-done ritual for building a slice (R-numbered work from docs/V1_PROPOSAL.md; S-numbered from docs/V0_PROPOSAL.md). Use when starting a new slice, resuming one, or checking whether a slice is actually done.
 ---
 
 # Slice ritual
 
 ## Start
 
-1. Read `docs/V0_PROPOSAL.md` (§9 status log tells you where the project actually is), plus
-   `docs/ARCHITECTURE.md`, `docs/DATA_MODEL.md`, and any spec the slice names
-   (BOOKING_DESIGN.md, AUTH.md, PATIENT_SURFACE.md). The docs are the project's memory —
-   trust them over assumptions.
+1. Read `docs/V1_PROPOSAL.md` (§9 is the living status log; `docs/V0_PROPOSAL.md` §9 remains
+   the S1–S5.7 record + live-verify ledger), plus `docs/ARCHITECTURE.md`,
+   `docs/DATA_MODEL.md`, and any spec the slice names (BOOKING_DESIGN.md, AUTH.md,
+   PATIENT_SURFACE.md, RECOVERY_DESIGN.md). The docs are the project's memory — trust them
+   over assumptions.
 2. Branch off latest `main`. One slice, one branch, one PR.
+   R-slices carry the standing rule: **real PHI never enters a fixture, seed, log, or cloud
+   environment** — real-data verification only via the local runbook (RECOVERY_DESIGN.md §7).
 3. Before non-trivial building, state the plan with a verify step per item, and surface any
    approval-gated territory NOW (auth/authz/AccessPolicy, schema/FHIR migrations, PHI-touching
    deps, destructive ops — CLAUDE.md list): those need Alec's explicit yes, never
@@ -34,7 +37,7 @@ description: The start-to-done ritual for building a v0 slice (S-numbered work f
    fixtures; `security-reviewer` subagent on any PHI/auth/AccessPolicy change; affected docs
    updated in the same change (new/changed BFF endpoints → docs/API.md; and update
    tools/visual-check/stub-bff.mjs to match).
-3. Update the slice's row in `docs/V0_PROPOSAL.md` §9 — status, what shipped, what's parked,
-   what needs live verification on a real stack. A fresh session must be able to resume from
-   the repo alone.
+3. Update the slice's row in the living status log — `docs/V1_PROPOSAL.md` §9 (V0 §9 only
+   for S1–S5.7 history) — status, what shipped, what's parked, what needs live verification
+   on a real stack. A fresh session must be able to resume from the repo alone.
 4. Commit with a descriptive message; push with `git push -u origin <branch>`.

@@ -210,3 +210,13 @@ explicit human approval.
   identity-after-slot-selection (Boulevard) or fully login-free SMS recognition (Mangomint),
   and this dovetails with the already-decided "phone OTP when online booking launches."
   Design the signup slice against BOOKING_DESIGN.md §4 when it's scheduled.
+- **2026-08-11 — phone-OTP deferral UN-DEFERRED (v1 re-cut, gate B5 / slice R4 — OPEN,
+  decided at its PR; wording corrected 2026-08-12 — this entry briefly overclaimed "approved
+  in principle", a status Alec granted only to B2/B3).** Guest booking arrives via **opaque, short-lived,
+  single-patient tokenized links** deep-linking into `/book`, with **SMS-code verification**
+  binding the session to the known Patient — no portal account required
+  (`V1_PROPOSAL.md` §5 R4; token rules in `RECOVERY_DESIGN.md` §5). This activates the
+  accepted "phone OTP when online booking launches" decision and the 2026-07-03 guest-first
+  note above. Constraints carried into the R4 design: token issuance only by the
+  sequencer/BFF, enumeration-safe, rate-limited, expired/reused tokens fail closed. As with
+  all auth: security-reviewer before done, and Alec merges the PR.

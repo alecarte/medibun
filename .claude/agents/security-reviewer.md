@@ -15,7 +15,7 @@ report. You do not fix — you report findings for the main agent / human to add
 - Run **read-only** Bash to inspect the change: `git diff`, `git diff --staged`, `git status`,
   `git log`, `git show`. Never run commands that write, delete, push, install, or migrate.
 
-## What to audit (against CLAUDE.md and .claude/rules/{security,fhir,testing}.md)
+## What to audit (against CLAUDE.md and .claude/rules/{security,fhir,testing,models}.md)
 
 Review the current diff (`git diff` and staged changes). For every changed hunk, check:
 

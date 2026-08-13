@@ -43,7 +43,9 @@ regulated.
   `claude-opus-5-<date>`.
 - In `.claude/agents/*` frontmatter and Claude Code config, the aliases `fable` / `opus` / `sonnet`
   resolve to this roster; use the alias there and the exact ID anywhere a file or an API reads it.
-- Model identifiers stay in config and chat — never in commit messages, PR bodies, or code comments.
+- Model identifiers stay in config and chat — never in commit messages, PR bodies, or code
+  comments. (Exemption: harness-generated attribution trailers — `Co-Authored-By` lines — are
+  appended by the tooling, not authored content.)
 
 ## Product runtime — not this file's call
 
