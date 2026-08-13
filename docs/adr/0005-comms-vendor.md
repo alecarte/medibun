@@ -76,7 +76,8 @@ Accepted as recommended (Alec, 2026-08-13):
 
 - The comms module (R3) is written against our own interface; vendor SDKs are imported only
   inside it (lint-enforced), so the SendGrid-vs-Mailgun outcome changes an adapter, not the
-  design. Live sends stay stubbed until the relevant BAA is signed (synthetic-only rule, R3).
+  design. Live sends stay stubbed until the full BAA chain is signed per `BAA_CHECKLIST.md`'s
+  release rule (the RECOVERY_DESIGN §7 cut-over) — signing one BAA releases nothing.
 - `BAA_CHECKLIST.md` rows to update at the pick: SMS vendor → Twilio (clock running), email
   vendor → SendGrid-or-Mailgun (clock running), 10DLC row → clock started, toll-free note
   corrected.

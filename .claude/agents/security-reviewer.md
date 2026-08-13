@@ -19,9 +19,13 @@ report. You do not fix — you report findings for the main agent / human to add
 
 Review the current diff (`git diff` and staged changes). For every changed hunk, check:
 
-1. **PHI leakage** — PHI in logs, error messages, analytics/telemetry, URLs/query params, push/SMS
-   bodies, plaintext client storage, test fixtures, or prompts to any non-BAA service. Flag any
-   real or potential leak with file:line.
+1. **PHI leakage** — PHI in logs, error messages, analytics/telemetry, URLs/query params,
+   push/SMS/email bodies, plaintext client storage, test fixtures, or prompts to any non-BAA
+   service. Flag any real or potential leak with file:line. Outbound message bodies are
+   additionally held to the B3 messaging standard (CLAUDE.md; full standard RECOVERY_DESIGN.md
+   §5): at most first name + practice name + one opaque link, rendered from the reviewed
+   template library — flag any free-text send path, any clinical/treatment/visit-reason/
+   health-status content, and any body built outside the template library.
 2. **Secrets** — keys, tokens, passwords, `.env` contents committed to the repo or shipped in a
    client bundle.
 3. **AccessPolicy / authz** — any widening of access, weakened least-privilege/default-deny, or a
