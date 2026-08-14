@@ -205,10 +205,12 @@ every typed column and conditional for the `*_raw` ones**: `status_raw`, `servic
 stage the source's own text verbatim, so the two-store rule holds only as long as those columns
 really are coded labels in 4D. **R0's signal is favorable** — the procedure/service/product menus
 are coded and the Category taxonomy carries short codes — but R0 closed without recording an
-explicit verdict, so the allow-list question stays open (carried to the R2a walkthrough): if any
-of these is a free-text field an operator can type a reason into, the adapter maps it through an
-**allow-list of known labels** (unrecognized → rejected row) instead of staging it verbatim — a
-change to `adapter-4d.ts`'s column map, not to the schema. Two source columns are meanwhile
+explicit verdict, so the question stays open. It is a **blocking precondition on the first
+non-synthetic import** (security review, 2026-08-14) — not a soft walkthrough carry-in: before
+any real export is staged, Alec confirms per `*_raw` column that the 4D field is a coded label,
+and any column that is operator-typable free text gets mapped through an **allow-list of known
+labels** (unrecognized → rejected row) instead of staging it verbatim — a change to
+`adapter-4d.ts`'s column map, not to the schema. Two source columns are meanwhile
 excluded **by construction** rather than mapped:
 the appointment export's `Allergy` (clinical) and `Description` (operator free text that can carry
 a visit reason), plus the revenue export's line-item description for the same reason. The adapter
@@ -324,11 +326,18 @@ must be verified per environment — see `docs/AUTH.md` (attribution section).
   provider/quote/booked/completed) — both are R0's "corrections are a follow-up migration at the
   same gate" arriving; **(5)** `staged_patients.spend_cents` (dormant-pool value weighting) and
   `phone_type` (R5 needs mobile-vs-home; **strikeable** at the walkthrough if staging it four
-  slices early is unwelcome). Address columns stay unstaged. Carried to the walkthrough: the
-  `*_raw` allow-list question (R0 signal favorable, no explicit verdict recorded), import-actor
-  attribution (RECOVERY_DESIGN §7 checklist), and the NOT NULL adds' empty-table assumption
-  above. The adapter's 4D **headers** are still provisional — the normalization pre-pass and the
-  derived row identities are the next PR.
+  slices early is unwelcome) — both land here **without a writer** (same posture as R1's
+  `medplumPatientId`): the adapter fields that fill them, and their round-trip tests, are the
+  stacked report-layout PR's, so this migration alone cannot stage either value. Address columns
+  stay unstaged. Named for the approval ask, per security review 2026-08-14: the destructive
+  `consult_at` drop + NOT NULL adds ride the empty-table assumption above (a local DB with
+  staged consults is **truncated**, and approving this migration approves that); and R1's
+  "rejects a row missing the patient join key" test is **removed** — a required-field validation
+  deliberately relaxed because R0's real export has no such column, replaced by the
+  name/DOB/phone join-key tests. Also carried: the `*_raw` allow-list verdict (now a **blocking
+  precondition on the first non-synthetic import**, see above), import-actor attribution
+  (RECOVERY_DESIGN §7 checklist). The adapter's 4D **headers** are still provisional — the
+  normalization pre-pass and the derived row identities are the next PR.
 - **2026-08-13 — recovery staging tables landed (R1 merged, PR #21, Alec).** The entry below
   is resolved: Alec walked the schema and merged, which per the B2 gate's rule approves
   migration `0003` (the five staging tables). Still open from that entry: the `*_raw`

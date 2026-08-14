@@ -187,8 +187,11 @@ campaign-builder UI · automation levels above approve-every-touch · external-c
   Declining the table means dormancy falls back to the appointment export alone, which has no
   status column. Verified on synthetic fixtures through the PGlite round-trip suites; the 4D
   header maps stay provisional (the report-layout normalization pre-pass and the derived
-  identities are the next PR). Carried in: the `*_raw` allow-list verdict (signal favorable, never
-  explicitly recorded at R0's close) and import-actor attribution (§7 checklist).
+  identities are the next PR). Carried in: the `*_raw` allow-list verdict — per security review
+  2026-08-14 a **blocking precondition on the first non-synthetic import** (before any real
+  export is staged, Alec confirms per `*_raw` column that the 4D field is a coded label;
+  free-text columns get an allow-list in the adapter map, not verbatim staging) — and
+  import-actor attribution (§7 checklist).
 - 2026-08-14 — **R0 CLOSED (Alec).** The two remaining items resolved: **(1)** the Non-VIP
   filter is moot — Handal has no patients marked VIP, so the 22,541-row Patient Export is the
   full roster; no re-pull needed. **(2)** Conversion By Provider CSV header received: consult
