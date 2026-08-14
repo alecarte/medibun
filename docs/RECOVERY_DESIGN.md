@@ -158,6 +158,50 @@ campaign-builder UI · automation levels above approve-every-touch · external-c
 
 ## Review log
 
+- 2026-08-14 — **R0 first drop assessed (Alec; report-structure screenshots only — no
+  patient rows entered any cloud tool; raw exports stay on practice hardware per §7).**
+  Five 4D reports, all "Handal Plastic Surgery":
+  **(1) Conversion By Provider** (range set 8/14/2024–8/14/2026): consult date, patient,
+  quote, provider, coordinator, procedure, **quote amount**, booked, completed, days-to-book —
+  the unconverted-consults pool pre-built, valued by actual quoted dollars rather than
+  category averages. Self-declared limits: quote-created consults only, "Completed" consult
+  status only, excludes "Spa" quotes (surgical-consult pool specifically); patient-ID column
+  unconfirmed (name+DOB match against the roster is the fallback join).
+  **(2) Surgery Conversion by Month**: aggregate only — not ingestible; kept as 4D's own
+  totals for the R1/R2 reconciliation checks.
+  **(3) Patient Export**: first/last name, **ID**, DOB, email, phone, phone type, address
+  fields, **Spend** (per-patient historical spend — dormant-pool value weighting); header
+  truncated after Spend — full list owed. Ran under a "Non-VIP patients" filter (count
+  22,541) — **re-pull unfiltered** (VIP-tagged patients are prime re-engagement candidates).
+  Address columns won't be staged (data minimization; `staged_patients` takes identity +
+  contact only).
+  **(4) Procedure List** (92 procedures/provider: name, duration, surgeon fee, supply fee,
+  total) + **(5) Package List** (spa/injectable packages with unit cost/value): the priced
+  service menu — `service_categories` ticket seeds. Methodology note for the Leak Report:
+  prices exclude anesthesia/facility fees → surgical ticket values are deliberately
+  conservative.
+  **Coded-label signal favorable** (menu-driven procedures; coded "Completed" status) — the
+  R1 `*_raw` allow-list question stays open until the appointment export confirms.
+  **Second drop, same day**: **(6) Product List** (160 retail products: name, **code** e.g.
+  `GAR_3PN`, manufacturer, **Category** e.g. "Garments", Report Tag, price options) — retail
+  is outside the leak math, but it reveals 4D's **coded Category + Report Tag taxonomy with
+  short codes**, the mapping source for `service_categories`. **(7) Services List** (82
+  services/provider: name, commission, **total fee** — e.g. a $3,500 package) — the
+  non-surgical/spa priced menu, completing the service menu alongside (4)/(5); same
+  anesthesia/facility-fee exclusion. **(8) Revenue by Staff Incl. Procedure Prepayments**
+  (date-ranged, row-level): DOS/paid date, patient first/last name, description, **Category**,
+  Report Tag, amount — run over the full ≥24 months this yields **actual average ticket per
+  category**, superseding list prices for the Leak Report math. R2 design note: rather than a
+  new staged-transactions table (a B2 schema addition), the default is to compute per-category
+  averages from this export locally and record them into `service_categories` with the
+  methodology noted — decide at the R2a schema walkthrough.
+  The shared coded Category taxonomy across (6)–(8) further strengthens the coded-label
+  verdict; final confirmation still rides on the appointment export.
+  **Pool verdicts so far**: unconverted consults **feasible** (degraded to quote-created +
+  surgical only); dormant **pending** — the ≥24-month Scheduler appointment-history export
+  (patient id, datetime, status, type, provider) is the missing spine; inquiries **unknown**
+  (Marketing-menu tracking unconfirmed). Export format (CSV vs print-only) unconfirmed for
+  all eight — R1's adapter expects CSV.
 - 2026-08-13 — **R1 merged (PR #21, Alec)**: the B2 gate's first migration (the §3 staging
   tables) is approved per the gate's own rule — Alec walked the schema and merged. The two
   carried items below (the `*_raw` allow-list question → R0; import-actor attribution → §7
