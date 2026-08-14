@@ -22,7 +22,14 @@ type AdapterFields<T, K extends keyof T> = Required<Pick<T, K>>;
 
 export type StagedPatientRow = AdapterFields<
   typeof stagedPatients.$inferInsert,
-  "sourceIdentity" | "firstName" | "lastName" | "dob" | "phone" | "email"
+  | "sourceIdentity"
+  | "firstName"
+  | "lastName"
+  | "dob"
+  | "phone"
+  | "phoneType"
+  | "email"
+  | "spendCents"
 >;
 
 export type StagedAppointmentRow = AdapterFields<
@@ -93,11 +100,23 @@ export type RejectedRow = {
   readonly raw: string;
 };
 
+/** A `Total X = N` row the source file prints about itself — the per-file
+ *  reconciliation total (R0). The label is report furniture, never source content. */
+export type DeclaredTotal = { readonly label: string; readonly count: number };
+
 export type ParseResult<E extends StagedEntity> = {
   /** Validated, trimmed rows with a unique `sourceIdentity` — the importer upserts
    *  them in one statement and relies on that uniqueness. */
   readonly rows: readonly StagedRowByEntity[E][];
   readonly rejects: readonly RejectedRow[];
+  /** Rows the source's own report layout contributed — preamble, section and day rows,
+   *  totals, reprinted headers, non-patient calendar blocks. Skipped, NOT rejected (a
+   *  rejects file full of decoration helps nobody), but counted so the operator sees
+   *  what the pre-pass swallowed. */
+  readonly layoutRowCount: number;
+  /** `Total X = N` rows the file declares about itself — each file's own reconciliation
+   *  total (R0). Empty when the export prints none. */
+  readonly declaredTotals: readonly DeclaredTotal[];
 };
 
 /** The file cannot be staged at all — wrong shape, not a bad row. Carries column names
