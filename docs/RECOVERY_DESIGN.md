@@ -158,6 +158,23 @@ campaign-builder UI · automation levels above approve-every-touch · external-c
 
 ## Review log
 
+- 2026-08-14 — **CSV shape confirmed (Alec; header-region screenshots of 5 exports): the
+  CSVs are report-layout dumps, not clean tables.** Shared shape: preamble rows (practice
+  name, report title, filters, date range), a duplicated title row mid-file, **provider
+  section rows** as group headers, **day-separator rows** (appointment list), `Total X = N`
+  rows, and values scattered across sparse spreadsheet columns; the Product List additionally
+  nests price-option **sub-rows under a two-row header**. Adapter consequence (the planned
+  R0→R1 correction, no schema change): a **normalization pre-pass** — locate the real header
+  row, skip decoration rows, carry provider/day group context down onto data rows — ahead of
+  the existing declarative column map; synthetic fixtures reshaped to the real layout.
+  Two wins in the real headers: **(a) the Revenue CSV carries a patient `Id` column** absent
+  from its print view — dormancy joins by ID, no name-matching needed on the money signal
+  (name+DOB+phone matching remains for the appointment file, which confirms it has no ID or
+  status column); **(b) the embedded `Total = N` rows give each file its own reconciliation
+  total** — R1's "counts reconciled against 4D's own totals" verify can run per-file with no
+  side channel. Revenue re-pull at the full 8/14/2024–8/14/2026 range: **done** (visible in
+  the header region). Remaining R0 closure: the **Conversion By Provider CSV header region**
+  (its patient-Id question is the last mapping unknown) and the unfiltered patient re-pull.
 - 2026-08-14 — **R0 export set complete — assessment closed pending CSV headers (Alec).**
   Third drop: **(9) Detailed Appointment List — All Calendars** (print view: date+time,
   provider, patient name, DOB, age, phone, **Allergy**, Appt Type/Location, **Description**
