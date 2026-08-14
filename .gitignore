@@ -67,3 +67,9 @@ expo-env.d.ts
 # claude code local state
 .claude/scheduled_tasks.lock
 .claude/worktrees/
+
+# recovery artifacts — generated locally, practice-confidential; the backstop for when
+# someone writes them from inside the repo anyway (same rule as exports/ and *.rejects.csv)
+leak-report*.html
+apps/api/config/*.json
+!apps/api/config/service-categories.example.json

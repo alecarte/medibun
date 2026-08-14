@@ -247,6 +247,29 @@ describe("4D adapter — patients (Patient Export)", () => {
     });
   });
 
+  // A roster row can legitimately fill ONE cell: an id with every optional column blank.
+  // Read as decoration it would vanish — neither staged nor rejected.
+  it("stages a row that fills only its id column", () => {
+    const content = reportFile(PREAMBLE, PATIENT_HEADERS, [
+      patientRow("p-1", ymd(1970, 4, 12)),
+      sparseRow(PATIENT_HEADERS.length, { 2: "p-2" }),
+    ]);
+
+    const { rows, rejects } = adapter.parse("patients", content);
+
+    expect(rejects).toEqual([]);
+    expect(rows[1]).toEqual({
+      sourceIdentity: "p-2",
+      firstName: null,
+      lastName: null,
+      dob: null,
+      phone: null,
+      phoneType: null,
+      email: null,
+      spendCents: null,
+    });
+  });
+
   // The header-spelling posture: R0 recorded what each column MEANS, not every exact
   // string, so a miss prints the header names it did find — a one-line map fix.
   it("fails the file when a required column is missing, naming the headers it found", () => {
@@ -406,15 +429,41 @@ describe("4D adapter — appointments (Detailed Appointment List)", () => {
     expect(new Set(identities).size).toBe(4);
   });
 
-  it("gives two rows that differ only in provider different identities", () => {
-    const rowFor = (provider: string) =>
+  // Provider is INFERRED from a section row, so it moves with pagination: the same
+  // appointment printed under a different page break carries a different provider and
+  // would otherwise hash differently, re-importing as a duplicate row.
+  it("derives one identity for the same appointment however the export paginated", () => {
+    const when = ymdhm(2026, 7, 15, 9, 0);
+    const layouts = [
+      // Carried from a section row, from a DIFFERENT section row, printed in its own
+      // column, and absent because the break left the row above the row that names it.
+      reportFile([], APPOINTMENT_HEADERS, [["Dr Fakeman"], appointmentRow(when, "Testerly F")]),
+      reportFile([], APPOINTMENT_HEADERS, [["Dr Otherly"], appointmentRow(when, "Testerly F")]),
       reportFile([], APPOINTMENT_HEADERS, [
-        appointmentRow(ymdhm(2026, 7, 15, 9, 0), "Testerly F", { 1: provider }),
-      ]);
+        appointmentRow(when, "Testerly F", { 1: "Dr Fakeman" }),
+      ]),
+      reportFile([], APPOINTMENT_HEADERS, [appointmentRow(when, "Testerly F")]),
+    ];
 
-    expect(adapter.parse("appointments", rowFor("Dr Fakeman")).rows[0]?.sourceIdentity).not.toBe(
-      adapter.parse("appointments", rowFor("Dr Otherly")).rows[0]?.sourceIdentity,
+    const identities = layouts.map(
+      (content) => adapter.parse("appointments", content).rows[0]!.sourceIdentity,
     );
+
+    expect(new Set(identities).size).toBe(1);
+  });
+
+  // The accepted cost of excluding provider: two appointments identical in every printed
+  // field but their provider now collide, and the occurrence suffix — the rule that
+  // already separates true duplicates — is what keeps them apart.
+  it("separates same-time rows under different providers by occurrence", () => {
+    const content = reportFile([], APPOINTMENT_HEADERS, [
+      appointmentRow(ymdhm(2026, 7, 15, 9, 0), "Testerly F", { 1: "Dr Fakeman" }),
+      appointmentRow(ymdhm(2026, 7, 15, 9, 0), "Testerly F", { 1: "Dr Otherly" }),
+    ]);
+
+    const identities = adapter.parse("appointments", content).rows.map((r) => r.sourceIdentity);
+
+    expect(identities[1]).toBe(`${identities[0]}#2`);
   });
 });
 
