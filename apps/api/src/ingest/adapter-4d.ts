@@ -157,16 +157,50 @@ type EntitySpec<Row> = {
   readonly carry?: CarrySpec;
 };
 
+/**
+ * Columns that must never become a mapped field, whatever a future header turns up
+ * (R0 (i), two-store rule): `Allergy` is clinical, `Description` and the revenue
+ * line-item text are operator free text that can carry a visit reason, and `Report Tag`
+ * is retail taxonomy we have no column for.
+ */
+export const NEVER_MAPPED: readonly string[] = [
+  "allergy",
+  "allergies",
+  "description",
+  "report tag",
+];
+
+/** Enforcement rather than convention: every field is built through `field` below, so a
+ *  map that claimed an excluded column — as its name OR as an alias — cannot be
+ *  constructed, and the adapter fails to build rather than staging what R0 excluded.
+ *  Names are normalized exactly as header matching normalizes them. */
+function assertMappable(names: readonly string[]): void {
+  const excluded = names
+    .map((name) => name.trim().toLowerCase())
+    .filter((name) => NEVER_MAPPED.includes(name));
+  if (excluded.length > 0) {
+    throw new Error(`4D column map may not claim an excluded column: ${excluded.join(", ")}`);
+  }
+}
+
 const field = <T>(
   expects: string,
   read: (value: string) => T | undefined,
   column: string,
   required: boolean,
   aliases: readonly string[] = [],
-): Field<T> => ({ column, aliases, required, expects, read });
+): Field<T> => {
+  assertMappable([column, ...aliases]);
+  return { column, aliases, required, expects, read };
+};
 
-const text = (column: string, required: boolean, aliases: readonly string[] = []): Field<string> =>
-  field("text", (value) => value, column, required, aliases);
+/** Exported for the test that pins the guard above onto the real construction path —
+ *  every other field helper reaches `field` the same way this one does. */
+export const text = (
+  column: string,
+  required: boolean,
+  aliases: readonly string[] = [],
+): Field<string> => field("text", (value) => value, column, required, aliases);
 
 const dateField = (
   column: string,
@@ -192,19 +226,6 @@ const instantField = (
     true,
     aliases,
   );
-
-/**
- * Columns that must never become a mapped field, whatever a future header turns up
- * (R0 (i), two-store rule): `Allergy` is clinical, `Description` and the revenue
- * line-item text are operator free text that can carry a visit reason, and `Report Tag`
- * is retail taxonomy we have no column for. A test asserts no map claims them.
- */
-export const NEVER_MAPPED: readonly string[] = [
-  "allergy",
-  "allergies",
-  "description",
-  "report tag",
-];
 
 /** 4D's exports, entity by entity. `inquiries` is absent by design (R0). */
 type SupportedEntity = Exclude<StagedEntity, "inquiries">;
@@ -349,6 +370,21 @@ const columnsOf = (spec: AnySpec): ColumnSpec[] =>
   [...("column" in spec.identity ? [spec.identity.column] : []), ...Object.values(spec.map)].map(
     (f) => ({ canonical: f.column, names: [f.column, ...f.aliases], required: f.required }),
   );
+
+/** Every source column name each entity's map claims, canonical names and aliases alike.
+ *  The specs are literals inside `entitySpecs`, so this is how the NEVER_MAPPED test
+ *  inspects what they actually claim. */
+export function fourDColumnNames(timeZone: string): Record<SupportedEntity, readonly string[]> {
+  const specs = entitySpecs(timeZone);
+  const names = (spec: unknown): readonly string[] =>
+    columnsOf(spec as AnySpec).flatMap((column) => column.names);
+  return {
+    patients: names(specs.patients),
+    appointments: names(specs.appointments),
+    consults: names(specs.consults),
+    transactions: names(specs.transactions),
+  };
+}
 
 /** One identifying field, normalized so the same row hashes the same next export:
  *  case-folded, whitespace-collapsed, and instants as UTC ISO. */
