@@ -158,6 +158,31 @@ campaign-builder UI · automation levels above approve-every-touch · external-c
 
 ## Review log
 
+- 2026-08-14 — **R0 export set complete — assessment closed pending CSV headers (Alec).**
+  Third drop: **(9) Detailed Appointment List — All Calendars** (print view: date+time,
+  provider, patient name, DOB, age, phone, **Allergy**, Appt Type/Location, **Description**
+  free text, created date). Findings, binding on the R1 adapter:
+  **(i) `Allergy` and `Description` are never staged** — Allergy is clinical content;
+  Description is operator free text that can carry visit reasons. Neither is needed (Appt
+  Type is the category signal); the adapter drops both columns on read. This is the two-store
+  rule's first live test and the answer is exclusion by construction.
+  **(ii)** No patient-ID or status column **in the print view**; DOB+phone present → roster
+  join runs on name+DOB+phone. 4D demonstrably has statuses internally (the Conversion
+  report filters on "Completed") — whether the CSV export carries them is the last open
+  mapping question; Alec sends the **header row only** of each CSV to close it.
+  **(iii)** Dormancy computes primarily from **Revenue rows** (last _paid_ visit per patient
+  per category — a completed-visit signal at least as strong as an appointment status), with
+  the appointment export supplying the no-future-booking half of the definition; if the CSV
+  turns out to carry status, that's an upgrade, not a dependency.
+  **(iv)** Non-patient calendar blocks ("Happening", patient `#`) exist in the export — the
+  adapter filters rows without a real patient.
+  **Format confirmed: all exports are CSVs on practice hardware** (screenshots were
+  print-view convenience only). **Final pool verdicts — dormant: feasible** (revenue-driven,
+  per iii); **unconverted consults: feasible** (degraded: quote-created, surgical only);
+  **inquiries: infeasible at Handal** — 4D doesn't track them; pool parked (anticipated by
+  §1's "may simply ingest an AI-receptionist's output later"; `staged_inquiries` stays
+  unused for engagement zero). Remaining R0 closure items: CSV header rows (above),
+  unfiltered patient re-pull, full-range revenue re-pull.
 - 2026-08-14 — **R0 first drop assessed (Alec; report-structure screenshots only — no
   patient rows entered any cloud tool; raw exports stay on practice hardware per §7).**
   Five 4D reports, all "Handal Plastic Surgery":
