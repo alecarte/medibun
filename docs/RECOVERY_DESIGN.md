@@ -163,6 +163,45 @@ campaign-builder UI · automation levels above approve-every-touch · external-c
 
 ## Review log
 
+- 2026-08-14 — **R2c built: the pool queries and the Leak Report v1.** Segmentation
+  (`apps/api/src/recovery/segmentation.ts`) is a pure layer over one read of staging, so
+  every pool rule is testable without a database. **Dormant** runs on revenue exactly as R0
+  required: a patient's last PAID visit per category — line items grouped to a per-visit
+  ticket by (patient, date, category) with refunds netted in, a group netting to zero or
+  less counted as a refund rather than a visit — older than that category's hand-set
+  interval, with no appointment after the anchor date. **`asOf` defaults to the export's own
+  horizon** (the newest staged transaction date, overridable), so a report is reproducible
+  against a fixed export rather than against the day it happened to run; the dormancy edge is
+  exclusive — a visit exactly `interval` days old is not yet dormant. Revenue joins the
+  roster by patient id (R0 win (a)); the appointment export has none, so it joins on
+  name + DOB + phone (case-folded, order-independent name tokens, digits-only phone) and the
+  **join coverage is printed rather than assumed** — an unmatched row can never remove a
+  patient from the pool, so the pool over-counts instead of quietly filtering.
+  **Unconverted consults** carry each R0 degradation as its own counter: `booked` is read
+  from closed yes-/no-shaped vocabularies and anything else — a blank included — is
+  **uninterpretable**, never guessed into the pool; a consult must be at least **30 days**
+  old (configurable) to count as lost; a name matching more than one roster patient is
+  **ambiguous** and held back for a human; a patient with a later paid visit or a future
+  appointment is excluded as returned, mirroring B8's own exclusion.
+  **`service_categories` seeding** is its own local CLI (`categories:seed`): tickets are the
+  per-category average visit total, basis `revenue-average`, while
+  `expected_return_interval_days` comes ONLY from an operator-written JSON config (keyed by
+  label or code; a category absent from it defines no dormancy; an optional per-category
+  ticket override lands as `hand-set`, and a config-only category still lands). A synthetic
+  example config is committed (`apps/api/config/service-categories.example.json`); the real
+  one is written locally at the §7 run and never enters the repo.
+  The **Leak Report** (`report:leak`) renders one self-contained print-quality HTML file — no
+  scripts, no external assets — and is **aggregates only**: category labels, counts, and
+  dollars are its whole vocabulary, pinned by a test asserting that no fixture identity
+  reaches the document. It prints the B8 definition verbatim, the 20% holdout plan, the
+  per-visit ticket methodology with each category's basis, the deliberate list-price
+  exclusion (anesthesia and facility fees), the import ledger, the appointment join coverage,
+  and the export-horizon caveat. One gap found while writing it and stated in the report
+  rather than papered over: the per-file `Total X = N` reconciliation the import CLI performs
+  is **not retained in the ledger**, so the import session's terminal output is its only
+  record — a column for it is a small follow-up if that check has to survive the run.
+  Verified end to end on synthetic report-layout fixtures. No HTTP surface, no Medplum
+  access, no new dependency.
 - 2026-08-14 — **R2b built: the report-layout pre-pass; the 4D maps are now the real
   exports.** The R0→R1 correction is in: `report-layout.ts` normalizes 4D's report dumps —
   locates the real header row, classifies furniture STRUCTURALLY (never by title text, per

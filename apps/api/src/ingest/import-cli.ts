@@ -46,8 +46,9 @@ export class UsageError extends Error {
   }
 }
 
-/** First `code` in the error's cause chain (pg's SQLSTATE, node's ENOENT, …). */
-function errorCodeOf(err: unknown): string | undefined {
+/** First `code` in the error's cause chain (pg's SQLSTATE, node's ENOENT, …). Shared
+ *  with the recovery CLIs, which apply the same failure-printing rule. */
+export function errorCodeOf(err: unknown): string | undefined {
   for (let e: unknown = err; e; e = (e as { cause?: unknown }).cause) {
     const code = (e as { code?: unknown }).code;
     if (typeof code === "string") {
