@@ -81,9 +81,6 @@ const DAY_MS = 86_400_000;
 const daysBetween = (from: string, to: string): number =>
   Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS);
 
-/** "YYYY-MM-DD" — what every date column in staging holds. */
-export const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
-
 /**
  * A name folded to a comparison key: lowercased, punctuation dropped, and the tokens
  * SORTED. The roster prints first and last name in two columns while the appointment and

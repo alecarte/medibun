@@ -4,7 +4,8 @@
  * self-contained, print-quality HTML document.
  *
  *   pnpm --filter @medibun/api report:leak -- \
- *     --out ~/handal-exports/leak-report.html --practice "Handal Plastic Surgery"
+ *     --out ~/handal-exports/leak-report.html --practice "Handal Plastic Surgery" \
+ *     --timezone America/New_York
  *
  * The document is aggregates only — category labels, counts, dollars — and carries no
  * patient name, identifier, or contact detail. It is still practice-confidential: write

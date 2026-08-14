@@ -92,6 +92,9 @@ export type LeakReportData = {
 };
 
 export type LeakReportOptions = {
+  /** The PRACTICE's own zone. Required, never defaulted: staging holds instants, and
+   *  every date in this document is the local calendar day one fell on. */
+  readonly timeZone: string;
   readonly practiceName?: string;
   /** Defaults to the export's own horizon — the newest staged transaction date. */
   readonly asOf?: string;
@@ -107,16 +110,31 @@ export class NoStagedRevenueError extends Error {
   }
 }
 
-const iso = (at: Date): string => at.toISOString().slice(0, 10);
+/**
+ * A staged instant as the calendar date it fell on IN THE PRACTICE'S ZONE. The columns
+ * behind these dates are timestamptz, so `toISOString` renders them in UTC — which prints
+ * a 9pm appointment in a practice four hours behind UTC on the following day, telling the
+ * practice its export covers a day it does not. "en-CA" is the locale that spells a date
+ * "YYYY-MM-DD", the same shape every date column in staging holds.
+ */
+const localDayIn = (timeZone: string): ((at: Date) => string) => {
+  const format = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return (at) => format.format(at);
+};
 
 function range(values: readonly string[]): { from: string | null; to: string | null } {
   const sorted = [...values].sort();
   return { from: sorted[0] ?? null, to: sorted.at(-1) ?? null };
 }
 
-function dataWindow(snapshot: StagingSnapshot): DataWindow {
+function dataWindow(snapshot: StagingSnapshot, localDay: (at: Date) => string): DataWindow {
   const revenue = range(snapshot.transactions.map((row) => row.transactionDate));
-  const appointments = range(snapshot.appointments.map((row) => iso(row.startAt)));
+  const appointments = range(snapshot.appointments.map((row) => localDay(row.startAt)));
   const consults = range(snapshot.consults.map((row) => row.consultDate));
   return {
     revenueFrom: revenue.from,
@@ -129,7 +147,7 @@ function dataWindow(snapshot: StagingSnapshot): DataWindow {
 }
 
 /** The import ledger folded per entity: how many runs, and the latest run's counts. */
-async function readLedger(db: Db): Promise<ImportLedgerEntry[]> {
+async function readLedger(db: Db, localDay: (at: Date) => string): Promise<ImportLedgerEntry[]> {
   const runs = await db
     .select({
       entity: imports.entity,
@@ -149,17 +167,15 @@ async function readLedger(db: Db): Promise<ImportLedgerEntry[]> {
       rowCount: run.rowCount,
       stagedCount: run.stagedCount,
       rejectedCount: run.rejectedCount,
-      lastRunAt: iso(run.createdAt),
+      lastRunAt: localDay(run.createdAt),
     });
   }
   return [...byEntity.values()];
 }
 
 /** Assembles the report's data. Reads staging once; every number below traces to it. */
-export async function buildLeakReport(
-  db: Db,
-  options: LeakReportOptions = {},
-): Promise<LeakReportData> {
+export async function buildLeakReport(db: Db, options: LeakReportOptions): Promise<LeakReportData> {
+  const localDay = localDayIn(options.timeZone);
   const snapshot = await readStaging(db);
   const asOf = options.asOf ?? defaultAsOf(snapshot);
   if (asOf === undefined) {
@@ -174,15 +190,15 @@ export async function buildLeakReport(
   return {
     practiceName: options.practiceName ?? "The practice",
     asOf,
-    generatedOn: options.generatedOn ?? iso(new Date()),
-    window: dataWindow(snapshot),
+    generatedOn: options.generatedOn ?? localDay(new Date()),
+    window: dataWindow(snapshot, localDay),
     staged: {
       patients: snapshot.patients.length,
       appointments: snapshot.appointments.length,
       consults: snapshot.consults.length,
       transactions: snapshot.transactions.length,
     },
-    ledger: await readLedger(db),
+    ledger: await readLedger(db, localDay),
     dormant,
     consults,
     headlineCents: dormant.expectedValueCents + consults.quotedValueCents,

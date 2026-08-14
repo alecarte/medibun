@@ -16,7 +16,7 @@ import {
   renderLeakReport,
   type LeakReportData,
 } from "./leak-report.js";
-import { CALENDAR_DATE } from "./segmentation.js";
+import { calendarDate, isKnownTimeZone } from "../ingest/dates.js";
 import { errorCodeOf, UsageError } from "../ingest/import-cli.js";
 
 /**
@@ -137,12 +137,19 @@ export async function runSeedCategoriesCli(deps: {
 }
 
 export const LEAK_REPORT_USAGE = [
-  "usage: pnpm --filter @medibun/api report:leak -- --out <path> [options]",
+  "usage: pnpm --filter @medibun/api report:leak -- \\",
+  "  --out <path> --timezone <IANA zone> [options]",
   "",
-  "  --out <path>          where to write the report (required)",
-  "  --practice <name>     practice display name in the header",
-  "  --as-of <YYYY-MM-DD>  anchor date; defaults to the newest staged transaction",
-  "  --min-age-days <n>    how old an unbooked consult must be to count as lost",
+  "  --out <path>            where to write the report (required)",
+  "  --timezone <IANA zone>  the practice's own zone (required)",
+  "  --practice <name>       practice display name in the header",
+  "  --as-of <YYYY-MM-DD>    anchor date; defaults to the newest staged transaction",
+  "  --min-age-days <n>      how old an unbooked consult must be to count as lost",
+  "",
+  "--timezone is the PRACTICE's zone, required for the same reason the import CLI",
+  "requires it: staging holds instants, and every date this report prints is the local",
+  "calendar day one fell on (reading them in the wrong zone moves an evening",
+  "appointment across days). It is required rather than defaulted for that reason.",
   "",
   "The report is aggregates only — no patient name, identifier, or contact detail can",
   "appear in it. It is still the practice's confidential diagnostic: write it outside",
@@ -160,20 +167,29 @@ export async function runLeakReportCli(deps: {
   readonly out: (line: string) => void;
 }): Promise<LeakReportRun> {
   const outPath = readArg(deps.argv, "out");
-  if (!outPath) {
+  const timeZone = readArg(deps.argv, "timezone");
+  if (!outPath || !timeZone) {
     throw new UsageError(LEAK_REPORT_USAGE);
   }
-  const asOf = readArg(deps.argv, "as-of");
-  if (asOf !== undefined && !CALENDAR_DATE.test(asOf)) {
-    throw new UsageError("--as-of must be a calendar date, written YYYY-MM-DD");
+  if (!isKnownTimeZone(timeZone)) {
+    throw new UsageError("--timezone must be an IANA zone name, e.g. America/New_York");
+  }
+  // A SHAPE check is not a validation: "2026-13-01" matches YYYY-MM-DD, reads as NaN, and
+  // then quietly inverts every date comparison the pools make. The value is not echoed
+  // back — the operator typed it, and the flag plus what it expects is what fixes a typo.
+  const rawAsOf = readArg(deps.argv, "as-of");
+  const asOf = rawAsOf === undefined ? undefined : calendarDate(rawAsOf);
+  if (rawAsOf !== undefined && asOf === undefined) {
+    throw new UsageError("--as-of must be a real calendar date, written YYYY-MM-DD");
   }
   const rawMinAge = readArg(deps.argv, "min-age-days");
-  const minAgeDays = rawMinAge === undefined ? undefined : Number(rawMinAge);
-  if (minAgeDays !== undefined && (!Number.isInteger(minAgeDays) || minAgeDays < 0)) {
+  if (rawMinAge !== undefined && !/^\d+$/.test(rawMinAge.trim())) {
     throw new UsageError("--min-age-days must be a whole number of days");
   }
+  const minAgeDays = rawMinAge === undefined ? undefined : Number(rawMinAge);
 
   const data = await buildLeakReport(deps.db, {
+    timeZone,
     ...(readArg(deps.argv, "practice") === undefined
       ? {}
       : { practiceName: readArg(deps.argv, "practice")! }),

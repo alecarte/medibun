@@ -173,6 +173,29 @@ describe("report layout — classifying the report's furniture", () => {
     ]);
   });
 
+  // Only the lone row ADJACENT to the reprinted header is the title. Swallowing the whole
+  // run would drop the section row that happens to sit against the page break, and every
+  // row after the break would silently inherit the PREVIOUS section's provider.
+  it("keeps a section row that sits immediately before a page-break block", () => {
+    const content = reportFile(PREAMBLE, HEADERS, [
+      sparseRow(WIDTH, { 0: "Dr Fakeman" }),
+      dataRow("09:00", "Testerly F"),
+      sparseRow(WIDTH, { 0: "Dr Otherly" }),
+      sparseRow(WIDTH, { 0: "Detailed Appointment List" }),
+      HEADERS,
+      dataRow("10:00", "Otherly F"),
+    ]);
+
+    const file = normalizeReport(content, SPEC);
+
+    expect(file.rows.map((r) => cellsOf(r.record, file.columnAt).provider)).toEqual([
+      "Dr Fakeman",
+      "Dr Otherly",
+    ]);
+    // Two section rows, the title, and the reprinted header — furniture, all counted.
+    expect(file.layoutRowCount).toBe(4 + 4);
+  });
+
   it("carries a section row's provider down onto rows that leave the column blank", () => {
     const content = reportFile(PREAMBLE, HEADERS, [
       sparseRow(WIDTH, { 0: "Dr Fakeman" }),
@@ -298,6 +321,50 @@ describe("report layout — classifying the report's furniture", () => {
     expect(file.rows[0]?.raw).toContain("Testerly F");
     // Carry-down changes the record, never the raw line the rejects file would show.
     expect(file.rows[0]?.raw).not.toContain("Dr Fakeman");
+  });
+});
+
+/**
+ * The Patient Export's shape: no group context to carry, and a row can legitimately fill
+ * ONE cell — an id with every optional column blank. A lone cell is only furniture when
+ * it sits outside the columns the entity's map consumes.
+ */
+describe("report layout — a lone cell in a column the entity maps", () => {
+  const ROSTER_HEADERS = ["Id", "First Name", "Last Name", "Loyalty Points"];
+  const ROSTER_WIDTH = ROSTER_HEADERS.length;
+  const ROSTER_SPEC: LayoutSpec = {
+    columns: [column("id", true), column("first name"), column("last name")],
+  };
+
+  it("stages a row filled only in a mapped column, and skips one outside them", () => {
+    const content = reportFile([["Fakeman Plastic Surgery"]], ROSTER_HEADERS, [
+      sparseRow(ROSTER_WIDTH, { 0: "p-1", 1: "Testerly", 2: "Fakeman" }),
+      // Every optional column blank: a real roster row, not decoration.
+      sparseRow(ROSTER_WIDTH, { 0: "p-2" }),
+      // The same shape in an UNMAPPED column is the report's own furniture.
+      sparseRow(ROSTER_WIDTH, { 3: "Loyalty tier: gold" }),
+    ]);
+
+    const file = normalizeReport(content, ROSTER_SPEC);
+
+    expect(file.rows.map((r) => r.record[0])).toEqual(["p-1", "p-2"]);
+    expect(file.layoutRowCount).toBe(1 + 1);
+  });
+
+  it("still reads a page-break title in a mapped column as furniture", () => {
+    const content = reportFile([], ROSTER_HEADERS, [
+      sparseRow(ROSTER_WIDTH, { 0: "p-1", 1: "Testerly", 2: "Fakeman" }),
+      // The reprinted title lands in column 0 — which this entity maps. Adjacency to the
+      // reprinted header row is what tells it from an id-only row.
+      sparseRow(ROSTER_WIDTH, { 0: "Quote Acceptance Detail" }),
+      ROSTER_HEADERS,
+      sparseRow(ROSTER_WIDTH, { 0: "p-2" }),
+    ]);
+
+    const file = normalizeReport(content, ROSTER_SPEC);
+
+    expect(file.rows.map((r) => r.record[0])).toEqual(["p-1", "p-2"]);
+    expect(file.layoutRowCount).toBe(2);
   });
 });
 

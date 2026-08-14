@@ -113,7 +113,9 @@ const appointments = csvFile(APPOINTMENT_HEADERS, [
     "Follow-up",
   ],
   // No DOB and no phone: the triple join cannot resolve it, and the report says so.
-  [ymdhm(2026, 8, 1, 11, 0), "Dr Fakeman", `Jandrell ${SURNAME}`, "", "", "Consult"],
+  // Its evening wall time is also the export's horizon: 21:30 in a practice four hours
+  // behind UTC is the NEXT UTC day, so a report that renders in UTC prints it a day late.
+  [ymdhm(2026, 8, 1, 21, 30), "Dr Fakeman", `Jandrell ${SURNAME}`, "", "", "Consult"],
 ]);
 
 const consults = csvFile(CONSULT_HEADERS, [
@@ -236,7 +238,14 @@ beforeAll(async () => {
   await runSeedCategoriesCli({ argv: ["--config", configPath], db, out: (line) => out.push(line) });
 
   const run = await runLeakReportCli({
-    argv: ["--out", join(dir, "leak-report.html"), "--practice", "Example Plastic Surgery"],
+    argv: [
+      "--out",
+      join(dir, "leak-report.html"),
+      "--practice",
+      "Example Plastic Surgery",
+      "--timezone",
+      TZ,
+    ],
     db,
     out: (line) => out.push(line),
   });
@@ -300,6 +309,14 @@ describe("the leak report", () => {
     expect(prose).toContain("2 of 3 rows matched (67%)");
   });
 
+  // Staged instants are timestamptz; the report dates them in the PRACTICE's zone. The
+  // 21:30 appointment falls on the next UTC day, and printing that would tell a practice
+  // its export covers a day it does not.
+  it("dates the appointment window in the practice's zone, not UTC", () => {
+    expect(prose).toContain(`${ymd(2025, 11, 1)} to ${ymd(2026, 8, 1)}`);
+    expect(prose).not.toContain(ymd(2026, 8, 2));
+  });
+
   it("quotes the contractual definition of recovered, verbatim", () => {
     expect(html).toContain(RECOVERED_DEFINITION);
   });
@@ -338,7 +355,7 @@ describe("the leak report", () => {
     writeFileSync(stalePath, "stale");
     chmodSync(stalePath, 0o644);
 
-    await runLeakReportCli({ argv: ["--out", stalePath], db, out: () => {} });
+    await runLeakReportCli({ argv: ["--out", stalePath, "--timezone", TZ], db, out: () => {} });
 
     expect(statSync(stalePath).mode & 0o777).toBe(0o600);
     expect(readFileSync(stalePath, "utf8")).not.toContain("stale");
