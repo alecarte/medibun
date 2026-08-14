@@ -90,8 +90,7 @@ tokens (token rules: `AUTH.md`'s B5/R4 entry is the authoritative home — issua
 sequencer/BFF, enumeration-safe, rate-limited, expired/reused fail closed; the full spec
 lands with R4); STOP language on first SMS touch per campaign. Templates are content, not
 code — reviewed like copy (DESIGN.md voice rules apply), versioned by code in `touches`.
-Until Alec signs the B3 CLAUDE.md amendment, CLAUDE.md's unamended "PHI never in SMS bodies"
-rule governs any implementation — this section becomes operative with that signature.
+Signed into CLAUDE.md 2026-08-13 (B3, Alec) — this section is operative.
 
 ## 6. The recovery queue (`/recovery`, staff app)
 
@@ -121,7 +120,7 @@ for one operator on one machine but not once an endpoint, a second person, or a 
 trigger an import (an actor column lands before any of those, per CLAUDE.md's "every PHI write
 attributable to an authenticated principal").
 
-## 8. Write-back at Handal (gate B6 — decide before R6)
+## 8. Write-back at Handal (gate B6 — **decided: (a)**, Alec 2026-08-13, V1 §12)
 
 Recovered bookings land in Medibun (Medplum is booking's source of truth by construction).
 Until Phase H retires 4D:
@@ -159,6 +158,115 @@ campaign-builder UI · automation levels above approve-every-touch · external-c
 
 ## Review log
 
+- 2026-08-14 — **R0 CLOSED (Alec).** The two remaining items resolved: **(1)** the Non-VIP
+  filter is moot — Handal has no patients marked VIP, so the 22,541-row Patient Export is the
+  full roster; no re-pull needed. **(2)** Conversion By Provider CSV header received: consult
+  date (A), patient **name only — no patient-ID column** (D), quote number (G), provider (I),
+  coordinator (N), procedure (O), quote amount (R), booked (T), completed (W), days-to-book
+  (Y). Consequences: consult rows join the roster **by name alone** (this file carries no
+  DOB/phone) — ambiguous name matches are flagged for manual resolution, never guessed; the
+  **quote number serves as the row's source identity** for idempotent re-import. One more
+  normalizer datum: the duplicated mid-file title line can differ from the report's own name
+  ("Quote Acceptance…" inside "Conversion…") — decoration rows are recognized structurally,
+  not by title text. **R0's verify step is met**: field mapping recorded across this entry
+  and the two below; pools marked dormant **feasible**, unconverted consults **feasible
+  (degraded)**, inquiries **infeasible at Handal**. Real-data verification of R1 (counts
+  reconciled against the in-file 4D totals) runs at the first local import once the adapter
+  normalization pass lands.
+- 2026-08-14 — **CSV shape confirmed (Alec; header-region screenshots of 5 exports): the
+  CSVs are report-layout dumps, not clean tables.** Shared shape: preamble rows (practice
+  name, report title, filters, date range), a duplicated title row mid-file, **provider
+  section rows** as group headers, **day-separator rows** (appointment list), `Total X = N`
+  rows, and values scattered across sparse spreadsheet columns; the Product List additionally
+  nests price-option **sub-rows under a two-row header**. Adapter consequence (the planned
+  R0→R1 correction, no schema change): a **normalization pre-pass** — locate the real header
+  row, skip decoration rows, carry provider/day group context down onto data rows — ahead of
+  the existing declarative column map; synthetic fixtures reshaped to the real layout.
+  Two wins in the real headers: **(a) the Revenue CSV carries a patient `Id` column** absent
+  from its print view — dormancy joins by ID, no name-matching needed on the money signal
+  (name+DOB+phone matching remains for the appointment file, which confirms it has no ID or
+  status column); **(b) the embedded `Total = N` rows give each file its own reconciliation
+  total** — R1's "counts reconciled against 4D's own totals" verify can run per-file with no
+  side channel. Revenue re-pull at the full 8/14/2024–8/14/2026 range: **done** (visible in
+  the header region). Remaining R0 closure: the **Conversion By Provider CSV header region**
+  (its patient-Id question is the last mapping unknown) and the unfiltered patient re-pull.
+- 2026-08-14 — **R0 export set complete — assessment closed pending CSV headers (Alec).**
+  Third drop: **(9) Detailed Appointment List — All Calendars** (print view: date+time,
+  provider, patient name, DOB, age, phone, **Allergy**, Appt Type/Location, **Description**
+  free text, created date). Findings, binding on the R1 adapter:
+  **(i) `Allergy` and `Description` are never staged** — Allergy is clinical content;
+  Description is operator free text that can carry visit reasons. Neither is needed (Appt
+  Type is the category signal); the adapter drops both columns on read. This is the two-store
+  rule's first live test and the answer is exclusion by construction.
+  **(ii)** No patient-ID or status column **in the print view**; DOB+phone present → roster
+  join runs on name+DOB+phone. 4D demonstrably has statuses internally (the Conversion
+  report filters on "Completed") — whether the CSV export carries them is the last open
+  mapping question; Alec sends the **header row only** of each CSV to close it.
+  **(iii)** Dormancy computes primarily from **Revenue rows** (last _paid_ visit per patient
+  per category — a completed-visit signal at least as strong as an appointment status), with
+  the appointment export supplying the no-future-booking half of the definition; if the CSV
+  turns out to carry status, that's an upgrade, not a dependency.
+  **(iv)** Non-patient calendar blocks ("Happening", patient `#`) exist in the export — the
+  adapter filters rows without a real patient.
+  **Format confirmed: all exports are CSVs on practice hardware** (screenshots were
+  print-view convenience only). **Final pool verdicts — dormant: feasible** (revenue-driven,
+  per iii); **unconverted consults: feasible** (degraded: quote-created, surgical only);
+  **inquiries: infeasible at Handal** — 4D doesn't track them; pool parked (anticipated by
+  §1's "may simply ingest an AI-receptionist's output later"; `staged_inquiries` stays
+  unused for engagement zero). Remaining R0 closure items: CSV header rows (above),
+  unfiltered patient re-pull, full-range revenue re-pull.
+- 2026-08-14 — **R0 first drop assessed (Alec; report-structure screenshots only — no
+  patient rows entered any cloud tool; raw exports stay on practice hardware per §7).**
+  Five 4D reports, all "Handal Plastic Surgery":
+  **(1) Conversion By Provider** (range set 8/14/2024–8/14/2026): consult date, patient,
+  quote, provider, coordinator, procedure, **quote amount**, booked, completed, days-to-book —
+  the unconverted-consults pool pre-built, valued by actual quoted dollars rather than
+  category averages. Self-declared limits: quote-created consults only, "Completed" consult
+  status only, excludes "Spa" quotes (surgical-consult pool specifically); patient-ID column
+  unconfirmed (name+DOB match against the roster is the fallback join).
+  **(2) Surgery Conversion by Month**: aggregate only — not ingestible; kept as 4D's own
+  totals for the R1/R2 reconciliation checks.
+  **(3) Patient Export**: first/last name, **ID**, DOB, email, phone, phone type, address
+  fields, **Spend** (per-patient historical spend — dormant-pool value weighting); header
+  truncated after Spend — full list owed. Ran under a "Non-VIP patients" filter (count
+  22,541) — **re-pull unfiltered** (VIP-tagged patients are prime re-engagement candidates).
+  Address columns won't be staged (data minimization; `staged_patients` takes identity +
+  contact only).
+  **(4) Procedure List** (92 procedures/provider: name, duration, surgeon fee, supply fee,
+  total) + **(5) Package List** (spa/injectable packages with unit cost/value): the priced
+  service menu — `service_categories` ticket seeds. Methodology note for the Leak Report:
+  prices exclude anesthesia/facility fees → surgical ticket values are deliberately
+  conservative.
+  **Coded-label signal favorable** (menu-driven procedures; coded "Completed" status) — the
+  R1 `*_raw` allow-list question stays open until the appointment export confirms.
+  **Second drop, same day**: **(6) Product List** (160 retail products: name, **code** e.g.
+  `GAR_3PN`, manufacturer, **Category** e.g. "Garments", Report Tag, price options) — retail
+  is outside the leak math, but it reveals 4D's **coded Category + Report Tag taxonomy with
+  short codes**, the mapping source for `service_categories`. **(7) Services List** (82
+  services/provider: name, commission, **total fee** — e.g. a $3,500 package) — the
+  non-surgical/spa priced menu, completing the service menu alongside (4)/(5); same
+  anesthesia/facility-fee exclusion. **(8) Revenue by Staff Incl. Procedure Prepayments**
+  (date-ranged, row-level): DOS/paid date, patient first/last name, description, **Category**,
+  Report Tag, amount — run over the full ≥24 months this yields **actual average ticket per
+  category**, superseding list prices for the Leak Report math. R2 design note: rather than a
+  new staged-transactions table (a B2 schema addition), the default is to compute per-category
+  averages from this export locally and record them into `service_categories` with the
+  methodology noted — decide at the R2a schema walkthrough.
+  The shared coded Category taxonomy across (6)–(8) further strengthens the coded-label
+  verdict; final confirmation still rides on the appointment export.
+  **Pool verdicts so far**: unconverted consults **feasible** (degraded to quote-created +
+  surgical only); dormant **pending** — the ≥24-month Scheduler appointment-history export
+  (patient id, datetime, status, type, provider) is the missing spine; inquiries **unknown**
+  (Marketing-menu tracking unconfirmed). Export format (CSV vs print-only) unconfirmed for
+  all eight — R1's adapter expects CSV.
+- 2026-08-13 — **R1 merged (PR #21, Alec)**: the B2 gate's first migration (the §3 staging
+  tables) is approved per the gate's own rule — Alec walked the schema and merged. The two
+  carried items below (the `*_raw` allow-list question → R0; import-actor attribution → §7
+  cut-over checklist) remain open. Same day: 4D **does** export pricing, per Alec — the R0
+  pull includes the service menu with prices, and R2's `service_categories.typical_ticket_cents`
+  seeds from the export rather than hand entry (expected-return intervals stay hand-set —
+  they're clinical-cadence judgment, not export data). ADR-0005 (B4) drafted with the vendor
+  evaluation; decision states in V1 §12.
 - 2026-08-12 — **R1 built, at its gate**: the §3 staging tables (`imports` + the four
   `staged_*`) are proposed as the B2 gate's first migration — approved when Alec walks the
   schema and merges the R1 PR, not before — with the §2 `SourceAdapter` contract, the 4D CSV

@@ -275,6 +275,11 @@ must be verified per environment — see `docs/AUTH.md` (attribution section).
 
 ### Review log
 
+- **2026-08-13 — recovery staging tables landed (R1 merged, PR #21, Alec).** The entry below
+  is resolved: Alec walked the schema and merged, which per the B2 gate's rule approves
+  migration `0003` (the five staging tables). Still open from that entry: the `*_raw`
+  free-text verdict (R0's field-mapping assessment) and import-actor attribution (the
+  RECOVERY_DESIGN §7 cut-over checklist).
 - **2026-08-12 — recovery staging tables proposed for landing (R1; the B2 gate's first
   migration) — PENDING Alec's schema walkthrough and merge.** The five staging tables above
   (`imports`, `staged_patients`, `staged_appointments`, `staged_inquiries`, `staged_consults`)
