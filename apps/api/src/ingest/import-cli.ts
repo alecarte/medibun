@@ -21,7 +21,13 @@ import type { StagedEntity } from "../db/schema.js";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = PgDatabase<PgQueryResultHKT, any, any>;
 
-const ENTITIES: readonly StagedEntity[] = ["patients", "appointments", "inquiries", "consults"];
+const ENTITIES: readonly StagedEntity[] = [
+  "patients",
+  "appointments",
+  "inquiries",
+  "consults",
+  "transactions",
+];
 
 export const USAGE = [
   "usage: pnpm --filter @medibun/api import:4d -- \\",

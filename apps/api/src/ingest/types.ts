@@ -5,6 +5,7 @@ import type {
   stagedConsults,
   stagedInquiries,
   stagedPatients,
+  stagedTransactions,
 } from "../db/schema.js";
 
 /**
@@ -28,6 +29,9 @@ export type StagedAppointmentRow = AdapterFields<
   typeof stagedAppointments.$inferInsert,
   | "sourceIdentity"
   | "patientSourceIdentity"
+  | "patientName"
+  | "dob"
+  | "phone"
   | "startAt"
   | "statusRaw"
   | "serviceCategoryRaw"
@@ -47,7 +51,25 @@ export type StagedInquiryRow = AdapterFields<
 
 export type StagedConsultRow = AdapterFields<
   typeof stagedConsults.$inferInsert,
-  "sourceIdentity" | "patientSourceIdentity" | "consultAt" | "serviceCategoryRaw" | "outcomeRaw"
+  | "sourceIdentity"
+  | "patientSourceIdentity"
+  | "patientName"
+  | "consultDate"
+  | "serviceCategoryRaw"
+  | "outcomeRaw"
+  | "providerRaw"
+  | "quoteAmountCents"
+  | "bookedRaw"
+  | "completedRaw"
+>;
+
+export type StagedTransactionRow = AdapterFields<
+  typeof stagedTransactions.$inferInsert,
+  | "sourceIdentity"
+  | "patientSourceIdentity"
+  | "transactionDate"
+  | "serviceCategoryRaw"
+  | "amountCents"
 >;
 
 export type StagedRowByEntity = {
@@ -55,6 +77,7 @@ export type StagedRowByEntity = {
   appointments: StagedAppointmentRow;
   inquiries: StagedInquiryRow;
   consults: StagedConsultRow;
+  transactions: StagedTransactionRow;
 };
 
 /**

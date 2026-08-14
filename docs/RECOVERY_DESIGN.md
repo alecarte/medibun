@@ -55,8 +55,13 @@ Experience DB (Drizzle migrations, A6/B2 discipline):
   Medplum `Patient` id once promoted (identity promotion is the _only_ Medplum write ingestion
   makes; org-tagged; deduped by name+DOB+phone with a manual-merge queue for collisions —
   identity is durable from day one, per the platform plan).
-- `service_categories` — code, display, expected_return_interval_days, typical_ticket_cents
-  (financial config; feeds segmentation + report math).
+- `service_categories` — code, display, expected_return_interval_days, typical_ticket_cents,
+  ticket_basis (financial config; feeds segmentation + report math, and the basis marker is what
+  the report's methodology note prints).
+- `staged_transactions` (**proposed at the R2a walkthrough**) — the revenue export's rows:
+  derived row identity, patient source id, date, raw category, amount in cents. Dormancy's
+  primary signal is the last _paid_ visit per patient per category, so these rows are queried,
+  not averaged once (review log, 2026-08-14). No line-item description column, ever.
 - `campaigns` — pool type, practice org, cadence config, attribution_window_days,
   holdout_pct, status; **pool snapshot + holdout assignment are immutable at enrollment**.
 - `enrollments` — (campaign, patient) with state (§4), holdout flag, exclusion reason.
@@ -158,6 +163,35 @@ campaign-builder UI · automation levels above approve-every-touch · external-c
 
 ## Review log
 
+- 2026-08-14 — **R2a built, at the B2 gate: §3's schema, corrected by R0 (PENDING Alec's
+  walkthrough + merge).** Migration `0004` carries what R2 segmentation needs and nothing else:
+  **`service_categories`** as designed here (code slugged from 4D's own coded Category taxonomy,
+  display verbatim, `expected_return_interval_days` **hand-set** — clinical-cadence judgment,
+  never derived, and null for a category that defines no dormancy such as retail —
+  `typical_ticket_cents` null until seeded, plus a `ticket_basis` methodology marker so the Leak
+  Report can state where each number came from); the **R0 corrections** to `staged_appointments`
+  (no patient id, no status in the real export → both nullable, name+DOB+phone staged as the
+  roster join keys) and `staged_consults` (Conversion By Provider: name only, quote number as row
+  identity, a date not an instant, quoted dollars, booked/completed as raw labels); and
+  `staged_patients.spend_cents` + `phone_type`. Allergy/Description remain excluded by
+  construction — no column exists for them.
+  **The decision this walkthrough is really for: `staged_transactions`.** The 2026-08-14 entry
+  below parked "rather than a new staged-transactions table, compute per-category averages
+  locally" — and the same day's finding that **dormancy computes primarily from Revenue rows**
+  (last _paid_ visit per patient per category) makes those rows a queryable input, not a
+  statistic. So the table is proposed here: derived row identity (the Revenue CSV has no row id —
+  sha256 of the normalized identifying fields plus an occurrence suffix, owned by the adapter),
+  patient id (R0 win (a)), date, raw category, amount in cents (negative = refund), and
+  **deliberately no line-item description** — that column is operator-typed and can carry
+  visit-reason-adjacent text, so it is excluded by construction like Allergy/Description.
+  Declining the table means dormancy falls back to the appointment export alone, which has no
+  status column. Verified on synthetic fixtures through the PGlite round-trip suites; the 4D
+  header maps stay provisional (the report-layout normalization pre-pass and the derived
+  identities are the next PR). Carried in: the `*_raw` allow-list verdict — per security review
+  2026-08-14 a **blocking precondition on the first non-synthetic import** (before any real
+  export is staged, Alec confirms per `*_raw` column that the 4D field is a coded label;
+  free-text columns get an allow-list in the adapter map, not verbatim staging) — and
+  import-actor attribution (§7 checklist).
 - 2026-08-14 — **R0 CLOSED (Alec).** The two remaining items resolved: **(1)** the Non-VIP
   filter is moot — Handal has no patients marked VIP, so the 22,541-row Patient Export is the
   full roster; no re-pull needed. **(2)** Conversion By Provider CSV header received: consult

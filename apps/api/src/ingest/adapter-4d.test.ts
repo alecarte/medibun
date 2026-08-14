@@ -28,9 +28,21 @@ const INQUIRY_HEADERS = [
 const CONSULT_HEADERS = [
   "consult_id",
   "patient_id",
-  "consult_datetime",
+  "patient_name",
+  "consult_date",
   "service_category",
   "outcome",
+  "provider",
+  "quote_amount",
+  "booked",
+  "completed",
+];
+const TRANSACTION_HEADERS = [
+  "transaction_id",
+  "patient_id",
+  "transaction_date",
+  "category",
+  "amount",
 ];
 
 /** Synthetic patient row: obviously-fake identity, birth date assembled from parts. */
@@ -51,6 +63,7 @@ describe("4D adapter — contract", () => {
       "consults",
       "inquiries",
       "patients",
+      "transactions",
     ]);
   });
 
@@ -241,15 +254,84 @@ describe("4D adapter — appointments", () => {
     }
   });
 
-  it("rejects a row missing the staging-side patient join key", () => {
-    const content = csvFile(APPOINTMENT_HEADERS, [
-      ["a-1", "", ymdhm(2026, 7, 15, 14, 30), "Completed", "Injectables", "Dr Fakeman"],
-    ]);
+  // R0: the real Detailed Appointment List carries NO patient id and NO status column —
+  // the roster join runs on name+DOB+phone, so neither may be a required field.
+  it("stages a row with no patient id and no status, keeping the roster join keys", () => {
+    const content = csvFile(
+      ["appointment_id", "start_datetime", "patient_name", "dob", "phone", "service_category"],
+      [
+        [
+          "a-1",
+          ymdhm(2026, 7, 15, 14, 30),
+          "Testerly Fakeman",
+          ymd(1970, 4, 12),
+          "555-0100",
+          "Injectables",
+        ],
+      ],
+    );
 
     const { rows, rejects } = adapter.parse("appointments", content);
 
+    expect(rejects).toEqual([]);
+    expect(rows[0]).toMatchObject({
+      sourceIdentity: "a-1",
+      patientSourceIdentity: null,
+      statusRaw: null,
+      patientName: "Testerly Fakeman",
+      dob: ymd(1970, 4, 12),
+      phone: "555-0100",
+    });
+  });
+});
+
+describe("4D adapter — transactions", () => {
+  it("parses paid rows, reading dollars as integer cents", () => {
+    const content = csvFile(TRANSACTION_HEADERS, [
+      ["t-1", "p-1", ymd(2026, 7, 15), "Injectables", "$1,234.56"],
+      ["t-2", "", ymd(2026, 7, 16), "Garments", "89"],
+    ]);
+
+    const { rows, rejects } = adapter.parse("transactions", content);
+
+    expect(rejects).toEqual([]);
+    expect(rows).toEqual([
+      {
+        sourceIdentity: "t-1",
+        patientSourceIdentity: "p-1",
+        transactionDate: ymd(2026, 7, 15),
+        serviceCategoryRaw: "Injectables",
+        amountCents: 123_456,
+      },
+      // A non-patient row stages with a null join key rather than being lost.
+      {
+        sourceIdentity: "t-2",
+        patientSourceIdentity: null,
+        transactionDate: ymd(2026, 7, 16),
+        serviceCategoryRaw: "Garments",
+        amountCents: 8_900,
+      },
+    ]);
+  });
+
+  it("keeps a refund negative rather than reading it as zero", () => {
+    const content = csvFile(TRANSACTION_HEADERS, [
+      ["t-1", "p-1", ymd(2026, 7, 15), "Injectables", "-250.00"],
+    ]);
+
+    expect(adapter.parse("transactions", content).rows[0]?.amountCents).toBe(-25_000);
+  });
+
+  it("rejects an unreadable amount rather than staging a zero", () => {
+    const content = csvFile(TRANSACTION_HEADERS, [
+      ["t-1", "p-1", ymd(2026, 7, 15), "Injectables", "n/a"],
+    ]);
+
+    const { rows, rejects } = adapter.parse("transactions", content);
+
     expect(rows).toEqual([]);
-    expect(rejects[0]?.reason).toContain("patient_id");
+    expect(rejects[0]?.reason).toContain("amount");
+    expect(rejects[0]?.reason).not.toContain("n/a");
   });
 });
 
@@ -273,9 +355,22 @@ describe("4D adapter — inquiries and consults", () => {
     });
   });
 
-  it("parses consults", () => {
+  // R0: the Conversion By Provider CSV carries a patient NAME and a date (no id, no
+  // time) — the name-join happens at query time, so the id column stays null here.
+  it("parses consults by name and date, with the quoted dollars as cents", () => {
     const content = csvFile(CONSULT_HEADERS, [
-      ["c-1", "p-1", ymdhm(2026, 7, 15, 16, 45), "Surgical", "Not booked"],
+      [
+        "c-1",
+        "",
+        "Testerly Fakeman",
+        ymd(2026, 7, 15),
+        "Surgical",
+        "Not booked",
+        "Dr Fakeman",
+        "$7,500.00",
+        "No",
+        "Yes",
+      ],
     ]);
 
     const { rows, rejects } = adapter.parse("consults", content);
@@ -283,11 +378,27 @@ describe("4D adapter — inquiries and consults", () => {
     expect(rejects).toEqual([]);
     expect(rows[0]).toEqual({
       sourceIdentity: "c-1",
-      patientSourceIdentity: "p-1",
-      consultAt: new Date("2026-07-15T20:45:00.000Z"),
+      patientSourceIdentity: null,
+      patientName: "Testerly Fakeman",
+      consultDate: ymd(2026, 7, 15),
       serviceCategoryRaw: "Surgical",
       outcomeRaw: "Not booked",
+      providerRaw: "Dr Fakeman",
+      quoteAmountCents: 750_000,
+      bookedRaw: "No",
+      completedRaw: "Yes",
     });
+  });
+
+  it("rejects a consult row with no patient name — the only join key it has", () => {
+    const content = csvFile(CONSULT_HEADERS, [
+      ["c-1", "", "", ymd(2026, 7, 15), "Surgical", "Not booked", "Dr Fakeman", "", "", ""],
+    ]);
+
+    const { rows, rejects } = adapter.parse("consults", content);
+
+    expect(rows).toEqual([]);
+    expect(rejects[0]?.reason).toContain("patient_name");
   });
 });
 

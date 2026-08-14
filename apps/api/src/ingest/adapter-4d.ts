@@ -11,6 +11,7 @@ import {
   type StagedInquiryRow,
   type StagedPatientRow,
   type StagedRowByEntity,
+  type StagedTransactionRow,
 } from "./types.js";
 import type { StagedEntity } from "../db/schema.js";
 
@@ -21,7 +22,11 @@ import type { StagedEntity } from "../db/schema.js";
  *
  * The header names here are PROVISIONAL, derived from §2's shopping list; headers are
  * matched case-insensitively after trimming, unmapped columns are ignored, and an
- * optional column the export omits stages as null.
+ * optional column the export omits stages as null. R0 has since recorded the real
+ * exports — report-layout dumps needing a normalization pre-pass, with row identities
+ * the adapter must DERIVE for the files that carry none — and that work lands in the
+ * next PR; the maps below carry only R2a's schema fallout (nullable join keys, dates
+ * where the export has no time, the transactions map).
  *
  * Two failure modes, deliberately different: a file the adapter cannot read at all
  * (missing required column, broken quoting) throws SourceFileError and stages nothing;
@@ -66,6 +71,19 @@ function calendarDate(value: string): string | undefined {
     return undefined;
   }
   return `${year}-${pad(month)}-${pad(day)}`;
+}
+
+/** Money written as dollars ("1234.56", "$1,234.56", "-250.00" for a refund) as integer
+ *  cents, or undefined if it is not a money amount at all. A value we cannot read is a
+ *  rejected row, never a zero: a silent zero understates the leak. */
+function moneyCents(value: string): number | undefined {
+  const match = /^(-?)\$?(\d+|\d{1,3}(?:,\d{3})+)(?:\.(\d{1,2}))?$/.exec(value.replaceAll(" ", ""));
+  if (!match) {
+    return undefined;
+  }
+  const cents =
+    Number(match[2]!.replaceAll(",", "")) * 100 + Number((match[3] ?? "").padEnd(2, "0"));
+  return match[1] === "-" ? -cents : cents;
 }
 
 /** A practice-local wall time as the instant it names. The export carries no offset —
@@ -113,6 +131,13 @@ const dateField = (column: string, required: boolean): Field<string> => ({
   read: calendarDate,
 });
 
+const centsField = (column: string, required: boolean): Field<number> => ({
+  column,
+  required,
+  expects: "a dollar amount",
+  read: moneyCents,
+});
+
 const instantField = (column: string, timeZone: string): Field<Date> => ({
   column,
   required: true,
@@ -133,9 +158,14 @@ function columnMaps(timeZone: string): EntityMaps {
   };
   const appointments: EntityMap<StagedAppointmentRow> = {
     sourceIdentity: text("appointment_id", true),
-    patientSourceIdentity: text("patient_id", true),
+    // R0: the real export carries neither a patient id nor a status — the roster join
+    // runs on the name/DOB/phone below, so none of the four may be required.
+    patientSourceIdentity: text("patient_id", false),
+    patientName: text("patient_name", false),
+    dob: dateField("dob", false),
+    phone: text("phone", false),
     startAt: instantField("start_datetime", timeZone),
-    statusRaw: text("status", true),
+    statusRaw: text("status", false),
     serviceCategoryRaw: text("service_category", false),
     providerRaw: text("provider", false),
   };
@@ -151,12 +181,26 @@ function columnMaps(timeZone: string): EntityMaps {
   };
   const consults: EntityMap<StagedConsultRow> = {
     sourceIdentity: text("consult_id", true),
-    patientSourceIdentity: text("patient_id", true),
-    consultAt: instantField("consult_datetime", timeZone),
+    // R0: the Conversion By Provider export names the patient and nothing else — the
+    // id stays null at import and the name-join runs at query time.
+    patientSourceIdentity: text("patient_id", false),
+    patientName: text("patient_name", true),
+    consultDate: dateField("consult_date", true),
     serviceCategoryRaw: text("service_category", false),
     outcomeRaw: text("outcome", false),
+    providerRaw: text("provider", false),
+    quoteAmountCents: centsField("quote_amount", false),
+    bookedRaw: text("booked", false),
+    completedRaw: text("completed", false),
   };
-  return { patients, appointments, inquiries, consults };
+  const transactions: EntityMap<StagedTransactionRow> = {
+    sourceIdentity: text("transaction_id", true),
+    patientSourceIdentity: text("patient_id", false),
+    transactionDate: dateField("transaction_date", true),
+    serviceCategoryRaw: text("category", false),
+    amountCents: centsField("amount", true),
+  };
+  return { patients, appointments, inquiries, consults, transactions };
 }
 
 /** csv-parse output with `info` + `raw`: the fields, the line number, and the verbatim
@@ -237,7 +281,7 @@ export function createFourDAdapter(timeZone: string): SourceAdapter {
 
   return {
     sourceSystem: FOUR_D_SOURCE_SYSTEM,
-    entities: ["patients", "appointments", "inquiries", "consults"],
+    entities: ["patients", "appointments", "inquiries", "consults", "transactions"],
 
     parse<E extends StagedEntity>(entity: E, content: string): ParseResult<E> {
       const map = maps[entity];

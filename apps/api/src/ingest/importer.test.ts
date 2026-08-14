@@ -24,6 +24,25 @@ const APPOINTMENT_HEADERS = [
   "service_category",
   "provider",
 ];
+const CONSULT_HEADERS = [
+  "consult_id",
+  "patient_id",
+  "patient_name",
+  "consult_date",
+  "service_category",
+  "outcome",
+  "provider",
+  "quote_amount",
+  "booked",
+  "completed",
+];
+const TRANSACTION_HEADERS = [
+  "transaction_id",
+  "patient_id",
+  "transaction_date",
+  "category",
+  "amount",
+];
 
 const roster = (rows: readonly (readonly string[])[]): string => csvFile(PATIENT_HEADERS, rows);
 const patientRow = (id: string, first: string, birth: string) => [
@@ -52,6 +71,8 @@ beforeAll(async () => {
 beforeEach(async () => {
   await db.delete(schema.stagedPatients);
   await db.delete(schema.stagedAppointments);
+  await db.delete(schema.stagedConsults);
+  await db.delete(schema.stagedTransactions);
   await db.delete(schema.imports);
   importer = createImportService({ db });
 });
@@ -260,5 +281,107 @@ describe("import service — other entities", () => {
       importId: summary.importId,
     });
     expect(row!.startAt.toISOString()).toBe("2026-07-15T18:30:00.000Z");
+  });
+
+  // R0: the real appointment export has no patient id and no status column, so both
+  // columns must accept null and the roster join keys must survive the round trip.
+  it("stages an appointment that carries roster join keys instead of a patient id", async () => {
+    await importer.runImport({
+      adapter,
+      entity: "appointments",
+      fileName: "appointments.csv",
+      content: csvFile(
+        ["appointment_id", "start_datetime", "patient_name", "dob", "phone", "service_category"],
+        [
+          [
+            "a-2",
+            ymdhm(2026, 7, 16, 9, 0),
+            "Testerly Fakeman",
+            ymd(1970, 4, 12),
+            "555-0100",
+            "Injectables",
+          ],
+        ],
+      ),
+    });
+
+    const [row] = await db
+      .select()
+      .from(schema.stagedAppointments)
+      .where(eq(schema.stagedAppointments.sourceIdentity, "a-2"));
+    expect(row).toMatchObject({
+      patientSourceIdentity: null,
+      statusRaw: null,
+      patientName: "Testerly Fakeman",
+      dob: ymd(1970, 4, 12),
+      phone: "555-0100",
+    });
+  });
+
+  it("stages consults by name and date with the quoted dollars as cents", async () => {
+    const summary = await importer.runImport({
+      adapter,
+      entity: "consults",
+      fileName: "conversion.csv",
+      content: csvFile(CONSULT_HEADERS, [
+        [
+          "q-1",
+          "",
+          "Testerly Fakeman",
+          ymd(2026, 7, 15),
+          "Surgical",
+          "Not booked",
+          "Dr Fakeman",
+          "7500.00",
+          "No",
+          "Yes",
+        ],
+      ]),
+    });
+
+    const [row] = await db.select().from(schema.stagedConsults);
+    expect(row).toMatchObject({
+      sourceIdentity: "q-1",
+      patientSourceIdentity: null,
+      patientName: "Testerly Fakeman",
+      consultDate: ymd(2026, 7, 15),
+      serviceCategoryRaw: "Surgical",
+      outcomeRaw: "Not booked",
+      providerRaw: "Dr Fakeman",
+      quoteAmountCents: 750_000,
+      bookedRaw: "No",
+      completedRaw: "Yes",
+      importId: summary.importId,
+    });
+  });
+
+  it("stages transactions, keeping a refund negative and reconciling a re-import", async () => {
+    const rows = (amount: string) =>
+      csvFile(TRANSACTION_HEADERS, [
+        ["t-1", "p-1", ymd(2026, 7, 15), "Injectables", amount],
+        ["t-2", "", ymd(2026, 7, 16), "Garments", "-89.00"],
+      ]);
+    const runTransactions = (content: string) =>
+      importer.runImport({ adapter, entity: "transactions", fileName: "revenue.csv", content });
+
+    const first = await runTransactions(rows("1234.56"));
+    const second = await runTransactions(rows("1300.00"));
+
+    expect(first).toMatchObject({ stagedCount: 2, insertedCount: 2, updatedCount: 0 });
+    expect(second).toMatchObject({ stagedCount: 2, insertedCount: 0, updatedCount: 2 });
+    const staged = await db.select().from(schema.stagedTransactions);
+    expect(staged).toHaveLength(2);
+    expect(staged.find((r) => r.sourceIdentity === "t-1")).toMatchObject({
+      patientSourceIdentity: "p-1",
+      transactionDate: ymd(2026, 7, 15),
+      serviceCategoryRaw: "Injectables",
+      amountCents: 130_000,
+      importId: second.importId,
+    });
+    // A refund is negative money, not a missing row.
+    expect(staged.find((r) => r.sourceIdentity === "t-2")).toMatchObject({
+      patientSourceIdentity: null,
+      amountCents: -8_900,
+    });
   });
 });
