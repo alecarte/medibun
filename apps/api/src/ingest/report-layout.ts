@@ -23,15 +23,17 @@ import { SourceFileError, type DeclaredTotal } from "./types.js";
  *
  *   - blank row → furniture;
  *   - a row matching two or more of the entity's known column names → a reprinted
- *     header row;
- *   - any cell reading `Total … = N` → a declared total, furniture;
+ *     header row (the same two-column bar the real header row is located by);
+ *   - a row of at most two filled cells, one reading `Total … = N` → a declared total,
+ *     furniture (a FULL row may legitimately be named "Total Body Lift: 1");
  *   - exactly ONE non-empty cell → the report's own furniture, resolved in this order:
  *     a calendar date is a DAY SEPARATOR; a row whose run of lone/blank neighbours ends
  *     at a reprinted header row is a page-break TITLE (adjacency is the only honest
  *     signal — the text is not); anything else is a SECTION row whose label becomes
  *     group context;
- *   - a row whose patient column is blank or "#", or that carries a "Happening" cell →
- *     a non-patient calendar block (R0 (iv)), furniture;
+ *   - a row whose PATIENT COLUMN is blank or holds a non-patient marker ("#",
+ *     "Happening") → a non-patient calendar block (R0 (iv)), furniture; a marker in any
+ *     other column is just a value, and the row stays;
  *   - everything else is a data row.
  *
  * Known limits, to be pinned at the first real local run: a page-break block whose
@@ -97,6 +99,10 @@ type CsvItem = { record: string[]; raw: string; info: { lines: number } };
  *  rows; scanning further would let a data row win the match on a short header. */
 const HEADER_SCAN_ROWS = 50;
 
+/** How many of the entity's columns a row must name to BE the header row — and the same
+ *  bar a reprinted header row in the body is held to. */
+const HEADER_MIN_COLUMNS = 2;
+
 const key = (value: string): string => value.trim().toLowerCase();
 
 const ISO_DATE = /^(\d{4})-(\d{1,2})-(\d{1,2})$/;
@@ -107,6 +113,9 @@ const DAY_SEPARATOR = /^(?:[a-z]+,?\s+)?(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\/\d{1,2}\
 const TIME_ONLY = /^\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\.?m\.?)?$/i;
 /** `Total X = N`, `Total: 1,204` — the file's own count of what it printed. */
 const DECLARED_TOTAL = /^total\b(.*?)[=:]\s*([\d,]+)\s*$/i;
+/** How many cells a total row may fill and still be furniture: the count, and at most a
+ *  label beside it. Anything fuller is a data row that merely SAYS "total". */
+const TOTAL_MAX_CELLS = 2;
 /** A section row may label itself ("Provider: Dr Fakeman"); the label is not the group. */
 const SECTION_LABEL = /^[^:]{0,20}:\s*/;
 /** 4D's non-patient calendar blocks (R0 (iv)) — exact markers pinned at the first run. */
@@ -172,10 +181,13 @@ export function normalizeReport(content: string, spec: LayoutSpec): NormalizedFi
       headerAt = at;
     }
   });
-  if (headerAt === -1) {
-    // Nothing to name: printing a candidate row's cells would print source VALUES.
+  // Two known columns, the same bar the body classifier holds a reprinted header to: a
+  // preamble label/value row ("Patient", <a name>) names ONE, and accepting it would make
+  // the error below quote a source VALUE. Nothing here is safe to name.
+  if (best < HEADER_MIN_COLUMNS) {
     throw new SourceFileError(
-      `no header row found in the first ${HEADER_SCAN_ROWS} rows of the file`,
+      `no header row found in the first ${HEADER_SCAN_ROWS} rows of the file ` +
+        `(a header row must name at least ${HEADER_MIN_COLUMNS} of the entity's columns)`,
     );
   }
 
@@ -195,10 +207,13 @@ export function normalizeReport(content: string, spec: LayoutSpec): NormalizedFi
     .map((column) => column.canonical);
   if (missing.length > 0) {
     // Column NAMES are safe to print (they are the report's own vocabulary, never a
-    // patient value) and they are exactly what a header-spelling fix needs.
+    // patient value) and they are exactly what a header-spelling fix needs. Only cells
+    // that ARE a known column name print: whatever else the accepted row holds — the
+    // value beside a preamble label, an unmapped column's contents — never can.
+    const known = new Set(spec.columns.flatMap((column) => column.names));
     throw new SourceFileError(
       `file is missing required columns: ${missing.join(", ")}; ` +
-        `the header row found reads: ${headers.filter((h) => h !== "").join(", ")}`,
+        `the header row found names: ${headers.filter((h) => known.has(h)).join(", ")}`,
     );
   }
 
@@ -213,10 +228,13 @@ export function normalizeReport(content: string, spec: LayoutSpec): NormalizedFi
     if (filled.length === 0) {
       return "blank" as const;
     }
-    if (headerScore(item.record, spec.columns) >= 2) {
+    if (headerScore(item.record, spec.columns) >= HEADER_MIN_COLUMNS) {
       return "header" as const;
     }
-    if (cells.some((cell) => DECLARED_TOTAL.test(cell))) {
+    // Furniture-SHAPED only: a total row is a count on an otherwise empty row. A revenue
+    // line item may be CALLED "Total Body Lift: 1", and swallowing that populated row
+    // would delete a real record invisibly (furniture is counted, never rejected).
+    if (filled.length <= TOTAL_MAX_CELLS && cells.some((cell) => DECLARED_TOTAL.test(cell))) {
       return "total" as const;
     }
     return filled.length === 1 ? ("lone" as const) : ("data" as const);
@@ -272,9 +290,11 @@ export function normalizeReport(content: string, spec: LayoutSpec): NormalizedFi
     if (carry.patient !== undefined) {
       // A calendar block ("Happening", patient "#") is the schedule's own furniture, not
       // a patient the roster join could ever resolve — structure, never a reject (R0).
+      // The PATIENT column alone decides: read anywhere else the markers would silently
+      // delete a real row, and dropped rows are counted, never rejected.
       const patientAt = columnAt.get(carry.patient);
       const patient = patientAt === undefined ? "" : (cells[patientAt] ?? "");
-      if (patient === "" || cells.some((cell) => NON_PATIENT_MARKERS.has(cell.toLowerCase()))) {
+      if (patient === "" || NON_PATIENT_MARKERS.has(patient.toLowerCase())) {
         layoutRowCount += 1;
         return;
       }

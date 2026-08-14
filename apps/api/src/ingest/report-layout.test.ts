@@ -29,6 +29,10 @@ const SPEC: LayoutSpec = {
   carry: { section: "provider", day: "date/time", patient: "patient" },
 };
 
+/** Synthetic values a header-location failure must never print. */
+const PATIENT_VALUE = "Zzyzxine Quibbleworth";
+const PROVIDER_VALUE = "Dr Nowhereman";
+
 /** The preamble every 4D export opens with: practice, report title, filters, range. */
 const PREAMBLE = [
   sparseRow(WIDTH, { 0: "Fakeman Plastic Surgery" }),
@@ -90,6 +94,49 @@ describe("report layout — locating the real header row", () => {
     const content = reportFile([], ["alpha", "beta"], [["1", "2"]]);
 
     expect(() => normalizeReport(content, SPEC)).toThrow(SourceFileError);
+  });
+
+  // A preamble label/value row names ONE column and carries a patient value beside it.
+  // One column is not a header row: accepting it would make that value the error's text.
+  it("refuses a candidate row that names only one of the entity's columns", () => {
+    const content = reportFile(
+      [["Patient", PATIENT_VALUE]],
+      // The real header row, misspelled past recognition — the case that lets a
+      // preamble row win the scan at all.
+      ["Date/Tyme", "Providr", "Patinet", "D.O.B.", "Appt Typ"],
+      [["09:00", "Dr Fakeman", PATIENT_VALUE, "", "Injectables"]],
+    );
+
+    expect(() => normalizeReport(content, SPEC)).toThrow(SourceFileError);
+    try {
+      normalizeReport(content, SPEC);
+    } catch (err) {
+      const message = (err as Error).message;
+      expect(message).toContain("no header row found");
+      expect(message.toLowerCase()).not.toContain(PATIENT_VALUE.toLowerCase());
+    }
+  });
+
+  // The same preamble row with a second label ties the misspelled header row on score,
+  // and ties go to the earliest row — so it wins, and its VALUES must not print.
+  it("prints only recognized column names from the row it accepted", () => {
+    const content = reportFile(
+      [["Patient", PATIENT_VALUE, "Provider", PROVIDER_VALUE]],
+      ["Date/Tyme", "Providr", "Patinet", "D.O.B.", "Appt Typ"],
+      [["09:00", PROVIDER_VALUE, PATIENT_VALUE, "", "Injectables"]],
+    );
+
+    expect(() => normalizeReport(content, SPEC)).toThrow(SourceFileError);
+    try {
+      normalizeReport(content, SPEC);
+    } catch (err) {
+      const message = (err as Error).message;
+      expect(message).toContain("date/time");
+      expect(message).toContain("patient");
+      for (const value of [PATIENT_VALUE, PROVIDER_VALUE]) {
+        expect(message.toLowerCase()).not.toContain(value.toLowerCase());
+      }
+    }
   });
 
   it("fails on unreadable CSV with the parser code only", () => {
@@ -179,6 +226,22 @@ describe("report layout — classifying the report's furniture", () => {
     expect(file.declaredTotals[0]?.label).toBe("Appointments");
   });
 
+  // A revenue line item can be CALLED "Total Body Lift" — furniture is a shape (a lone
+  // count on an otherwise empty row), never a phrase, or a real row vanishes uncounted.
+  it("keeps a populated row whose text merely reads like a total", () => {
+    const content = reportFile(PREAMBLE, HEADERS, [
+      dataRow("09:00", "Testerly F", "Dr Fakeman", "Total Body Lift: 1"),
+      sparseRow(WIDTH, { 0: "Total Appointments = 1" }),
+    ]);
+
+    const file = normalizeReport(content, SPEC);
+
+    expect(file.rows).toHaveLength(1);
+    expect(cellsOf(file.rows[0]!.record, file.columnAt).patient).toBe("Testerly F");
+    // Only the furniture row declares a total; the data row contributes none.
+    expect(file.declaredTotals).toEqual([{ label: "Appointments", count: 1 }]);
+  });
+
   it("drops non-patient calendar blocks as structure rather than rejecting them", () => {
     const content = reportFile(PREAMBLE, HEADERS, [
       dataRow("09:00", "Testerly F"),
@@ -191,6 +254,21 @@ describe("report layout — classifying the report's furniture", () => {
 
     expect(file.rows).toHaveLength(1);
     expect(file.layoutRowCount).toBe(4 + 3);
+  });
+
+  // The markers mean "this block names no patient" — read anywhere else they silently
+  // delete a real appointment, so only the PATIENT column is consulted.
+  it("reads the non-patient markers in the patient column only", () => {
+    const content = reportFile(PREAMBLE, HEADERS, [
+      sparseRow(WIDTH, { 0: "09:00", 2: "Testerly F", 4: "#" }),
+      dataRow("10:00", ""),
+    ]);
+
+    const file = normalizeReport(content, SPEC);
+
+    expect(file.rows.map((r) => cellsOf(r.record, file.columnAt).patient)).toEqual(["Testerly F"]);
+    // Only the blank-patient row is furniture.
+    expect(file.layoutRowCount).toBe(4 + 1);
   });
 
   it("skips blank rows and counts every skipped row exactly once", () => {

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { createFourDAdapter, NEVER_MAPPED, UnknownTimeZoneError } from "./adapter-4d.js";
+import {
+  createFourDAdapter,
+  fourDColumnNames,
+  NEVER_MAPPED,
+  text,
+  UnknownTimeZoneError,
+} from "./adapter-4d.js";
 import { csvRow, mdy, reportFile, sparseRow, ymd, ymdhm } from "./test-fixtures.js";
 import { SourceFileError } from "./types.js";
 
@@ -409,6 +415,30 @@ describe("4D adapter — appointments (Detailed Appointment List)", () => {
     expect(adapter.parse("appointments", rowFor("Dr Fakeman")).rows[0]?.sourceIdentity).not.toBe(
       adapter.parse("appointments", rowFor("Dr Otherly")).rows[0]?.sourceIdentity,
     );
+  });
+});
+
+/**
+ * The two-store rule enforced BY CONSTRUCTION (R0 (i)): no map may claim an excluded
+ * column, and one that tried could not even be built.
+ */
+describe("4D adapter — columns excluded by construction", () => {
+  it("claims no NEVER_MAPPED column or alias, in any entity's map", () => {
+    const columns = fourDColumnNames(TZ);
+
+    // Every entity 4D exports is inspected — a new one cannot slip past this test.
+    expect(Object.keys(columns).sort()).toEqual([...adapter.entities].sort());
+    for (const [entity, names] of Object.entries(columns)) {
+      const claimed = names.filter((name) => NEVER_MAPPED.includes(name));
+      expect(claimed, entity).toEqual([]);
+    }
+  });
+
+  it("cannot construct a field that claims an excluded column, as name or alias", () => {
+    expect(() => text("appt type", false, ["description"])).toThrow(/description/);
+    expect(() => text("allergy", false)).toThrow(/allergy/);
+    // Spelling and spacing are normalized the same way header matching is.
+    expect(() => text("Report Tag", false)).toThrow(/report tag/);
   });
 });
 
