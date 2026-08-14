@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
 
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
@@ -183,6 +183,9 @@ export async function runLeakReportCli(deps: {
 
   try {
     writeFileSync(outPath, renderLeakReport(data), { mode: 0o600 });
+    // mode is honored on CREATE only — overwriting a pre-existing world-readable file
+    // would silently keep its looser permissions, so re-assert after every write.
+    chmodSync(outPath, 0o600);
   } catch (err) {
     throw new UsageError(`could not write the report (${errorCodeOf(err) ?? "unwritable"})`);
   }

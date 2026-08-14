@@ -123,7 +123,11 @@ release rule stated there and in `security.md`), recorded in this review log.
 **import actor attribution** — `imports` records what ran, not who ran it, which is tolerable
 for one operator on one machine but not once an endpoint, a second person, or a hosted stack can
 trigger an import (an actor column lands before any of those, per CLAUDE.md's "every PHI write
-attributable to an authenticated principal").
+attributable to an authenticated principal") · **read-path attribution** (security review,
+2026-08-14) — the R2c CLIs (`categories:seed`, `report:leak`) read staged identity/contact
+columns and leave no access record; same deferral, same bound as the import-actor item: an
+access ledger (or equivalent attribution) lands before any endpoint, second operator, or
+hosted stack can trigger a read.
 
 ## 8. Write-back at Handal (gate B6 — **decided: (a)**, Alec 2026-08-13, V1 §12)
 

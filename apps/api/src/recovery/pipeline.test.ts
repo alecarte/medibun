@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -329,5 +329,18 @@ describe("the leak report", () => {
     // The terminal gets the basename, never the directory a practice's file sits in.
     expect(out.join("\n")).toContain(basename(join(dir, "leak-report.html")));
     expect(out.join("\n")).not.toContain(dir);
+  });
+
+  it("re-asserts owner-only permissions when overwriting an existing report", async () => {
+    // writeFileSync's mode applies on CREATE only — a pre-existing world-readable file
+    // would otherwise keep its looser permissions across a re-run.
+    const stalePath = join(dir, "stale-report.html");
+    writeFileSync(stalePath, "stale");
+    chmodSync(stalePath, 0o644);
+
+    await runLeakReportCli({ argv: ["--out", stalePath], db, out: () => {} });
+
+    expect(statSync(stalePath).mode & 0o777).toBe(0o600);
+    expect(readFileSync(stalePath, "utf8")).not.toContain("stale");
   });
 });
