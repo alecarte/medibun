@@ -163,6 +163,25 @@ campaign-builder UI · automation levels above approve-every-touch · external-c
 
 ## Review log
 
+- 2026-08-14 — **R2b built: the report-layout pre-pass; the 4D maps are now the real
+  exports.** The R0→R1 correction is in: `report-layout.ts` normalizes 4D's report dumps —
+  locates the real header row, classifies furniture STRUCTURALLY (never by title text, per
+  R0), carries provider/day group context down onto data rows, and captures the file's own
+  `Total X = N` so the CLI reconciles every run against the source's own count (counts only,
+  mismatch is a warning). Furniture is counted, never rejected. The column maps now carry the
+  four real exports (Patient Export, Detailed Appointment List, Conversion By Provider,
+  Revenue by Staff); `inquiries` left the adapter's entity list (infeasible at Handal — the
+  staging table stays); `Allergy`, `Description`, the revenue line-item text, and `Report
+Tag` are excluded by construction (`NEVER_MAPPED`, pinned by test — the two-store rule's
+  live test, R0 (i)). The two exports with no row id (appointments, revenue) get DERIVED
+  identities — sha256 over normalized identifying fields + an occurrence suffix for true
+  duplicates; the accepted limit (a rescheduled appointment re-imports as a new row; staging
+  never deletes) is documented in the adapter, and attribution never runs off staging rows.
+  Header-spelling posture: R0 recorded column MEANINGS, not exact strings, so matching is
+  alias-tolerant and a missing required column fails by printing the header NAMES found
+  (report vocabulary, never values) — the first §7 local run pins any mismatch as a one-line
+  map fix. Verified on synthetic report-layout fixtures; real-data verification (counts vs
+  in-file totals) runs at the first local import.
 - 2026-08-14 — **R2a built, at the B2 gate: §3's schema, corrected by R0 (PENDING Alec's
   walkthrough + merge).** Migration `0004` carries what R2 segmentation needs and nothing else:
   **`service_categories`** as designed here (code slugged from 4D's own coded Category taxonomy,

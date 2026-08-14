@@ -7,7 +7,7 @@ import type { drizzle } from "drizzle-orm/pglite";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { errorLine, runImportCli, UsageError } from "./import-cli.js";
-import { csvFile, ymd } from "./test-fixtures.js";
+import { csvFile, reportFile, ymd } from "./test-fixtures.js";
 import * as schema from "../db/schema.js";
 import { bootTestDb } from "../db/test-db.js";
 
@@ -16,7 +16,8 @@ let dir: string;
 let out: string[];
 
 const TZ = "America/New_York";
-const PATIENT_HEADERS = ["patient_id", "first_name", "last_name", "dob", "phone", "email"];
+/** R0's real Patient Export columns (aliases live in adapter-4d.ts). */
+const PATIENT_HEADERS = ["Id", "First Name", "Last Name", "DOB", "Phone", "Email"];
 
 /** Synthetic values distinctive enough that any leak into output is unmistakable. */
 const LEAKY = {
@@ -69,10 +70,12 @@ beforeEach(async () => {
 });
 
 describe("import CLI — arguments", () => {
-  it("refuses an unknown entity, a missing file, or a missing timezone", async () => {
+  it("refuses an unsupported entity, a missing file, or a missing timezone", async () => {
     const path = writeCsv("roster.csv", [goodRow("p-1")]);
     for (const argv of [
       ["--entity", "widgets", "--file", path, "--timezone", TZ],
+      // 4D exports no inquiries (R0) — the CLI's entity list says so up front.
+      ["--entity", "inquiries", "--file", path, "--timezone", TZ],
       ["--entity", "patients", "--timezone", TZ],
       ["--entity", "patients", "--file", path],
     ]) {
@@ -168,6 +171,48 @@ describe("import CLI — what reaches the operator", () => {
     for (const value of Object.values(LEAKY)) {
       expect(printed).not.toContain(value);
     }
+  });
+
+  // R0 win (b): the exports print their own `Total X = N`, so a run reconciles against
+  // the source with no side channel. Counts only — never a label, never a value.
+  it("checks the run against the total the file declares about itself", async () => {
+    const path = join(dir, "roster.csv");
+    writeFileSync(
+      path,
+      reportFile([["Fakeman Plastic Surgery"], ["Patient Export"]], PATIENT_HEADERS, [
+        goodRow("p-1"),
+        badRow("p-2"),
+        ["Total Patients = 2"],
+      ]),
+    );
+
+    await run(path);
+
+    const printed = out.join("\n");
+    expect(printed).toContain("file declares 2 · staged 1 + rejected 1 ✓");
+    expect(printed).toContain("3 report-layout rows skipped");
+    for (const value of Object.values(LEAKY)) {
+      expect(printed).not.toContain(value);
+    }
+  });
+
+  it("warns on a mismatch in counts alone, and does not fail the run", async () => {
+    const path = join(dir, "roster.csv");
+    writeFileSync(path, reportFile([], PATIENT_HEADERS, [goodRow("p-1"), ["Total Patients = 9"]]));
+
+    const result = await run(path);
+
+    const printed = out.join("\n");
+    expect(printed).toContain("⚠ file declares 9 · staged 1 + rejected 0 (8 unaccounted)");
+    expect(result.rejectedCount).toBe(0);
+  });
+
+  it("prints no reconciliation line when the export declares no total", async () => {
+    const path = writeCsv("roster.csv", [goodRow("p-1")]);
+
+    await run(path);
+
+    expect(out.join("\n")).not.toContain("file declares");
   });
 
   it("reduces a path-shaped input to its basename in both ledger columns", async () => {

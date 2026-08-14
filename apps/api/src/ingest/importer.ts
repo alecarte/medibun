@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { and, eq, getTableColumns, inArray, sql } from "drizzle-orm";
 import type { PgColumn, PgDatabase, PgQueryResultHKT, PgTable } from "drizzle-orm/pg-core";
 
-import type { RejectedRow, SourceAdapter } from "./types.js";
+import type { DeclaredTotal, RejectedRow, SourceAdapter } from "./types.js";
 import {
   imports,
   stagedAppointments,
@@ -58,6 +58,11 @@ export type ImportSummary = {
   readonly updatedCount: number;
   readonly rejectedCount: number;
   readonly rejects: readonly RejectedRow[];
+  /** Report-layout rows the adapter skipped (preamble, sections, totals, calendar
+   *  blocks). Not staged, not rejected — reported so the operator sees them. */
+  readonly layoutRowCount: number;
+  /** The file's own `Total X = N` rows, for the CLI's per-file reconciliation. */
+  readonly declaredTotals: readonly DeclaredTotal[];
 };
 
 export type ImportRequest<E extends StagedEntity> = {
@@ -92,7 +97,10 @@ const chunk = <T>(items: readonly T[], size: number): T[][] => {
 export function createImportService(deps: { readonly db: Db }): ImportService {
   return {
     async runImport(request) {
-      const { rows, rejects } = request.adapter.parse(request.entity, request.content);
+      const { rows, rejects, layoutRowCount, declaredTotals } = request.adapter.parse(
+        request.entity,
+        request.content,
+      );
       const table: StagingTable = STAGING_TABLES[request.entity];
       const columns: Record<string, PgColumn> = getTableColumns(table);
       const sourceSystem = request.adapter.sourceSystem;
@@ -161,6 +169,8 @@ export function createImportService(deps: { readonly db: Db }): ImportService {
           updatedCount,
           rejectedCount: rejects.length,
           rejects,
+          layoutRowCount,
+          declaredTotals,
         };
       });
     },
