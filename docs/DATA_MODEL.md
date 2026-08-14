@@ -195,26 +195,56 @@ later as its own approval-gated design.
   disputes/chargebacks force it, and never patient/diagnosis/service context in
   metadata/descriptors/customer fields.
 
-### Recovery staging (R1)
+### Recovery staging (R1, amended R2a)
 
 The ingestion half of the recovery engine, landed as experience-DB tables (full design:
-`RECOVERY_DESIGN.md` §2–3). Five tables holding **administrative and financial fields only** —
+`RECOVERY_DESIGN.md` §2–3). Tables holding **administrative and financial fields only** —
 no clinical column exists, and the engine never asks for one. That guarantee is **structural for
 every typed column and conditional for the `*_raw` ones**: `status_raw`, `service_category_raw`,
-`outcome_raw`, `channel_raw`, `provider_raw` and the inquiry `name` stage the source's own text
-verbatim, so the two-store rule holds only as long as those columns really are coded labels in
-4D. **R0 gate item:** the field-mapping assessment must confirm that; if any of them is a
-free-text field an operator can type a reason into, the adapter maps it through an **allow-list
-of known labels** (unrecognized → rejected row) instead of staging it verbatim — a change to
-`adapter-4d.ts`'s column map, not to the schema.
+`outcome_raw`, `channel_raw`, `provider_raw`, `booked_raw`/`completed_raw` and the inquiry `name`
+stage the source's own text verbatim, so the two-store rule holds only as long as those columns
+really are coded labels in 4D. **R0's signal is favorable** — the procedure/service/product menus
+are coded and the Category taxonomy carries short codes — but R0 closed without recording an
+explicit verdict, so the allow-list question stays open (carried to the R2a walkthrough): if any
+of these is a free-text field an operator can type a reason into, the adapter maps it through an
+**allow-list of known labels** (unrecognized → rejected row) instead of staging it verbatim — a
+change to `adapter-4d.ts`'s column map, not to the schema. Two source columns are meanwhile
+excluded **by construction** rather than mapped:
+the appointment export's `Allergy` (clinical) and `Description` (operator free text that can carry
+a visit reason), plus the revenue export's line-item description for the same reason. The adapter
+drops them on read; no column exists to hold them.
 
-| Table                 | Holds                                                                                                            | PHI status                                                      |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `imports`             | One row per (file, entity) import run: source system, basename, sha256, row/staged/rejected counts, rejects path | **No PHI** — counts and identifiers only                        |
-| `staged_patients`     | Source patient id, name, date of birth, phone, email, the (unused) Medplum link                                  | **PHI** — administrative identity + contact only                |
-| `staged_appointments` | Source appointment id, patient source id, start instant, raw status/category/provider labels                     | **PHI-adjacent** — times, statuses, category labels             |
-| `staged_inquiries`    | Source inquiry id, occurrence instant, raw channel/outcome, optional name + phone                                | **PHI** — contact only (an inquirer may never become a patient) |
-| `staged_consults`     | Source consult id, patient source id, consult instant, raw category/outcome labels                               | **PHI-adjacent** — times and category labels                    |
+| Table                 | Holds                                                                                                                                         | PHI status                                                      |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `imports`             | One row per (file, entity) import run: source system, basename, sha256, row/staged/rejected counts, rejects path                              | **No PHI** — counts and identifiers only                        |
+| `staged_patients`     | Source patient id, name, date of birth, phone + phone type, email, lifetime spend, the (unused) Medplum link                                  | **PHI** — administrative identity + contact + spend only        |
+| `staged_appointments` | Source/derived appointment identity, optional patient source id, name+DOB+phone join keys, start instant, raw status/category/provider labels | **PHI-adjacent** — times, statuses, category labels             |
+| `staged_inquiries`    | Source inquiry id, occurrence instant, raw channel/outcome, optional name + phone                                                             | **PHI** — contact only (an inquirer may never become a patient) |
+| `staged_consults`     | Quote number, patient **name**, consult date, raw category/outcome/provider/booked/completed labels, quoted amount                            | **PHI-adjacent** — dates, category labels, quoted dollars       |
+| `staged_transactions` | **PROPOSED (R2a):** derived row identity, optional patient source id, transaction date, raw category, amount (cents)                          | **PHI-adjacent** — dates, category labels, money                |
+| `service_categories`  | Category code + display, expected-return interval (hand-set), typical ticket + the basis it was derived from                                  | **No PHI** — financial/cadence config only                      |
+
+- **R0 corrections (R2a migration `0004`).** The real 4D exports differ from R1's provisional
+  model, and the schema follows the exports: the **appointment** export carries no patient id and
+  no status column (`patient_source_identity` and `status_raw` are nullable; `patient_name`, `dob`,
+  `phone` are the roster join keys), and the **consult** source — Conversion By Provider — carries
+  a patient _name_ only, a date rather than an instant, the quote number as its row identity, and
+  the quoted dollars (`consult_at` → `consult_date`; `patient_name` NOT NULL;
+  `patient_source_identity` nullable and null at import — the name-join runs at query time and an
+  ambiguous match is flagged for a human, never guessed). Because the migration adds NOT NULL
+  columns to `staged_consults`, it applies to an **empty** staging table — true everywhere today
+  (no import has run outside tests); a local database that already staged consults is truncated
+  before applying, never migrated around.
+- **Derived source identities.** Two exports carry no row id of their own (appointments, revenue).
+  For those the **adapter derives** `source_identity` — sha256 of the row's normalized identifying
+  fields plus an occurrence suffix that separates true duplicates — so the idempotency rule below
+  holds unchanged. Derivation is the adapter's business; the column's contract does not change.
+- **`staged_transactions` is proposed, not settled.** Dormancy computes primarily from the last
+  **paid** visit per patient per category (R0), which makes revenue rows a queryable input rather
+  than a one-off average — superseding the earlier "compute averages locally, no new table" note.
+  The table lands with this migration for Alec's walkthrough; declining it means dropping the table
+  and computing category averages into `service_categories` instead, at the cost of the dormancy
+  signal.
 
 - **Reconciliation keys.** `(source_system, source_identity)` identifies a staged row — a unique
   index on the pair, and the idempotency key below. `staged_appointments` / `staged_consults` /
@@ -232,7 +262,9 @@ of known labels** (unrecognized → rejected row) instead of staging it verbatim
 - **Times.** Source exports carry practice-local wall times with no offset, so the adapter is
   told the practice's zone explicitly and converts through the BFF's existing timezone helper.
   An unparseable time is a **rejected row**, never a silent UTC reading — a bad conversion moves
-  appointments across days and quietly corrupts segmentation.
+  appointments across days and quietly corrupts segmentation. Where an export carries a **date and
+  no time** (consults, revenue rows), the column is a `date` — inventing a midnight instant would
+  claim a precision the source does not have.
 - **Rejects.** Row-level validation failures come back to the caller as `{ line, reason, raw }`.
   The `reason` names the **column** at fault and never the value; the `raw` line reaches only the
   local `<file>.rejects.csv` the CLI writes (owner-readable). No raw source content is logged or
@@ -240,10 +272,11 @@ of known labels** (unrecognized → rejected row) instead of staging it verbatim
   human chose can itself name a patient, so nothing path-shaped is stored — same rule as
   `file_name`); it is null for a clean run, and the CLI deletes any stale rejects file before
   each run so a "clean" ledger row never sits beside the previous run's raw rows.
-- **Provisional columns.** `staged_inquiries` and `staged_consults` (and every 4D header the
-  adapter maps) are modeled from `RECOVERY_DESIGN.md` §2's shopping list, not from a real export.
-  R0's field-mapping assessment confirms or corrects them; corrections are a follow-up migration
-  at the same gate.
+- **Provisional columns.** `staged_consults` is now modeled from the real export (above);
+  `staged_inquiries` stays modeled from `RECOVERY_DESIGN.md` §2's shopping list and **unused** —
+  R0 found 4D tracks no inquiries, so that pool is parked for engagement zero. The 4D column
+  **headers** the adapter maps stay provisional in R2a: the report-layout normalization pre-pass
+  and the derived identities land in the next PR, not this migration.
 - **Attribution debt (before any HTTP surface or cloud promotion).** An `imports` row records
   _what_ ran, not _who_ ran it — acceptable while ingestion is one operator on one local machine
   (§7), but "every PHI write attributable to an authenticated principal" needs an actor column
@@ -275,6 +308,27 @@ must be verified per environment — see `docs/AUTH.md` (attribution section).
 
 ### Review log
 
+- **2026-08-14 — R0's schema corrections + the R2 config table proposed (R2a; the B2 gate's
+  second migration) — PENDING Alec's schema walkthrough and merge.** Migration `0004` ships
+  five things, none of them approved until Alec has walked the schema and merged: **(1)**
+  `service_categories` — R2's financial/cadence config (code, display, hand-set
+  expected-return interval, typical ticket + the `ticket_basis` methodology marker), no PHI;
+  **(2)** `staged_transactions` — **PROPOSED, the walkthrough's real decision**: R0 found
+  dormancy computes from the last _paid_ visit per patient per category, so revenue rows must be
+  queryable rather than averaged once and discarded (this supersedes the earlier "compute
+  averages locally instead of a new table" note); deliberately **no line-item description
+  column** — operator-typed descriptions can carry visit-reason-adjacent text, and category +
+  amount + date is all the math needs; **(3)** the `staged_appointments` corrections (nullable
+  patient id and status, name/DOB/phone roster join keys) and **(4)** the `staged_consults`
+  corrections (`consult_at` → `consult_date`, NOT NULL `patient_name`, nullable patient id,
+  provider/quote/booked/completed) — both are R0's "corrections are a follow-up migration at the
+  same gate" arriving; **(5)** `staged_patients.spend_cents` (dormant-pool value weighting) and
+  `phone_type` (R5 needs mobile-vs-home; **strikeable** at the walkthrough if staging it four
+  slices early is unwelcome). Address columns stay unstaged. Carried to the walkthrough: the
+  `*_raw` allow-list question (R0 signal favorable, no explicit verdict recorded), import-actor
+  attribution (RECOVERY_DESIGN §7 checklist), and the NOT NULL adds' empty-table assumption
+  above. The adapter's 4D **headers** are still provisional — the normalization pre-pass and the
+  derived row identities are the next PR.
 - **2026-08-13 — recovery staging tables landed (R1 merged, PR #21, Alec).** The entry below
   is resolved: Alec walked the schema and merged, which per the B2 gate's rule approves
   migration `0003` (the five staging tables). Still open from that entry: the `*_raw`

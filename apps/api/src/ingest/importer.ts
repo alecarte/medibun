@@ -10,6 +10,7 @@ import {
   stagedConsults,
   stagedInquiries,
   stagedPatients,
+  stagedTransactions,
   type StagedEntity,
 } from "../db/schema.js";
 
@@ -29,7 +30,7 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = PgDatabase<PgQueryResultHKT, any, any>;
 
-/** What the four staging tables have in common — the pair this service keys on. The
+/** What every staging table has in common — the pair this service keys on. The
  *  entity-specific columns are the adapter's business, handled structurally below. */
 type StagingTable = PgTable & {
   readonly sourceSystem: PgColumn;
@@ -41,6 +42,7 @@ const STAGING_TABLES: Record<StagedEntity, StagingTable> = {
   appointments: stagedAppointments,
   inquiries: stagedInquiries,
   consults: stagedConsults,
+  transactions: stagedTransactions,
 };
 
 /** Rows per statement. A 24-month appointment export runs to tens of thousands of
