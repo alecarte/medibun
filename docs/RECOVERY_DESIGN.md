@@ -158,6 +158,21 @@ campaign-builder UI · automation levels above approve-every-touch · external-c
 
 ## Review log
 
+- 2026-08-14 — **R0 CLOSED (Alec).** The two remaining items resolved: **(1)** the Non-VIP
+  filter is moot — Handal has no patients marked VIP, so the 22,541-row Patient Export is the
+  full roster; no re-pull needed. **(2)** Conversion By Provider CSV header received: consult
+  date (A), patient **name only — no patient-ID column** (D), quote number (G), provider (I),
+  coordinator (N), procedure (O), quote amount (R), booked (T), completed (W), days-to-book
+  (Y). Consequences: consult rows join the roster **by name alone** (this file carries no
+  DOB/phone) — ambiguous name matches are flagged for manual resolution, never guessed; the
+  **quote number serves as the row's source identity** for idempotent re-import. One more
+  normalizer datum: the duplicated mid-file title line can differ from the report's own name
+  ("Quote Acceptance…" inside "Conversion…") — decoration rows are recognized structurally,
+  not by title text. **R0's verify step is met**: field mapping recorded across this entry
+  and the two below; pools marked dormant **feasible**, unconverted consults **feasible
+  (degraded)**, inquiries **infeasible at Handal**. Real-data verification of R1 (counts
+  reconciled against the in-file 4D totals) runs at the first local import once the adapter
+  normalization pass lands.
 - 2026-08-14 — **CSV shape confirmed (Alec; header-region screenshots of 5 exports): the
   CSVs are report-layout dumps, not clean tables.** Shared shape: preamble rows (practice
   name, report title, filters, date range), a duplicated title row mid-file, **provider
