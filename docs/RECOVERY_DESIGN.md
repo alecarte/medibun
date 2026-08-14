@@ -205,12 +205,15 @@ campaign-builder UI · automation levels above approve-every-touch · external-c
   is **not retained in the ledger**, so the import session's terminal output is its only
   record — a column for it is a small follow-up if that check has to survive the run.
   Verified end to end on synthetic report-layout fixtures. No HTTP surface, no Medplum
-  access, no new dependency. Code-review round (same day): `--as-of` and `--min-age-days` are
+  access, no new dependency. Code-review round (same day): `--as-of` is
   now validated against a real calendar rather than a shape (a NaN date inverted every
-  comparison and pooled everyone), a section row sitting against a page break is no longer
+  comparison and pooled everyone) and `--min-age-days` against a whole-number guard that no
+  longer accepts blanks, a section row sitting against a page break is no longer
   swallowed as title furniture and a one-cell row in a mapped column stages instead of
   vanishing, appointment identities dropped the section-carried provider so the same
-  appointment hashes the same however the export paginated, and the report dates its windows
+  appointment hashes the same however the export paginated (a staging DB written BEFORE
+  this change must truncate and re-import appointments and consults — the old identities
+  no longer match, and a re-import would duplicate rather than reconcile), and the report dates its windows
   and ledger in the practice's zone (`--timezone`, required for the same reason the import CLI
   requires it) rather than in UTC.
 - 2026-08-14 — **R2b built: the report-layout pre-pass; the 4D maps are now the real
