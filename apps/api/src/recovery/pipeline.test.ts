@@ -436,4 +436,96 @@ describe("the leak report — a corrected re-import", () => {
       "2 revenue rows superseded by a later import",
     );
   });
+
+  // The seed reads the same rule and had been the one reader making the exclusion in
+  // silence (security review, LOW): what a terminal prints is the operator's only view of
+  // it. Counts only — no label, no row content.
+  it("states the exclusion at the terminal too, in counts alone", async () => {
+    const lines: string[] = [];
+
+    await runSeedCategoriesCli({
+      argv: ["--config", join(dir, "corrected-cadence.json")],
+      db: corrected,
+      out: (line) => lines.push(line),
+    });
+
+    expect(lines.join("\n")).toContain(
+      "2 revenue rows superseded by the latest import were excluded",
+    );
+  });
+});
+
+/**
+ * Two re-imports that did not come back clean, and the two different things the report has
+ * to do about them: a run that staged NOTHING must never become the run every reader
+ * filters by, and a run that staged some rows and rejected others makes its superseded
+ * count ambiguous — a rejected row never reached staging, so it is indistinguishable from
+ * a row the practice system no longer carries.
+ */
+describe("the leak report — re-imports that rejected rows", () => {
+  const VISIT_DATE = ymd(2025, 1, 10);
+  let rejected: ReturnType<typeof drizzle>;
+  let run: Awaited<ReturnType<typeof runLeakReportCli>>;
+
+  beforeAll(async () => {
+    rejected = await bootTestDb();
+    const importer = createImportService({ db: rejected });
+    const adapter = createFourDAdapter(TZ);
+    const runImport = (entity: StagedEntity, content: string) =>
+      importer.runImport({ adapter, entity, fileName: `${entity}.csv`, content });
+    const roster = (dob: string) =>
+      csvFile(PATIENT_HEADERS, [
+        ["p-1", "Zzyzxine", SURNAME, dob, "555-0100", "p1@example.invalid"],
+      ]);
+
+    // The roster: one good import, then a re-import in which EVERY row rejects.
+    await runImport("patients", roster(ymd(1970, 4, 12)));
+    const allBad = await runImport("patients", roster("not-a-date"));
+    expect(allBad).toMatchObject({ stagedCount: 0, rejectedCount: 1 });
+
+    // Revenue: two rows, then a corrected re-import that also carries one unreadable row.
+    await runImport(
+      "transactions",
+      csvFile(TRANSACTION_HEADERS, [
+        [VISIT_DATE, "p-1", INJECTABLES, "500.00"],
+        [VISIT_DATE, "p-2", INJECTABLES, "300.00"],
+      ]),
+    );
+    const partial = await runImport(
+      "transactions",
+      csvFile(TRANSACTION_HEADERS, [
+        [VISIT_DATE, "p-1", INJECTABLES, "250.00"],
+        [VISIT_DATE, "p-2", INJECTABLES, "n/a"],
+      ]),
+    );
+    expect(partial).toMatchObject({ stagedCount: 1, rejectedCount: 1 });
+
+    const configPath = join(dir, "rejected-cadence.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({ categories: { [INJECTABLES]: { expectedReturnIntervalDays: 120 } } }),
+    );
+    await runSeedCategoriesCli({ argv: ["--config", configPath], db: rejected, out: () => {} });
+    run = await runLeakReportCli({
+      argv: ["--out", join(dir, "rejected.html"), "--timezone", TZ, "--as-of", AS_OF],
+      db: rejected,
+      out: () => {},
+    });
+  }, 60_000);
+
+  it("keeps counting the rows the last COUNTED import staged", () => {
+    // The all-reject run staged nothing, so it never became the filtering run: the roster
+    // row is still current, and nothing about it reads as superseded.
+    expect(run.data.staged.patients).toBe(1);
+    expect(run.data.superseded.patients).toBe(0);
+    expect(run.data.dormant.contactability.withEither).toBe(1);
+  });
+
+  it("caveats a superseded count the partial re-import may have reject-shadowed", () => {
+    expect(run.data.superseded.transactions).toBe(2);
+    expect(run.data.rejectShadowed).toEqual(["transactions"]);
+    const html = prose(readFileSync(run.outPath, "utf8"));
+    expect(html).toContain("transactions export never reached staging");
+    expect(html).toContain("Re-import cleanly");
+  });
 });

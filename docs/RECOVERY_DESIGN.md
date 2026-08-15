@@ -119,6 +119,14 @@ local Postgres). Cloud promotion of real data is a single explicit cut-over once
 required for the touched services is signed (`docs/BAA_CHECKLIST.md` rows — the all-signed
 release rule stated there and in `security.md`), recorded in this review log.
 
+**Export rule — one full-range file per entity.** Every reader (the pools, the category
+seeder) counts only the rows the latest COUNTED import of an export still contains, because
+that is what makes a corrected or voided line reconcile instead of double-counting. An entity
+delivered as SEVERAL files therefore supersedes itself: the second file's run becomes the one
+that filters, and every row of the first reads as absent from the source. Pull each entity as
+one file covering its whole range; the import CLI prints a warning when an entity's file name
+changes between runs, and a run that staged nothing at all never becomes the filtering run.
+
 **Cut-over checklist (added as items are found):** BAAs signed for every touched service ·
 **import actor attribution** — `imports` records what ran, not who ran it, which is tolerable
 for one operator on one machine but not once an endpoint, a second person, or a hosted stack can
@@ -167,6 +175,47 @@ campaign-builder UI · automation levels above approve-every-touch · external-c
 
 ## Review log
 
+- 2026-08-15 — **R2 verifier round on the round-2 fixes (six findings, all remediated).**
+  **One presentation policy.** The round-2 fix taught the dormant table's footer to add its
+  rows as printed, and left the summary card and the headline rounding the exact cents — so
+  the same figure read `$251` in one place and `$252` in another. Every total the Leak Report
+  prints is now the SUM OF ITS DISPLAYED PARTS, computed once (`displayedTotals`) and handed
+  to the table footer, both summary cards, the headline, and the CLI's own summary lines;
+  `LeakReportData` still keeps the exact cents. **The latest-import filter, hardened three
+  ways.** A run that staged NOTHING never becomes the filtering run — a re-import whose rows
+  all rejected would otherwise supersede every good row before it, and a practice's whole
+  export would read as zero; a PARTIAL-reject re-import now earns a caveat in the report's
+  superseded paragraph, because a rejected row never reaches staging and is therefore
+  indistinguishable from a row the source dropped (counts and export names only, with
+  "re-import cleanly" stated); and SPLIT EXPORTS are named as unsupported — one entity
+  delivered as two files makes the second supersede the first wholesale, so the import CLI
+  warns when an entity's file name changes (both basenames, already ledger data) and §7 now
+  carries the rule: one full-range file per entity. The fold also breaks a `createdAt` tie by
+  id, so every reader folds the ledger the same way. **Section rows, restored to any column.**
+  Round 2's "decide a lone cell by which column it sits in" made the R0-documented shape worse
+  than the base: R0 prints section rows in COLUMN 0, which the appointment and consult maps
+  both consume, so every real section row rejected (`patient is required`) or dropped as a
+  calendar block and every row beneath it lost its provider. For an entity that carries a
+  section, a lone cell is the section wherever it sits — after a valid calendar date (day
+  separator), a page-break title, and a time-only cell, which stays out (the `11:00`-becomes-
+  `00` fix holds). The stated tradeoff: a lone patient name reads as a section too, which is
+  a degenerate one-cell data row that would have rejected anyway, against every systematic
+  section row — recorded in the module's Known Limits and pinned by a test, and a first-run
+  observation point. **The as-of cutoff, DST-proof by construction.** "Holds an appointment
+  after the as-of date" is now decided on calendar days — `zonedYmd(startAt, zone) > asOf` —
+  rather than against an instant bound. `dayBoundsFor(asOf).end` is 23:00 in a zone whose
+  clocks skip midnight (America/Santiago, 2026-09-06), so the last hour of the as-of evening
+  read as tomorrow and excluded a patient holding no future booking. Observation, not a
+  change: `dayBoundsFor` carries the same 23-hour-day quirk for the day-sheet window in
+  `staff.ts`; the schedule family is frozen (§4), so it is recorded here as a follow-up for
+  whoever next opens it. **The batch contract, enforced.** The upsert's `set` clause applies
+  to the whole statement, so deriving the refresh set from the UNION of the batch's keys would
+  clear a value on any row that omitted one. Adapter rows are homogeneous by construction
+  (`buildRow` fills every mapped column on every row, null for an absent value); the importer
+  now checks that and refuses a batch that breaks it with a typed internal error naming the
+  entity and the differing COLUMN — a programming error, never operator data. **Silent filter,
+  spoken.** `categories:seed` counted its superseded exclusion nowhere; it now returns and
+  prints it, which is what the `currentImportIds` comment already claimed of every reader.
 - 2026-08-15 — **R2 code-review round 2, consolidation half (no behavior change but one).**
   The day-separator classifier no longer keeps its own date regexes: it strips the optional
   weekday and hands the rest to the adapter's own `calendarDate`, so a separator is validated

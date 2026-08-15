@@ -249,6 +249,35 @@ describe("import CLI — what reaches the operator", () => {
     );
   });
 
+  // One entity delivered as several files is not supported: only the latest run per
+  // export is read, so the second file supersedes every row of the first. The numbers
+  // never show it, so the CLI says it where it happens. Basenames only.
+  it("warns when the same entity arrives under a different file name", async () => {
+    await run(writeCsv("roster-jan.csv", [goodRow("p-1")]));
+    out = [];
+
+    await run(writeCsv("roster-feb.csv", [goodRow("p-2")]));
+
+    const printed = out.join("\n");
+    expect(printed).toContain("the previous patients import read roster-jan.csv");
+    expect(printed).toContain("this one reads roster-feb.csv");
+    expect(printed).toContain("one full-range file per entity");
+    expect(printed).not.toContain(dir);
+    for (const value of Object.values(LEAKY)) {
+      expect(printed).not.toContain(value);
+    }
+  });
+
+  it("says nothing about split exports when the same file re-imports", async () => {
+    const path = writeCsv("roster.csv", [goodRow("p-1")]);
+    await run(path);
+    out = [];
+
+    await run(path);
+
+    expect(out.join("\n")).not.toContain("full-range file");
+  });
+
   it("prints no reconciliation line when the export declares no total", async () => {
     const path = writeCsv("roster.csv", [goodRow("p-1")]);
 

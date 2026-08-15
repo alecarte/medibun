@@ -292,6 +292,10 @@ export type SeedSummary = {
   readonly rowsWithoutCategory: number;
   readonly rowsWithoutPatient: number;
   readonly nonPositiveVisits: number;
+  /** Staged revenue rows the latest counted import no longer contains, excluded from
+   *  the ticket math. Counted so the CLI can state the exclusion rather than make it in
+   *  silence — the same posture the report takes. */
+  readonly superseded: number;
 };
 
 /** Merges the computed tickets with the operator's config. The config is authoritative
@@ -331,12 +335,14 @@ function merge(tickets: TicketSummary, config: CadenceConfig): SeededCategory[] 
  * export and config rewrites the same rows.
  */
 export async function seedServiceCategories(db: Db, config: CadenceConfig): Promise<SeedSummary> {
-  // Only the rows the LATEST revenue import still contains — the same rule the pools read
-  // staging by (`currentImportIds`, and the full-dump assumption it carries). A corrected
-  // line stages as a new row beside the old one, and averaging both would net a single
-  // visit twice over.
+  // Only the rows the LATEST COUNTED revenue import still contains — the same rule the
+  // pools read staging by (`currentImportIds`, and the full-dump assumption it carries). A
+  // corrected line stages as a new row beside the old one, and averaging both would net a
+  // single visit twice over. What that leaves out is COUNTED and returned, so the seed CLI
+  // states the exclusion instead of making it silently.
   const current = await currentImportIds(db);
-  const rows = (await selectStagedTransactions(db)).filter((row) => current.has(row.importId));
+  const staged = await selectStagedTransactions(db);
+  const rows = staged.filter((row) => current.has(row.importId));
 
   const tickets = typicalTickets(rows);
   const categories = merge(tickets, config);
@@ -374,5 +380,6 @@ export async function seedServiceCategories(db: Db, config: CadenceConfig): Prom
     rowsWithoutCategory: tickets.rowsWithoutCategory,
     rowsWithoutPatient: tickets.rowsWithoutPatient,
     nonPositiveVisits: tickets.nonPositiveVisits,
+    superseded: staged.length - rows.length,
   };
 }

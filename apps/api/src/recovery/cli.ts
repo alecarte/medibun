@@ -11,6 +11,7 @@ import {
 } from "./categories.js";
 import {
   buildLeakReport,
+  displayedTotals,
   formatDollars,
   NoStagedRevenueError,
   renderLeakReport,
@@ -96,6 +97,11 @@ export async function runSeedCategoriesCli(deps: {
   }
   if (summary.nonPositiveVisits > 0) {
     deps.out(`  ${summary.nonPositiveVisits} visits netted to nothing and were not averaged`);
+  }
+  // The seeder reads only what the latest counted import still carries. Counting the rest
+  // out loud is what keeps the exclusion an operator decision rather than a silent filter.
+  if (summary.superseded > 0) {
+    deps.out(`  ${summary.superseded} revenue rows superseded by the latest import were excluded`);
   }
   // Category labels are the practice's own menu vocabulary — printable, unlike anything
   // patient-level. The interval column is what the operator is really checking.
@@ -192,17 +198,17 @@ export async function runLeakReportCli(deps: {
     throw new UsageError(`could not write the report (${errorCodeOf(err) ?? "unwritable"})`);
   }
 
+  // The document's own totals, not a second rounding of the same cents: the terminal
+  // summary and the report a practice reads have to state one figure each.
+  const totals = displayedTotals(data);
   // Basename only, same rule as the import CLI's output: captured terminal output must
   // not carry the directory a practice's file was filed under.
   deps.out(`✓ ${basename(outPath)} written (as of ${data.asOf})`);
   deps.out(
     `  dormant: ${data.dormant.opportunityCount} opportunities · ` +
-      `${data.dormant.patientCount} patients · ${formatDollars(data.dormant.expectedValueCents)}`,
+      `${data.dormant.patientCount} patients · ${totals.dormant}`,
   );
-  deps.out(
-    `  unconverted consults: ${data.consults.poolCount} · ` +
-      `${formatDollars(data.consults.quotedValueCents)} quoted`,
-  );
-  deps.out(`  identified: ${formatDollars(data.headlineCents)}`);
+  deps.out(`  unconverted consults: ${data.consults.poolCount} · ${totals.consults} quoted`);
+  deps.out(`  identified: ${totals.headline}`);
   return { outPath, data };
 }

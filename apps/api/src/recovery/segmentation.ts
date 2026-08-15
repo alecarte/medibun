@@ -13,7 +13,7 @@ import {
   stagedConsults,
   stagedPatients,
 } from "../db/schema.js";
-import { dayBoundsFor } from "../staff.js";
+import { zonedYmd } from "../staff.js";
 
 /**
  * Pool segmentation (R2c, RECOVERY_DESIGN.md §1). Two pools, both as R0 found them:
@@ -246,12 +246,14 @@ function futureAppointments(
   asOf: string,
   timeZone: string,
 ): { readonly patients: ReadonlySet<string>; readonly join: AppointmentJoin } {
-  // "After the as-of date" is a calendar claim, so the bound is the PRACTICE's own
-  // midnight — the start of the day after — not UTC's. Read in UTC the bound lands
-  // hours late east of UTC, where that day has already ended, and hours early west of
-  // it; the first mistake is the one that matters, because it contacts a patient who
-  // already holds a booking. `dayBoundsFor` is the schedule's own DST-safe day window.
-  const cutoff = dayBoundsFor(asOf, timeZone).end.getTime();
+  // "After the as-of date" is a CALENDAR claim, so it is decided on calendar days: the
+  // day the appointment falls on in the PRACTICE's zone, compared as text against the
+  // as-of date. Read in UTC the comparison is wrong east of UTC, where that day has
+  // already ended — the mistake that matters, because it contacts a patient who already
+  // holds a booking. An instant BOUND would be right in most zones and wrong in the ones
+  // whose clocks skip midnight: a spring-forward day with no 00:00 makes "the start of
+  // the following day" resolve to 23:00, and the last hour of the as-of evening reads as
+  // tomorrow. Comparing days carries no arithmetic to get wrong.
   const patients = new Set<string>();
   let resolvedRows = 0;
 
@@ -267,9 +269,9 @@ function futureAppointments(
       continue;
     }
     resolvedRows += 1;
-    // Inclusive of the bound: the practice's midnight belongs to the day it opens, so an
-    // appointment at 00:00 the morning after the as-of date is a future booking.
-    if (row.startAt.getTime() >= cutoff) {
+    // Strictly after: the as-of day itself is not future, and any later practice-local
+    // day is — midnight the morning after included, whatever the clocks did that night.
+    if (zonedYmd(row.startAt, timeZone) > asOf) {
       patients.add(identity);
     }
   }

@@ -22,6 +22,7 @@ const data = (parts: Partial<LeakReportData> = {}): LeakReportData => ({
   },
   staged: { patients: 40, appointments: 90, consults: 12, transactions: 300 },
   superseded: { patients: 0, appointments: 0, consults: 0, transactions: 4 },
+  rejectShadowed: [],
   ledger: [
     {
       entity: "patients",
@@ -148,9 +149,10 @@ describe("leak report — rendering", () => {
     expect(prose(renderLeakReport(report))).not.toContain("no ticket value");
   });
 
-  // A reader adds the column up. Two $125.50 categories print as two $126 rows, so a
-  // footer that rounds the exact cents once — $251 — reads as an arithmetic error.
-  it("totals the category rows as they are printed, not the cents behind them", () => {
+  // A reader adds the column up. Two $125.50 categories print as two $126 rows, so a total
+  // that rounds the exact cents once — $251 — reads as an arithmetic error. One policy, so
+  // the table footer, the summary card, and the headline cannot state it three ways.
+  it("states one total everywhere: the sum of the parts as displayed", () => {
     const report = data();
     const row = report.dormant.categories[0]!;
     const html = renderLeakReport({
@@ -163,12 +165,33 @@ describe("leak report — rendering", () => {
         ],
         expectedValueCents: 25_100,
       },
+      // Nothing on the consult side, so the headline is the dormant total alone.
+      consults: { ...report.consults, poolCount: 0, quotedValueCents: 0 },
+      headlineCents: 25_100,
     });
     const footer = html.slice(html.indexOf("<tfoot>"), html.indexOf("</tfoot>"));
+    const summary = html.slice(
+      html.indexOf('<section id="summary">'),
+      html.indexOf('<section id="dormant">'),
+    );
 
     expect(prose(html)).toContain("$126");
     expect(footer).toContain("$252");
-    expect(footer).not.toContain("$251");
+    // The headline and the dormant card, both reading the same total as the table.
+    expect(summary.match(/\$252/g)).toHaveLength(2);
+    // No second variant of that figure anywhere in the document.
+    expect(html).not.toContain("$251");
+  });
+
+  // A rejected row never reaches staging, so it is indistinguishable from a row the
+  // source dropped: the superseded count has to say so rather than read as fact.
+  it("caveats a superseded count the latest counted import may have reject-shadowed", () => {
+    const html = prose(renderLeakReport(data({ rejectShadowed: ["transactions"] })));
+
+    expect(html).toContain("transactions export never reached staging");
+    expect(html).toContain("Re-import cleanly");
+    // Nothing to caveat when every counted import came back clean.
+    expect(prose(renderLeakReport(data()))).not.toContain("Re-import cleanly");
   });
 
   it("reads a report with nothing in it without inventing numbers", () => {

@@ -14,6 +14,7 @@ import {
   type SupersededCounts,
 } from "./segmentation.js";
 import { imports, type StagedEntity } from "../db/schema.js";
+import { foldCurrentRuns } from "../ingest/importer.js";
 import { zonedYmd } from "../staff.js";
 
 /**
@@ -92,6 +93,10 @@ export type LeakReportData = {
   /** Staged rows the latest import of their export no longer contains — read by nothing
    *  above, stated in the document rather than dropped in silence. */
   readonly superseded: SupersededCounts;
+  /** Exports whose latest COUNTED import rejected rows AND that still hold superseded
+   *  rows. A rejected row never reaches staging, so there the two are indistinguishable:
+   *  a superseded count may be reject-shadowed rather than genuinely gone. */
+  readonly rejectShadowed: readonly StagedEntity[];
   readonly dormant: DormantPool;
   readonly consults: ConsultPool;
   /** Dormant expected value plus the unconverted consults' quoted dollars. */
@@ -137,10 +142,20 @@ function dataWindow(snapshot: StagingSnapshot, localDay: (at: Date) => string): 
   };
 }
 
-/** The import ledger folded per entity: how many runs, and the latest run's counts. */
-async function readLedger(db: Db, localDay: (at: Date) => string): Promise<ImportLedgerEntry[]> {
+type LedgerRead = {
+  /** Per entity: how many runs, and the LATEST run's counts, whatever it staged. */
+  readonly entries: readonly ImportLedgerEntry[];
+  /** Entities whose latest COUNTED run — the one the current-rows filter reads — rejected
+   *  rows of its own. */
+  readonly rejectedInCountedRun: ReadonlySet<StagedEntity>;
+};
+
+/** One read of the import ledger, folded both ways the document needs it. */
+async function readLedger(db: Db, localDay: (at: Date) => string): Promise<LedgerRead> {
   const runs = await db
     .select({
+      id: imports.id,
+      sourceSystem: imports.sourceSystem,
       entity: imports.entity,
       rowCount: imports.rowCount,
       stagedCount: imports.stagedCount,
@@ -148,7 +163,7 @@ async function readLedger(db: Db, localDay: (at: Date) => string): Promise<Impor
       createdAt: imports.createdAt,
     })
     .from(imports)
-    .orderBy(asc(imports.createdAt));
+    .orderBy(asc(imports.createdAt), asc(imports.id));
 
   const byEntity = new Map<StagedEntity, ImportLedgerEntry>();
   for (const run of runs) {
@@ -161,7 +176,14 @@ async function readLedger(db: Db, localDay: (at: Date) => string): Promise<Impor
       lastRunAt: localDay(run.createdAt),
     });
   }
-  return [...byEntity.values()];
+  // The counted run is not always the last one — a run that staged nothing never
+  // filters — so the same fold the filter uses decides whose rejects matter here.
+  const rejectedInCountedRun = new Set(
+    [...foldCurrentRuns(runs).values()]
+      .filter((run) => run.rejectedCount > 0)
+      .map((run) => run.entity),
+  );
+  return { entries: [...byEntity.values()], rejectedInCountedRun };
 }
 
 /** Assembles the report's data. Reads staging once; every number below traces to it. */
@@ -204,8 +226,13 @@ export async function buildLeakReport(db: Db, options: LeakReportOptions): Promi
       consults: snapshot.consults.length,
       transactions: snapshot.transactions.length,
     },
-    ledger,
+    ledger: ledger.entries,
     superseded: snapshot.superseded,
+    // Both halves have to be true for the caveat to mean anything: rejects with nothing
+    // superseded shadow nothing, and superseded rows under a clean run are simply gone.
+    rejectShadowed: [...ledger.rejectedInCountedRun]
+      .filter((entity) => (snapshot.superseded[entity as keyof SupersededCounts] ?? 0) > 0)
+      .sort(),
     dormant,
     consults,
     headlineCents: dormant.expectedValueCents + consults.quotedValueCents,
@@ -228,15 +255,42 @@ const DOLLARS = new Intl.NumberFormat("en-US", {
 });
 const COUNTS = new Intl.NumberFormat("en-US");
 
-/** Whole dollars: cents in a leak report are noise, and the methodology says so.
- *  Exported so the CLI's summary line and the document itself never disagree. */
-export const formatDollars = (cents: number): string => DOLLARS.format(Math.round(cents / 100));
+/** Whole dollars: cents in a leak report are noise, and the methodology says so. */
+const wholeDollars = (cents: number): number => Math.round(cents / 100);
+
+/** One displayed part, rounded once. Exported so the seed CLI's ticket line and the
+ *  document print the same figure. Totals do NOT go through here — see below. */
+export const formatDollars = (cents: number): string => DOLLARS.format(wholeDollars(cents));
 const money = formatDollars;
-/** A column total, added up the way the reader adds it: the sum of the ROWS AS PRINTED,
- *  not the exact cents rounded once. Two $125.50 rows print $126 each, and a $251 total
- *  under them reads as an arithmetic error. The data object keeps the exact cents. */
-const moneyTotal = (cents: readonly number[]): string =>
-  DOLLARS.format(cents.reduce((sum, value) => sum + Math.round(value / 100), 0));
+
+/**
+ * Every total this document prints, in one policy: a total is the SUM OF ITS DISPLAYED
+ * PARTS, never the exact cents rounded a second time. Two $125.50 categories print $126
+ * each, and a $251 total under them reads as an arithmetic error — and reads differently
+ * again in the summary card, which is how one document comes to disagree with itself.
+ * Computed once and handed to every place a figure appears, the terminal included, so
+ * there is only ever one answer. `LeakReportData` keeps the exact cents.
+ */
+export type DisplayedTotals = {
+  /** Each dormant category's expected value, in the table's own row order. */
+  readonly dormantCategories: readonly string[];
+  readonly dormant: string;
+  readonly consults: string;
+  readonly headline: string;
+};
+
+export function displayedTotals(data: LeakReportData): DisplayedTotals {
+  const categories = data.dormant.categories.map((row) => wholeDollars(row.expectedValueCents));
+  const dormant = categories.reduce((sum, value) => sum + value, 0);
+  const consults = wholeDollars(data.consults.quotedValueCents);
+  return {
+    dormantCategories: categories.map((value) => DOLLARS.format(value)),
+    dormant: DOLLARS.format(dormant),
+    consults: DOLLARS.format(consults),
+    headline: DOLLARS.format(dormant + consults),
+  };
+}
+
 const count = (value: number): string => COUNTS.format(value);
 const plural = (value: number, one: string, many: string): string =>
   `${count(value)} ${value === 1 ? one : many}`;
@@ -355,13 +409,13 @@ const STYLE = `
   }
 `;
 
-function dormantSection(pool: DormantPool): string {
+function dormantSection(pool: DormantPool, totals: DisplayedTotals): string {
   const rows =
     pool.categories.length === 0
       ? `<tr><td colspan="5">No category in this export is both dated and given an expected-return interval.</td></tr>`
       : pool.categories
           .map(
-            (category) => `<tr>
+            (category, at) => `<tr>
             <td>${esc(category.display)}</td>
             <td class="num">${count(category.patientCount)}</td>
             <td class="num">${
@@ -370,7 +424,7 @@ function dormantSection(pool: DormantPool): string {
             <td class="basis">${
               category.ticketBasis === null ? "not set" : BASIS_LABEL[category.ticketBasis]
             }</td>
-            <td class="num">${money(category.expectedValueCents)}</td>
+            <td class="num">${totals.dormantCategories[at]}</td>
           </tr>`,
           )
           .join("");
@@ -405,7 +459,7 @@ function dormantSection(pool: DormantPool): string {
             <td class="num">${count(pool.opportunityCount)}</td>
             <td class="num"></td>
             <td></td>
-            <td class="num">${moneyTotal(pool.categories.map((c) => c.expectedValueCents))}</td>
+            <td class="num">${totals.dormant}</td>
           </tr>
         </tfoot>
       </table>
@@ -441,7 +495,7 @@ function dormantSection(pool: DormantPool): string {
     </section>`;
 }
 
-function consultSection(pool: ConsultPool): string {
+function consultSection(pool: ConsultPool, totals: DisplayedTotals): string {
   return `<section id="consults">
       <h2>Unconverted consults</h2>
       <div class="split">
@@ -450,7 +504,7 @@ function consultSection(pool: ConsultPool): string {
           <div class="fact">consults quoted and not booked</div>
         </div>
         <div>
-          <div class="amount">${money(pool.quotedValueCents)}</div>
+          <div class="amount">${totals.consults}</div>
           <div class="fact">in quoted work, at the practice's own quoted prices</div>
         </div>
       </div>
@@ -572,6 +626,18 @@ function dataQualitySection(data: LeakReportData): string {
         later import were left out. That reading holds because each export is a full dump of its
         date range; a narrower re-pull would supersede rows it simply never covered.
       </p>
+      ${
+        data.rejectShadowed.length === 0
+          ? ""
+          : `<p>
+        Read those counts with one caveat: rows rejected by the most recent counted import of the
+        ${data.rejectShadowed.map((entity) => esc(entity)).join(" and ")}
+        export${data.rejectShadowed.length === 1 ? "" : "s"} never reached staging at all, so some
+        of the rows counted above as superseded may be rows that import could not read rather than
+        rows the practice system no longer carries. Re-import cleanly before these figures are
+        relied on.
+      </p>`
+      }
       <h3>Reconciliation</h3>
       <p>
         Each source export declares its own row total. The import tool checks every file against
@@ -600,6 +666,10 @@ function dataQualitySection(data: LeakReportData): string {
 
 /** Renders one self-contained document. Pure: the same data renders the same bytes. */
 export function renderLeakReport(data: LeakReportData): string {
+  // Rounded once, here, and read by every figure below: the headline, the two summary
+  // cards, and the dormant table's own footer are the same numbers or the document
+  // contradicts itself in print.
+  const totals = displayedTotals(data);
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -624,7 +694,7 @@ export function renderLeakReport(data: LeakReportData): string {
   <section id="summary">
     <h2>What the practice is losing</h2>
     <div class="headline">
-      <div class="figure">${money(data.headlineCents)}</div>
+      <div class="figure">${totals.headline}</div>
       <div class="caption">
         identified across two pools of patients the practice has already paid to acquire
       </div>
@@ -632,7 +702,7 @@ export function renderLeakReport(data: LeakReportData): string {
     <div class="split">
       <div>
         <h3>Dormant patients</h3>
-        <div class="amount">${money(data.dormant.expectedValueCents)}</div>
+        <div class="amount">${totals.dormant}</div>
         <div class="fact">
           ${plural(data.dormant.opportunityCount, "opportunity", "opportunities")} across
           ${plural(data.dormant.patientCount, "patient", "patients")}, valued at each category's
@@ -641,7 +711,7 @@ export function renderLeakReport(data: LeakReportData): string {
       </div>
       <div>
         <h3>Unconverted consults</h3>
-        <div class="amount">${money(data.consults.quotedValueCents)}</div>
+        <div class="amount">${totals.consults}</div>
         <div class="fact">
           ${plural(data.consults.poolCount, "consult", "consults")} quoted and never booked, valued
           at the quoted amount
@@ -655,8 +725,8 @@ export function renderLeakReport(data: LeakReportData): string {
     </p>
   </section>
 
-  ${dormantSection(data.dormant)}
-  ${consultSection(data.consults)}
+  ${dormantSection(data.dormant, totals)}
+  ${consultSection(data.consults, totals)}
   ${methodologySection(data)}
   ${dataQualitySection(data)}
 

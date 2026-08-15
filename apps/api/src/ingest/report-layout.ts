@@ -30,14 +30,14 @@ import { SourceFileError } from "./types.js";
  *   - exactly ONE non-empty cell → resolved in this order, and the order is the rule:
  *     a calendar date is a DAY SEPARATOR (entities that carry a day); a row whose next
  *     non-blank neighbour is a reprinted header row is a page-break TITLE (adjacency is
- *     the only honest signal — the text is not); after those two, WHERE the cell sits
- *     decides, because what it says cannot: a cell in the entity's own SECTION column, or
- *     in a column the map consumes nothing from, is a SECTION row whose label becomes
- *     group context (entities that carry a section) — never a cell holding only a TIME,
- *     which the section label would reduce to its minutes; a cell in any OTHER column the
- *     map consumes is a one-cell DATA row — the Patient Export prints a roster row with
- *     only its id filled — and stages or rejects on its own merits; anything left is
- *     furniture;
+ *     the only honest signal — the text is not); a cell holding only a TIME is never group
+ *     context, whatever column it sits in, because the section label would reduce it to
+ *     its minutes; after those three, an entity that CARRIES A SECTION reads the cell as a
+ *     SECTION row wherever it sits — R0's exports print theirs in column 0, which the
+ *     appointment and consult maps both consume, so the column cannot be the test — and an
+ *     entity that carries none reads a cell in a column the map consumes as a one-cell
+ *     DATA row (the Patient Export prints a roster row with only its id filled) that
+ *     stages or rejects on its own merits; anything left is furniture;
  *   - a row whose PATIENT COLUMN is blank or holds a non-patient marker ("#",
  *     "Happening") → a non-patient calendar block (R0 (iv)), furniture; a marker in any
  *     other column is just a value, and the row stays;
@@ -54,16 +54,17 @@ import { SourceFileError } from "./types.js";
  * sit against the page break, and every row after the break then inherits the PREVIOUS
  * section silently.
  *
- * The section rule carries its own limit, and it is the deliberate side of the trade: a
- * section row 4D prints in a column the entity MAPS — its date column, say, rather than
- * the provider column the context flows into — reads as a one-cell data row. It rejects
- * with the column at fault (or, in the appointment export, drops as a non-patient
- * calendar block), and the rows beneath it keep the previous section instead of gaining
- * one. Taking any lone cell as the section is what this replaces, and that was worse in
- * both directions: a lone `11:00` became a provider called `00`, and a stray patient name
- * in the consult export became the provider of every row under it. Which column 4D prints
- * its section rows in is a first-run observation; if it is not the carried column, the
- * pre-pass needs that column named separately in `CarrySpec`.
+ * The section rule carries its own limit, and it is the deliberate side of the trade: in
+ * an entity that carries a section, any lone cell left after those three carve-outs
+ * becomes the section, so a row that legitimately fills ONE cell — a lone patient name,
+ * every other column blank — reads as the provider of every row beneath it until the next
+ * section row. Deciding by COLUMN instead was worse where it actually matters: R0's
+ * section rows sit in column 0, which the appointment and consult maps both consume, so
+ * every real section row rejected (`patient is required`) or dropped as a non-patient
+ * calendar block, and every row under it lost its provider. Systematic furniture beats a
+ * degenerate one-cell data row that would reject on its own merits anyway. Which column 4D
+ * prints its section rows in is a first-run observation, and so is whether these exports
+ * ever print a lone data row at all.
  */
 
 /** One column the entity's map can consume, with the aliases it may be spelled as. */
@@ -333,12 +334,10 @@ export function normalizeReport(content: string, spec: LayoutSpec): NormalizedFi
       }
       // A cell holding only a TIME is never group context, wherever it sits: the section
       // label is stripped off it and "11:00" becomes a provider called "00", which then
-      // rides down onto every row beneath it.
-      const isSection =
-        carry.section !== undefined &&
-        !TIME_ONLY.test(value) &&
-        (cellAt === sectionAt || !mappedColumns.has(cellAt));
-      if (isSection) {
+      // rides down onto every row beneath it. Everything else, in ANY column, is the
+      // section — R0's exports print section rows in column 0, not in the column the
+      // context flows into.
+      if (carry.section !== undefined && !TIME_ONLY.test(value)) {
         section = value.replace(SECTION_LABEL, "").trim();
         layoutRowCount += 1;
         return;

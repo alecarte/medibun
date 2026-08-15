@@ -211,6 +211,17 @@ export async function runImportCli(deps: {
   if (reconciliation) {
     deps.out(reconciliation);
   }
+  // Split exports are NOT supported: segmentation reads only the latest run per export
+  // (`currentImportIds`, importer.ts), so a second file for the same entity supersedes
+  // every row of the first wholesale. The hazard is invisible in the numbers and obvious
+  // here, at the moment it is created. Both names are basenames the ledger already holds.
+  if (summary.previousFileName !== null && summary.previousFileName !== basename(file)) {
+    deps.out(
+      `  ⚠ the previous ${entity} import read ${summary.previousFileName}, this one reads ` +
+        `${basename(file)} — only the latest run of an export is read, so a split export ` +
+        "supersedes the file before it; import one full-range file per entity",
+    );
+  }
   if (summary.rejects.length > 0) {
     // Basename only, same rule as the ledger columns and the unreadable-input error:
     // captured terminal output must not carry the directory an export was filed under.

@@ -4,7 +4,12 @@ import type { drizzle } from "drizzle-orm/pglite";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createFourDAdapter } from "./adapter-4d.js";
-import { createImportService, type ImportService } from "./importer.js";
+import {
+  createImportService,
+  currentImportIds,
+  HeterogeneousBatchError,
+  type ImportService,
+} from "./importer.js";
 import { csvFile, ymd, ymdhm } from "./test-fixtures.js";
 import type { SourceAdapter, StagedPatientRow } from "./types.js";
 import * as schema from "../db/schema.js";
@@ -48,9 +53,9 @@ const patientRow = (id: string, first: string, birth: string) => [
   `${id}@example.invalid`,
 ];
 
-/** An adapter that stages rows built by hand — a source whose rows do not all carry the
- *  same keys, which no CSV adapter can produce (`buildRow` sets every mapped column on
- *  every row) and which the importer must still refresh correctly. */
+/** An adapter that stages rows built by hand: the only way to hand the importer a batch
+ *  whose rows disagree about which columns they carry, which no CSV adapter can produce
+ *  (`buildRow` sets every mapped column on every row) and which the importer refuses. */
 const batchAdapter = (rows: readonly Partial<StagedPatientRow>[]): SourceAdapter => ({
   sourceSystem: "4d",
   entities: ["patients"],
@@ -211,11 +216,8 @@ describe("import service — idempotency", () => {
     expect(after!.updatedAt.getTime()).toBeGreaterThanOrEqual(before!.updatedAt.getTime());
   });
 
-  // The refresh set is derived per BATCH, and one row's shape is not the batch's shape.
-  // The 4D adapter fills every column on every row, so this is latent there — a source
-  // whose rows omit an absent field would leave that column stale while the ledger says
-  // the run reconciled.
-  it("refreshes every column the batch fills, not the ones its first row happens to carry", async () => {
+  // The refresh set is the batch's UNIFORM key set: every mapped column on every row.
+  it("refreshes every column the batch fills, on every row of it", async () => {
     await runPatients(
       roster([
         patientRow("p-1", "Testerly", ymd(1970, 4, 12)),
@@ -225,8 +227,8 @@ describe("import service — idempotency", () => {
 
     await importer.runImport({
       adapter: batchAdapter([
-        { sourceIdentity: "p-1", firstName: "Renamed" },
-        { sourceIdentity: "p-2", firstName: "Renamed", email: "fresh@example.invalid" },
+        { sourceIdentity: "p-1", firstName: "Renamed", email: "one@example.invalid" },
+        { sourceIdentity: "p-2", firstName: "Renamed", email: "two@example.invalid" },
       ]),
       entity: "patients",
       fileName: "roster.csv",
@@ -234,8 +236,34 @@ describe("import service — idempotency", () => {
     });
 
     const rows = await db.select().from(schema.stagedPatients);
-    expect(rows.find((r) => r.sourceIdentity === "p-2")?.email).toBe("fresh@example.invalid");
-    expect(rows.find((r) => r.sourceIdentity === "p-1")?.firstName).toBe("Renamed");
+    expect(rows.map((r) => [r.sourceIdentity, r.firstName, r.email]).sort()).toEqual([
+      ["p-1", "Renamed", "one@example.invalid"],
+      ["p-2", "Renamed", "two@example.invalid"],
+    ]);
+  });
+
+  // The contract that makes the rule above safe. An upsert's `set` clause applies to the
+  // whole statement, so a key one row omits would refresh from `excluded` NULL and CLEAR
+  // that row's existing value — behind a ledger line saying the run reconciled. Adapter
+  // rows are homogeneous by construction; a batch that is not is a bug, and it stops here.
+  it("refuses a batch whose rows do not all carry the same columns", async () => {
+    await runPatients(roster([patientRow("p-1", "Testerly", ymd(1970, 4, 12))]));
+
+    const run = importer.runImport({
+      adapter: batchAdapter([
+        { sourceIdentity: "p-1", firstName: "Renamed", email: "one@example.invalid" },
+        { sourceIdentity: "p-2", firstName: "Renamed" },
+      ]),
+      entity: "patients",
+      fileName: "roster.csv",
+      content: "hand-built rows",
+    });
+
+    await expect(run).rejects.toBeInstanceOf(HeterogeneousBatchError);
+    // The message names the entity and the differing COLUMN — our own vocabulary, never
+    // a row value — and nothing about the run reaches the ledger.
+    await expect(run).rejects.toThrow(/patients.*email/);
+    expect(await db.select().from(schema.imports)).toHaveLength(1);
   });
 
   // The mirror of the rule above: a column NO adapter fills is not the export's to clear.
@@ -300,6 +328,47 @@ describe("import service — rejects", () => {
 
     expect(summary).toMatchObject({ rowCount: 1, stagedCount: 0, rejectedCount: 1 });
     expect(await db.select().from(schema.imports)).toHaveLength(1);
+  });
+});
+
+describe("import service — which run the readers count", () => {
+  // A run that staged NOTHING cannot represent a full export. Taken as the filtering run
+  // it would supersede every good row before it in one stroke — a file rejected wholesale
+  // on a header change would read as a practice with no data at all.
+  it("never lets a run that staged nothing become the counted one", async () => {
+    const good = await runPatients(roster([patientRow("p-1", "Testerly", ymd(1970, 4, 12))]));
+    const allRejected = await runPatients(roster([patientRow("p-1", "Testerly", "not-a-date")]));
+
+    expect(allRejected.stagedCount).toBe(0);
+    const current = await currentImportIds(db);
+    expect([...current]).toEqual([good.importId]);
+    const [row] = await db.select().from(schema.stagedPatients);
+    expect(current.has(row!.importId)).toBe(true);
+  });
+
+  // Two runs stamped in the same instant have to fold the same way on every read, or a
+  // report and the seed it was generated beside would count different rows.
+  it("breaks a createdAt tie by id, so every read folds the same way", async () => {
+    const at = new Date("2026-08-15T00:00:00.000Z");
+    const run = (id: string, fileName: string) => ({
+      id,
+      sourceSystem: "4d" as const,
+      entity: "patients" as const,
+      fileName,
+      fileHash: "hash",
+      rowCount: 1,
+      stagedCount: 1,
+      rejectedCount: 0,
+      createdAt: at,
+    });
+    await db
+      .insert(schema.imports)
+      .values([
+        run("00000000-0000-4000-8000-000000000002", "second.csv"),
+        run("00000000-0000-4000-8000-000000000001", "first.csv"),
+      ]);
+
+    expect([...(await currentImportIds(db))]).toEqual(["00000000-0000-4000-8000-000000000002"]);
   });
 });
 

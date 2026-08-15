@@ -296,6 +296,29 @@ describe("dormant pool", () => {
       expect(dormantPool(staging, { asOf: AS_OF, timeZone: TZ }).opportunityCount).toBe(0);
     });
 
+    // A zone whose clocks skip MIDNIGHT: Santiago springs forward at 00:00 on 2026-09-06,
+    // so that day has no midnight and "the start of the following day" resolves to 23:00
+    // on the as-of day. Measured against that instant, the last hour of the as-of evening
+    // read as tomorrow and excluded a patient who holds no future booking at all.
+    // Comparing calendar days carries no such arithmetic.
+    it("keeps an evening appointment in a zone whose clocks skip midnight", () => {
+      const staging = dormant({
+        appointments: [
+          appointment({
+            patientSourceIdentity: "p-1",
+            // 23:30 practice-local on the as-of day, the night the transition lands on.
+            startAt: new Date(Date.parse(`${ymd(2026, 9, 6)}T03:30:00Z`)),
+          }),
+        ],
+        transactions: [paid("p-1", ymd(2025, 1, 10), "Injectables")],
+      });
+
+      expect(
+        dormantPool(staging, { asOf: ymd(2026, 9, 5), timeZone: "America/Santiago" })
+          .opportunityCount,
+      ).toBe(1);
+    });
+
     it("keeps an evening appointment on the as-of day itself in the pool", () => {
       const staging = dormant({
         appointments: [
