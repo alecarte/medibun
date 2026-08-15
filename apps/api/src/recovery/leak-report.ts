@@ -4,6 +4,7 @@ import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import {
   defaultAsOf,
   dormantPool,
+  prepareIndexes,
   readStaging,
   unconvertedConsults,
   type ConsultPool,
@@ -181,11 +182,18 @@ export async function buildLeakReport(db: Db, options: LeakReportOptions): Promi
   if (asOf === undefined) {
     throw new NoStagedRevenueError();
   }
-  const dormant = dormantPool(snapshot, { asOf });
-  const consults = unconvertedConsults(snapshot, {
-    asOf,
-    ...(options.minAgeDays === undefined ? {} : { minAgeDays: options.minAgeDays }),
-  });
+  // The roster index, the netted visits, and the future-appointment join are the same for
+  // both pools — swept once here rather than once per pool.
+  const indexes = prepareIndexes(snapshot, asOf);
+  const dormant = dormantPool(snapshot, { asOf }, indexes);
+  const consults = unconvertedConsults(
+    snapshot,
+    {
+      asOf,
+      ...(options.minAgeDays === undefined ? {} : { minAgeDays: options.minAgeDays }),
+    },
+    indexes,
+  );
 
   return {
     practiceName: options.practiceName ?? "The practice",

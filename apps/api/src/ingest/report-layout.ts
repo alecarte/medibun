@@ -112,7 +112,11 @@ const HEADER_SCAN_ROWS = 50;
  *  bar a reprinted header row in the body is held to. */
 const HEADER_MIN_COLUMNS = 2;
 
-const key = (value: string): string => value.trim().toLowerCase();
+/** How a header cell is folded before anything is matched against it. Exported because
+ *  the adapter's NEVER_MAPPED guard must fold the names it checks exactly the same way —
+ *  a second spelling of this rule is a way for the guard to drift out of agreement with
+ *  the matching it guards. */
+export const normalizeHeader = (value: string): string => value.trim().toLowerCase();
 
 const ISO_DATE = /^(\d{4})-(\d{1,2})-(\d{1,2})$/;
 const US_DATE = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
@@ -150,7 +154,7 @@ function readCsv(content: string): CsvItem[] {
 
 /** How many of the entity's columns a row names — the header row scores highest. */
 function headerScore(record: readonly string[], columns: readonly ColumnSpec[]): number {
-  const names = new Set(record.map(key));
+  const names = new Set(record.map(normalizeHeader));
   return columns.filter((column) => column.names.some((name) => names.has(name))).length;
 }
 
@@ -200,7 +204,7 @@ export function normalizeReport(content: string, spec: LayoutSpec): NormalizedFi
     );
   }
 
-  const headers = items[headerAt]!.record.map(key);
+  const headers = items[headerAt]!.record.map(normalizeHeader);
   const columnAt = new Map<string, number>();
   for (const column of spec.columns) {
     for (const name of column.names) {

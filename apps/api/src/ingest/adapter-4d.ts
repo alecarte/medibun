@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 
 import { calendarDate, isKnownTimeZone, pad } from "./dates.js";
-import { normalizeReport, type CarrySpec, type ColumnSpec } from "./report-layout.js";
+import {
+  normalizeHeader,
+  normalizeReport,
+  type CarrySpec,
+  type ColumnSpec,
+} from "./report-layout.js";
 import { zonedInstant } from "../staff.js";
 import {
   SourceFileError,
@@ -147,11 +152,10 @@ export const NEVER_MAPPED: readonly string[] = [
 /** Enforcement rather than convention: every field is built through `field` below, so a
  *  map that claimed an excluded column — as its name OR as an alias — cannot be
  *  constructed, and the adapter fails to build rather than staging what R0 excluded.
- *  Names are normalized exactly as header matching normalizes them. */
+ *  Names are folded through header matching's OWN normalizer, so the guard cannot come to
+ *  disagree with the matching it guards. */
 function assertMappable(names: readonly string[]): void {
-  const excluded = names
-    .map((name) => name.trim().toLowerCase())
-    .filter((name) => NEVER_MAPPED.includes(name));
+  const excluded = names.map(normalizeHeader).filter((name) => NEVER_MAPPED.includes(name));
   if (excluded.length > 0) {
     throw new Error(`4D column map may not claim an excluded column: ${excluded.join(", ")}`);
   }
