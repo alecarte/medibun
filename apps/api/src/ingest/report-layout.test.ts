@@ -256,6 +256,26 @@ describe("report layout — classifying the report's furniture", () => {
     ]);
   });
 
+  // A separator is validated against a real calendar, not against a date-shaped regex:
+  // February 30th is not a day, so it cannot become the day every row beneath it belongs
+  // to. It falls through the lone-cell rules instead (here: a blank patient column, so
+  // the appointment export reads it as a non-patient block).
+  it("never carries a date-shaped cell that is not a real date as the day", () => {
+    const content = reportFile(PREAMBLE, HEADERS, [
+      sparseRow(WIDTH, { 0: ymd(2026, 7, 15) }),
+      dataRow("09:00", "Testerly F"),
+      sparseRow(WIDTH, { 0: ymd(2026, 2, 30) }),
+      dataRow("10:30", "Otherly F"),
+    ]);
+
+    const file = normalizeReport(content, SPEC);
+
+    expect(file.rows.map((r) => cellsOf(r.record, file.columnAt).when)).toEqual([
+      `${ymd(2026, 7, 15)} 09:00`,
+      `${ymd(2026, 7, 15)} 10:30`,
+    ]);
+  });
+
   it("captures each Total row as the file's own reconciliation count", () => {
     const content = reportFile(PREAMBLE, HEADERS, [
       dataRow("09:00", "Testerly F"),
@@ -267,8 +287,7 @@ describe("report layout — classifying the report's furniture", () => {
     const file = normalizeReport(content, SPEC);
 
     expect(file.rows).toHaveLength(2);
-    expect(file.declaredTotals.map((t) => t.count)).toEqual([1204, 2]);
-    expect(file.declaredTotals[0]?.label).toBe("Appointments");
+    expect(file.declaredTotals).toEqual([1204, 2]);
   });
 
   // A revenue line item can be CALLED "Total Body Lift" — furniture is a shape (a lone
@@ -284,7 +303,7 @@ describe("report layout — classifying the report's furniture", () => {
     expect(file.rows).toHaveLength(1);
     expect(cellsOf(file.rows[0]!.record, file.columnAt).patient).toBe("Testerly F");
     // Only the furniture row declares a total; the data row contributes none.
-    expect(file.declaredTotals).toEqual([{ label: "Appointments", count: 1 }]);
+    expect(file.declaredTotals).toEqual([1]);
   });
 
   it("drops non-patient calendar blocks as structure rather than rejecting them", () => {

@@ -113,7 +113,7 @@ const rejectCell = (value: string): string =>
  * warning, never a failure: the operator decides what it means.
  */
 function reconciliationLine(summary: ImportSummary): string | undefined {
-  const declared = summary.declaredTotals.map((total) => total.count);
+  const declared = summary.declaredTotals;
   if (declared.length === 0) {
     return undefined;
   }
@@ -138,6 +138,18 @@ export const readArg = (argv: readonly string[], name: string): string | undefin
   return index === -1 ? undefined : argv[index + 1];
 };
 
+/** Reads a file the operator named, without letting its path reach the terminal: the
+ *  error's own message embeds it, and a directory a human chose can itself name a patient
+ *  ("~/exports/jane-doe/roster.csv"). Shared with the recovery CLIs — `what` is the phrase
+ *  the message names the file by. */
+export function readLocalFile(path: string, what: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch (err) {
+    throw new UsageError(`could not read the ${what} (${errorCodeOf(err) ?? "unreadable"})`);
+  }
+}
+
 export type ImportCliRun = {
   readonly importId: string;
   readonly rejectsPath: string;
@@ -161,15 +173,7 @@ export async function runImportCli(deps: {
     throw new UsageError(USAGE);
   }
 
-  let content: string;
-  try {
-    content = readFileSync(file, "utf8");
-  } catch (err) {
-    // Not the raw error: its message embeds the path, and a captured terminal log
-    // shouldn't carry the directory a real export was filed under.
-    throw new UsageError(`could not read the input file (${errorCodeOf(err) ?? "unreadable"})`);
-  }
-
+  const content = readLocalFile(file, "input file");
   const adapter = createFourDAdapter(timezone);
   const rejectsPath = `${file}.rejects.csv`;
   // Always clear the previous run's rejects FIRST. It holds raw source rows: a clean

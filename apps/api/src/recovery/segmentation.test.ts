@@ -228,7 +228,7 @@ describe("dormant pool", () => {
       const pool = dormantPool(staging, { asOf: AS_OF, timeZone: TZ });
 
       expect(pool.opportunityCount).toBe(0);
-      expect(pool.appointmentJoin).toMatchObject({ rows: 1, resolvedRows: 1, futureRows: 1 });
+      expect(pool.appointmentJoin).toMatchObject({ rows: 1, resolvedRows: 1 });
     });
 
     it("matches a name printed in the other order", () => {

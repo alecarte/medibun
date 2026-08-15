@@ -1,13 +1,17 @@
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 
-import { groupVisits, type TicketBasis, type TransactionInput } from "./categories.js";
+import {
+  groupVisits,
+  selectStagedTransactions,
+  type TicketBasis,
+  type TransactionInput,
+} from "./categories.js";
 import { currentImportIds } from "../ingest/importer.js";
 import {
   serviceCategories,
   stagedAppointments,
   stagedConsults,
   stagedPatients,
-  stagedTransactions,
 } from "../db/schema.js";
 import { dayBoundsFor } from "../staff.js";
 
@@ -233,8 +237,6 @@ export type AppointmentJoin = {
   readonly rows: number;
   /** Rows resolved to a roster patient, by id or by the name+DOB+phone triple. */
   readonly resolvedRows: number;
-  /** Resolved rows starting after the as-of date — the exclusion signal. */
-  readonly futureRows: number;
 };
 
 /** Patients holding an appointment after the as-of date, plus how well the join ran. */
@@ -252,7 +254,6 @@ function futureAppointments(
   const cutoff = dayBoundsFor(asOf, timeZone).end.getTime();
   const patients = new Set<string>();
   let resolvedRows = 0;
-  let futureRows = 0;
 
   for (const row of appointments) {
     const triple =
@@ -269,12 +270,11 @@ function futureAppointments(
     // Inclusive of the bound: the practice's midnight belongs to the day it opens, so an
     // appointment at 00:00 the morning after the as-of date is a future booking.
     if (row.startAt.getTime() >= cutoff) {
-      futureRows += 1;
       patients.add(identity);
     }
   }
 
-  return { patients, join: { rows: appointments.length, resolvedRows, futureRows } };
+  return { patients, join: { rows: appointments.length, resolvedRows } };
 }
 
 /** Everything both pools read: the roster index, the netted paid visits, and the
@@ -340,7 +340,7 @@ export type DormantPool = {
   /** Patients dropped because they already hold a future appointment. */
   readonly excludedByFutureAppointment: number;
   /** Categories in the pool with no ticket value — their opportunities are counted but
-   *  contribute nothing to the dollars. */
+   *  contribute nothing to the dollars, which the report says in those words. */
   readonly categoriesWithoutTicket: number;
 };
 
@@ -589,15 +589,7 @@ export async function readStaging(db: Db): Promise<StagingSnapshot> {
         importId: stagedConsults.importId,
       })
       .from(stagedConsults),
-    db
-      .select({
-        patientSourceIdentity: stagedTransactions.patientSourceIdentity,
-        transactionDate: stagedTransactions.transactionDate,
-        serviceCategoryRaw: stagedTransactions.serviceCategoryRaw,
-        amountCents: stagedTransactions.amountCents,
-        importId: stagedTransactions.importId,
-      })
-      .from(stagedTransactions),
+    selectStagedTransactions(db),
     db
       .select({
         code: serviceCategories.code,

@@ -34,6 +34,23 @@ export type TransactionInput = {
   readonly amountCents: number;
 };
 
+/** The staged revenue read both callers make — the ticket math here and the pools'
+ *  snapshot (`readStaging`, segmentation.ts) — with the run stamp each of them filters by.
+ *  One column list on purpose: two copies of it are two answers to "which columns is this
+ *  number computed over", and they drift silently. */
+export const selectStagedTransactions = async (
+  db: Db,
+): Promise<readonly (TransactionInput & { readonly importId: string })[]> =>
+  db
+    .select({
+      patientSourceIdentity: stagedTransactions.patientSourceIdentity,
+      transactionDate: stagedTransactions.transactionDate,
+      serviceCategoryRaw: stagedTransactions.serviceCategoryRaw,
+      amountCents: stagedTransactions.amountCents,
+      importId: stagedTransactions.importId,
+    })
+    .from(stagedTransactions);
+
 /**
  * The category's primary key: the source label, folded to a slug. Case and punctuation
  * vary between 4D's exports (Revenue prints `Skin Care / Peels`, the config may be
@@ -319,17 +336,7 @@ export async function seedServiceCategories(db: Db, config: CadenceConfig): Prom
   // line stages as a new row beside the old one, and averaging both would net a single
   // visit twice over.
   const current = await currentImportIds(db);
-  const rows = (
-    await db
-      .select({
-        patientSourceIdentity: stagedTransactions.patientSourceIdentity,
-        transactionDate: stagedTransactions.transactionDate,
-        serviceCategoryRaw: stagedTransactions.serviceCategoryRaw,
-        amountCents: stagedTransactions.amountCents,
-        importId: stagedTransactions.importId,
-      })
-      .from(stagedTransactions)
-  ).filter((row) => current.has(row.importId));
+  const rows = (await selectStagedTransactions(db)).filter((row) => current.has(row.importId));
 
   const tickets = typicalTickets(rows);
   const categories = merge(tickets, config);

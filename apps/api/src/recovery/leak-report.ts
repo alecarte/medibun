@@ -1,6 +1,7 @@
 import { asc } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 
+import type { TicketBasis } from "./categories.js";
 import {
   defaultAsOf,
   dormantPool,
@@ -13,6 +14,7 @@ import {
   type SupersededCounts,
 } from "./segmentation.js";
 import { imports, type StagedEntity } from "../db/schema.js";
+import { zonedYmd } from "../staff.js";
 
 /**
  * The Leak Report (R2c, V1_PROPOSAL.md §5 R2). One print-quality HTML document stating,
@@ -116,23 +118,6 @@ export class NoStagedRevenueError extends Error {
   }
 }
 
-/**
- * A staged instant as the calendar date it fell on IN THE PRACTICE'S ZONE. The columns
- * behind these dates are timestamptz, so `toISOString` renders them in UTC — which prints
- * a 9pm appointment in a practice four hours behind UTC on the following day, telling the
- * practice its export covers a day it does not. "en-CA" is the locale that spells a date
- * "YYYY-MM-DD", the same shape every date column in staging holds.
- */
-const localDayIn = (timeZone: string): ((at: Date) => string) => {
-  const format = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-  return (at) => format.format(at);
-};
-
 function range(values: readonly string[]): { from: string | null; to: string | null } {
   const sorted = [...values].sort();
   return { from: sorted[0] ?? null, to: sorted.at(-1) ?? null };
@@ -181,8 +166,14 @@ async function readLedger(db: Db, localDay: (at: Date) => string): Promise<Impor
 
 /** Assembles the report's data. Reads staging once; every number below traces to it. */
 export async function buildLeakReport(db: Db, options: LeakReportOptions): Promise<LeakReportData> {
-  const localDay = localDayIn(options.timeZone);
-  const snapshot = await readStaging(db);
+  // A staged instant as the calendar date it fell on IN THE PRACTICE'S ZONE, through the
+  // schedule's own memoized formatter: a second one here would be a second answer to
+  // "which day did this instant fall on", and read in UTC a 9pm appointment in a practice
+  // four hours behind it lands on the following day.
+  const localDay = (at: Date): string => zonedYmd(at, options.timeZone);
+  // Neither read depends on the other: staging is the pools' input, the ledger is printed
+  // as it stands.
+  const [snapshot, ledger] = await Promise.all([readStaging(db), readLedger(db, localDay)]);
   const asOf = options.asOf ?? defaultAsOf(snapshot);
   if (asOf === undefined) {
     throw new NoStagedRevenueError();
@@ -213,7 +204,7 @@ export async function buildLeakReport(db: Db, options: LeakReportOptions): Promi
       consults: snapshot.consults.length,
       transactions: snapshot.transactions.length,
     },
-    ledger: await readLedger(db, localDay),
+    ledger,
     superseded: snapshot.superseded,
     dormant,
     consults,
@@ -250,7 +241,9 @@ const count = (value: number): string => COUNTS.format(value);
 const plural = (value: number, one: string, many: string): string =>
   `${count(value)} ${value === 1 ? one : many}`;
 
-const BASIS_LABEL: Record<string, string> = {
+/** Keyed by the basis UNION, not by `string`: a fourth basis added to the schema then
+ *  fails this build instead of rendering `undefined` in the Basis column. */
+const BASIS_LABEL: Record<TicketBasis, string> = {
   "revenue-average": "Revenue average",
   "list-price": "List price",
   "hand-set": "Hand set",
@@ -416,6 +409,17 @@ function dormantSection(pool: DormantPool): string {
           </tr>
         </tfoot>
       </table>
+      ${
+        pool.categoriesWithoutTicket === 0
+          ? ""
+          : `<p>
+        ${plural(pool.categoriesWithoutTicket, "category", "categories")} in this pool
+        ${pool.categoriesWithoutTicket === 1 ? "carries" : "carry"} no ticket value at all — no
+        revenue history to average and no operator-supplied figure — so
+        ${pool.categoriesWithoutTicket === 1 ? "its" : "their"} opportunities are counted in the
+        table above and contribute nothing to the dollars.
+      </p>`
+      }
       <h3>How many can be reached</h3>
       <p>
         Outreach only works a patient the practice can contact. Of the

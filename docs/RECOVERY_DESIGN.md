@@ -167,6 +167,28 @@ campaign-builder UI · automation levels above approve-every-touch · external-c
 
 ## Review log
 
+- 2026-08-15 — **R2 code-review round 2, consolidation half (no behavior change but one).**
+  The day-separator classifier no longer keeps its own date regexes: it strips the optional
+  weekday and hands the rest to the adapter's own `calendarDate`, so a separator is validated
+  against a real calendar (`2026-02-30` is not a day and cannot become the day every row
+  beneath it belongs to — the one behavior change, with a test) and the accepted formats have
+  one definition rather than two that drift. Fields nothing rendered are gone: the appointment
+  join's `futureRows`, and the declared totals' label — reconciliation compares counts, so
+  `declaredTotals` is `readonly number[]` and the label is not captured at all, which is one
+  less piece of source text with somewhere to go. The dormant pool's `categoriesWithoutTicket`
+  was the third such field and is now WIRED instead: the report states, in the consult pool's
+  own words, how many pooled categories carry no ticket value and contribute nothing to the
+  dollars — the dash in the table said it per row, the prose says it once. Held once now: the
+  staged-revenue select (one column list for the pools and the category seeder), the
+  practice-local day formatter (`zonedYmd`, staff.ts — the schedule's memoized one, not a
+  second Intl formatter in the report), and `readLocalFile` (both CLIs read an operator's file
+  the same way, path never reaching the terminal). Also: the report's two body passes trim each
+  row once, the leak report's two independent reads run in parallel, `BASIS_LABEL` is keyed by
+  the basis union so a fourth basis fails the build instead of rendering `undefined`, and the
+  `--practice` flag is read once. **Dependency record, noted here to be greppable:** `csv-parse`
+  — the only third-party code on the staged-PHI read path — was approved under CLAUDE.md's
+  PHI-touching-dependency gate at R1, by Alec's walkthrough and merge of PR #21 (commit
+  `6ede2ce`); nothing has been added to that path since.
 - 2026-08-15 — **R2 code-review round 2 (correctness; four numbers moved).** The headline one:
   the pools and the category seeder now read only the staged rows the **most recent import of
   each export still contains** (`currentImportIds`, importer.ts — the upsert re-stamps

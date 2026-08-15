@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { and, asc, eq, getTableColumns, inArray, sql } from "drizzle-orm";
 import type { PgColumn, PgDatabase, PgQueryResultHKT, PgTable } from "drizzle-orm/pg-core";
 
-import type { DeclaredTotal, RejectedRow, SourceAdapter } from "./types.js";
+import type { RejectedRow, SourceAdapter } from "./types.js";
 import {
   imports,
   stagedAppointments,
@@ -72,8 +72,9 @@ export type ImportSummary = {
   /** Report-layout rows the adapter skipped (preamble, sections, totals, calendar
    *  blocks). Not staged, not rejected — reported so the operator sees them. */
   readonly layoutRowCount: number;
-  /** The file's own `Total X = N` rows, for the CLI's per-file reconciliation. */
-  readonly declaredTotals: readonly DeclaredTotal[];
+  /** The counts the file's own `Total X = N` rows declare, for the CLI's per-file
+   *  reconciliation. */
+  readonly declaredTotals: readonly number[];
 };
 
 export type ImportRequest<E extends StagedEntity> = {

@@ -1,4 +1,4 @@
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
 
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
@@ -17,7 +17,13 @@ import {
   type LeakReportData,
 } from "./leak-report.js";
 import { calendarDate, isKnownTimeZone } from "../ingest/dates.js";
-import { errorCodeOf, makeErrorLine, readArg, UsageError } from "../ingest/import-cli.js";
+import {
+  errorCodeOf,
+  makeErrorLine,
+  readArg,
+  readLocalFile,
+  UsageError,
+} from "../ingest/import-cli.js";
 
 /**
  * The two recovery CLIs' bodies, separated from `scripts/` so they can be tested — the
@@ -46,16 +52,6 @@ export const errorLine = makeErrorLine(
   [UsageError, ConfigError, NoStagedRevenueError],
   "command failed",
 );
-
-/** Reads a file for the operator without letting its path reach the terminal: a
- *  directory a human chose can itself name a patient. */
-function readLocalFile(path: string, what: string): string {
-  try {
-    return readFileSync(path, "utf8");
-  } catch (err) {
-    throw new UsageError(`could not read the ${what} (${errorCodeOf(err) ?? "unreadable"})`);
-  }
-}
 
 export const SEED_CATEGORIES_USAGE = [
   "usage: pnpm --filter @medibun/api categories:seed -- --config <path>",
@@ -172,12 +168,11 @@ export async function runLeakReportCli(deps: {
     throw new UsageError("--min-age-days must be a whole number of days");
   }
   const minAgeDays = rawMinAge === undefined ? undefined : Number(rawMinAge);
+  const practiceName = readArg(deps.argv, "practice");
 
   const data = await buildLeakReport(deps.db, {
     timeZone,
-    ...(readArg(deps.argv, "practice") === undefined
-      ? {}
-      : { practiceName: readArg(deps.argv, "practice")! }),
+    ...(practiceName === undefined ? {} : { practiceName }),
     ...(asOf === undefined ? {} : { asOf }),
     ...(minAgeDays === undefined ? {} : { minAgeDays }),
   });

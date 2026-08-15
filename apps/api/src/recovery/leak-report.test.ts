@@ -49,7 +49,7 @@ const data = (parts: Partial<LeakReportData> = {}): LeakReportData => ({
     patientCount: 8,
     expectedValueCents: 400_000,
     contactability: { withPhone: 7, withEmail: 5, withEither: 8, withNeither: 0, notInRoster: 0 },
-    appointmentJoin: { rows: 90, resolvedRows: 86, futureRows: 12 },
+    appointmentJoin: { rows: 90, resolvedRows: 86 },
     excludedByFutureAppointment: 3,
     categoriesWithoutTicket: 0,
   },
@@ -134,6 +134,20 @@ describe("leak report — rendering", () => {
     expect(html).toMatch(/ambiguous/i);
   });
 
+  // The mirror of the consult pool's "carry no quoted amount" line: a category with no
+  // ticket contributes nothing to the dollars, and the report says so rather than letting
+  // the reader infer it from a dash in the table.
+  it("states how many pooled categories carry no ticket value", () => {
+    const report = data();
+    const html = prose(
+      renderLeakReport({ ...report, dormant: { ...report.dormant, categoriesWithoutTicket: 2 } }),
+    );
+
+    expect(html).toContain("2 categories in this pool carry no ticket value");
+    // Nothing to say when every category is valued.
+    expect(prose(renderLeakReport(report))).not.toContain("no ticket value");
+  });
+
   // A reader adds the column up. Two $125.50 categories print as two $126 rows, so a
   // footer that rounds the exact cents once — $251 — reads as an arithmetic error.
   it("totals the category rows as they are printed, not the cents behind them", () => {
@@ -183,7 +197,7 @@ describe("leak report — rendering", () => {
             withNeither: 0,
             notInRoster: 0,
           },
-          appointmentJoin: { rows: 0, resolvedRows: 0, futureRows: 0 },
+          appointmentJoin: { rows: 0, resolvedRows: 0 },
           excludedByFutureAppointment: 0,
           categoriesWithoutTicket: 0,
         },

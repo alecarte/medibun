@@ -169,12 +169,18 @@ export function dayBoundsFor(
   };
 }
 
+/** An instant as the calendar date it fell on in a zone, "YYYY-MM-DD". The columns behind
+ *  these instants are timestamptz, so `toISOString` would render a 9pm appointment in a
+ *  practice four hours behind UTC on the following day. Shares the memoized formatter
+ *  above: the recovery report dates every instant it prints through this. */
+export const zonedYmd = (at: Date, timeZone: string): string => ymdFormatter(timeZone).format(at);
+
 /** The practice-local calendar day containing `now`. */
 export function zonedDayBounds(
   now: Date,
   timeZone: string,
 ): { date: string; start: Date; end: Date } {
-  return dayBoundsFor(ymdFormatter(timeZone).format(now), timeZone);
+  return dayBoundsFor(zonedYmd(now, timeZone), timeZone);
 }
 
 export const telecomValue = (patient: Patient, system: "phone" | "email"): string | undefined =>

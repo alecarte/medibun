@@ -188,7 +188,7 @@ describe("4D adapter — patients (Patient Export)", () => {
     // US-style dates read the same as ISO ones.
     expect(rows[1]).toMatchObject({ dob: ymd(1971, 5, 13), spendCents: 8_900 });
     expect(layoutRowCount).toBe(PREAMBLE.length + 1);
-    expect(declaredTotals).toEqual([{ label: "Patients", count: 2 }]);
+    expect(declaredTotals).toEqual([2]);
   });
 
   // Data minimization (R0): the export ships address columns; nothing may stage them.
@@ -330,7 +330,7 @@ describe("4D adapter — appointments (Detailed Appointment List)", () => {
       phone: "555-0100",
       serviceCategoryRaw: "Injectables",
     });
-    expect(declaredTotals).toEqual([{ label: "Appointments", count: 3 }]);
+    expect(declaredTotals).toEqual([3]);
   });
 
   it("reads a winter wall time in the practice's own zone", () => {
@@ -526,7 +526,7 @@ describe("4D adapter — consults (Conversion By Provider)", () => {
       bookedRaw: "No",
       completedRaw: "Yes",
     });
-    expect(declaredTotals).toEqual([{ label: "Quotes", count: 1 }]);
+    expect(declaredTotals).toEqual([1]);
   });
 
   it("stages neither the coordinator nor days-to-book", () => {

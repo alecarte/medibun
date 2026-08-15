@@ -238,7 +238,14 @@ function entitySpecs(timeZone: string): EntitySpecs {
    *  DOB, phone, Appt Type. No patient-id and no status column exist — `status` stays
    *  mapped as an optional upgrade, nothing depends on it. Provider arrives as a section
    *  row and the day as a separator row above rows that carry only a time; the pre-pass
-   *  carries both down. Allergy and Description are NEVER mapped (see NEVER_MAPPED). */
+   *  carries both down. Allergy and Description are NEVER mapped (see NEVER_MAPPED).
+   *
+   *  Known limit, the first-run posture: `startAt` reads ONE column. If the real export
+   *  prints Date and Time as two separate columns, the alias list binds it to the date
+   *  column and every row rejects — loudly, on the first run, naming the column. Composing
+   *  two columns into one instant is the fix to make THEN, against the header the export
+   *  actually prints; building it speculatively means guessing both column names and the
+   *  precedence between them, and carrying a branch no export has yet asked for. */
   const appointments: EntitySpec<StagedAppointmentRow> = {
     // DERIVED identity: this export has no row id. sha256 over the row's normalized
     // identifying fields, plus an occurrence suffix (#2, #3 … in file order) that keeps
@@ -261,6 +268,13 @@ function entitySpecs(timeZone: string): EntitySpecs {
     // occurrence suffix goes stale. Both are visible as unmatched staging rows, and
     // neither can double-count a recovery: attribution runs off the Medplum booking, not
     // off staging. A source that carries a real row id never has this problem.
+    //
+    // The suffix binds to FILE ORDER, which is the last thing here that is not a property
+    // of the row: two rows identical but for their provider take #1 and #2 in the order
+    // the export prints its provider sections, so an export that orders those sections
+    // differently swaps which suffix carries which provider. Latent today — nothing reads
+    // `providerRaw` — and real the moment something does, which is the point at which the
+    // provider has to enter the hash (and the reconciliation cost of that be accepted).
     identity: {
       derive: (row) => [row.patientName, row.dob, row.phone, row.startAt, row.serviceCategoryRaw],
     },
