@@ -1,6 +1,7 @@
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 
 import { groupVisits, type TicketBasis, type TransactionInput } from "./categories.js";
+import { currentImportIds } from "../ingest/importer.js";
 import {
   serviceCategories,
   stagedAppointments,
@@ -8,6 +9,7 @@ import {
   stagedPatients,
   stagedTransactions,
 } from "../db/schema.js";
+import { dayBoundsFor } from "../staff.js";
 
 /**
  * Pool segmentation (R2c, RECOVERY_DESIGN.md §1). Two pools, both as R0 found them:
@@ -66,6 +68,16 @@ export type CategoryRow = {
   readonly ticketBasis: TicketBasis | null;
 };
 
+/** Rows staging still holds that the latest import of their export no longer contains —
+ *  excluded from the snapshot above, counted here so the report can state the exclusion
+ *  instead of quietly making it. */
+export type SupersededCounts = {
+  readonly patients: number;
+  readonly appointments: number;
+  readonly consults: number;
+  readonly transactions: number;
+};
+
 /** One read of staging; both pools compute from it. */
 export type StagingSnapshot = {
   readonly patients: readonly RosterRow[];
@@ -73,6 +85,7 @@ export type StagingSnapshot = {
   readonly consults: readonly ConsultRow[];
   readonly transactions: readonly TransactionInput[];
   readonly categories: readonly CategoryRow[];
+  readonly superseded: SupersededCounts;
 };
 
 const DAY_MS = 86_400_000;
@@ -229,11 +242,14 @@ function futureAppointments(
   appointments: readonly AppointmentRow[],
   roster: RosterIndex,
   asOf: string,
+  timeZone: string,
 ): { readonly patients: ReadonlySet<string>; readonly join: AppointmentJoin } {
-  // End of the as-of day, read in UTC. An evening appointment in a practice west of UTC
-  // therefore counts as future a few hours early — deliberately: over-excluding costs one
-  // opportunity, while under-excluding contacts a patient who already holds a booking.
-  const cutoff = Date.parse(`${asOf}T23:59:59.999Z`);
+  // "After the as-of date" is a calendar claim, so the bound is the PRACTICE's own
+  // midnight — the start of the day after — not UTC's. Read in UTC the bound lands
+  // hours late east of UTC, where that day has already ended, and hours early west of
+  // it; the first mistake is the one that matters, because it contacts a patient who
+  // already holds a booking. `dayBoundsFor` is the schedule's own DST-safe day window.
+  const cutoff = dayBoundsFor(asOf, timeZone).end.getTime();
   const patients = new Set<string>();
   let resolvedRows = 0;
   let futureRows = 0;
@@ -250,7 +266,9 @@ function futureAppointments(
       continue;
     }
     resolvedRows += 1;
-    if (row.startAt.getTime() > cutoff) {
+    // Inclusive of the bound: the practice's midnight belongs to the day it opens, so an
+    // appointment at 00:00 the morning after the as-of date is a future booking.
+    if (row.startAt.getTime() >= cutoff) {
       futureRows += 1;
       patients.add(identity);
     }
@@ -270,11 +288,16 @@ export type SnapshotIndexes = {
   readonly appointmentJoin: AppointmentJoin;
 };
 
-/** The shared passes, done once. Bound to `asOf`: the future-appointment join is measured
- *  from it, so indexes must not be carried across as-of dates. */
-export function prepareIndexes(snapshot: StagingSnapshot, asOf: string): SnapshotIndexes {
+/** The shared passes, done once. Bound to `asOf` AND to the practice's zone: the
+ *  future-appointment join is measured from the as-of day as that practice's clock ends
+ *  it, so indexes must not be carried across either. */
+export function prepareIndexes(
+  snapshot: StagingSnapshot,
+  asOf: string,
+  timeZone: string,
+): SnapshotIndexes {
   const roster = indexRoster(snapshot.patients);
-  const future = futureAppointments(snapshot.appointments, roster, asOf);
+  const future = futureAppointments(snapshot.appointments, roster, asOf, timeZone);
   return {
     roster,
     visits: paidVisits(snapshot.transactions),
@@ -330,8 +353,8 @@ export type DormantPool = {
  */
 export function dormantPool(
   snapshot: StagingSnapshot,
-  options: { readonly asOf: string },
-  indexes: SnapshotIndexes = prepareIndexes(snapshot, options.asOf),
+  options: { readonly asOf: string; readonly timeZone: string },
+  indexes: SnapshotIndexes = prepareIndexes(snapshot, options.asOf, options.timeZone),
 ): DormantPool {
   const { asOf } = options;
   const categories = new Map(
@@ -441,8 +464,8 @@ export type ConsultPool = {
  */
 export function unconvertedConsults(
   snapshot: StagingSnapshot,
-  options: { readonly asOf: string; readonly minAgeDays?: number },
-  indexes: SnapshotIndexes = prepareIndexes(snapshot, options.asOf),
+  options: { readonly asOf: string; readonly timeZone: string; readonly minAgeDays?: number },
+  indexes: SnapshotIndexes = prepareIndexes(snapshot, options.asOf, options.timeZone),
 ): ConsultPool {
   const { asOf } = options;
   const minAgeDays = options.minAgeDays ?? DEFAULT_CONSULT_MIN_AGE_DAYS;
@@ -515,8 +538,25 @@ export function unconvertedConsults(
   };
 }
 
+/**
+ * Rows the LATEST import of their export still contains, and a count of the rest.
+ * Staging never deletes, so a corrected or voided source line leaves its old row behind —
+ * and for the two exports with derived identities the correction stages as a NEW row, so
+ * both spellings of one visit would net together and inflate every number downstream.
+ * `currentImportIds` is the rule and carries its assumption (each export is a full dump of
+ * its range); this is where the exclusion is counted so the report can state it.
+ */
+const currentRows = <T extends { readonly importId: string }>(
+  rows: readonly T[],
+  current: ReadonlySet<string>,
+): { readonly rows: readonly T[]; readonly superseded: number } => {
+  const kept = rows.filter((row) => current.has(row.importId));
+  return { rows: kept, superseded: rows.length - kept.length };
+};
+
 /** Reads staging once, selecting only the columns the pools compute from. */
 export async function readStaging(db: Db): Promise<StagingSnapshot> {
+  const current = await currentImportIds(db);
   const [patients, appointments, consults, transactions, categories] = await Promise.all([
     db
       .select({
@@ -526,6 +566,7 @@ export async function readStaging(db: Db): Promise<StagingSnapshot> {
         dob: stagedPatients.dob,
         phone: stagedPatients.phone,
         email: stagedPatients.email,
+        importId: stagedPatients.importId,
       })
       .from(stagedPatients),
     db
@@ -535,6 +576,7 @@ export async function readStaging(db: Db): Promise<StagingSnapshot> {
         dob: stagedAppointments.dob,
         phone: stagedAppointments.phone,
         startAt: stagedAppointments.startAt,
+        importId: stagedAppointments.importId,
       })
       .from(stagedAppointments),
     db
@@ -544,6 +586,7 @@ export async function readStaging(db: Db): Promise<StagingSnapshot> {
         consultDate: stagedConsults.consultDate,
         quoteAmountCents: stagedConsults.quoteAmountCents,
         bookedRaw: stagedConsults.bookedRaw,
+        importId: stagedConsults.importId,
       })
       .from(stagedConsults),
     db
@@ -552,6 +595,7 @@ export async function readStaging(db: Db): Promise<StagingSnapshot> {
         transactionDate: stagedTransactions.transactionDate,
         serviceCategoryRaw: stagedTransactions.serviceCategoryRaw,
         amountCents: stagedTransactions.amountCents,
+        importId: stagedTransactions.importId,
       })
       .from(stagedTransactions),
     db
@@ -565,5 +609,21 @@ export async function readStaging(db: Db): Promise<StagingSnapshot> {
       .from(serviceCategories),
   ]);
 
-  return { patients, appointments, consults, transactions, categories };
+  const roster = currentRows(patients, current);
+  const booked = currentRows(appointments, current);
+  const quoted = currentRows(consults, current);
+  const paid = currentRows(transactions, current);
+  return {
+    patients: roster.rows,
+    appointments: booked.rows,
+    consults: quoted.rows,
+    transactions: paid.rows,
+    categories,
+    superseded: {
+      patients: roster.superseded,
+      appointments: booked.superseded,
+      consults: quoted.superseded,
+      transactions: paid.superseded,
+    },
+  };
 }

@@ -10,6 +10,7 @@ import {
   type ConsultPool,
   type DormantPool,
   type StagingSnapshot,
+  type SupersededCounts,
 } from "./segmentation.js";
 import { imports, type StagedEntity } from "../db/schema.js";
 
@@ -86,6 +87,9 @@ export type LeakReportData = {
   readonly window: DataWindow;
   readonly staged: StagedCounts;
   readonly ledger: readonly ImportLedgerEntry[];
+  /** Staged rows the latest import of their export no longer contains — read by nothing
+   *  above, stated in the document rather than dropped in silence. */
+  readonly superseded: SupersededCounts;
   readonly dormant: DormantPool;
   readonly consults: ConsultPool;
   /** Dormant expected value plus the unconverted consults' quoted dollars. */
@@ -94,7 +98,8 @@ export type LeakReportData = {
 
 export type LeakReportOptions = {
   /** The PRACTICE's own zone. Required, never defaulted: staging holds instants, and
-   *  every date in this document is the local calendar day one fell on. */
+   *  every date in this document is the local calendar day one fell on — as is the
+   *  "holds no appointment after the as-of date" cutoff the dormant pool measures. */
   readonly timeZone: string;
   readonly practiceName?: string;
   /** Defaults to the export's own horizon — the newest staged transaction date. */
@@ -184,12 +189,14 @@ export async function buildLeakReport(db: Db, options: LeakReportOptions): Promi
   }
   // The roster index, the netted visits, and the future-appointment join are the same for
   // both pools — swept once here rather than once per pool.
-  const indexes = prepareIndexes(snapshot, asOf);
-  const dormant = dormantPool(snapshot, { asOf }, indexes);
+  const { timeZone } = options;
+  const indexes = prepareIndexes(snapshot, asOf, timeZone);
+  const dormant = dormantPool(snapshot, { asOf, timeZone }, indexes);
   const consults = unconvertedConsults(
     snapshot,
     {
       asOf,
+      timeZone,
       ...(options.minAgeDays === undefined ? {} : { minAgeDays: options.minAgeDays }),
     },
     indexes,
@@ -207,6 +214,7 @@ export async function buildLeakReport(db: Db, options: LeakReportOptions): Promi
       transactions: snapshot.transactions.length,
     },
     ledger: await readLedger(db, localDay),
+    superseded: snapshot.superseded,
     dormant,
     consults,
     headlineCents: dormant.expectedValueCents + consults.quotedValueCents,
@@ -233,6 +241,11 @@ const COUNTS = new Intl.NumberFormat("en-US");
  *  Exported so the CLI's summary line and the document itself never disagree. */
 export const formatDollars = (cents: number): string => DOLLARS.format(Math.round(cents / 100));
 const money = formatDollars;
+/** A column total, added up the way the reader adds it: the sum of the ROWS AS PRINTED,
+ *  not the exact cents rounded once. Two $125.50 rows print $126 each, and a $251 total
+ *  under them reads as an arithmetic error. The data object keeps the exact cents. */
+const moneyTotal = (cents: readonly number[]): string =>
+  DOLLARS.format(cents.reduce((sum, value) => sum + Math.round(value / 100), 0));
 const count = (value: number): string => COUNTS.format(value);
 const plural = (value: number, one: string, many: string): string =>
   `${count(value)} ${value === 1 ? one : many}`;
@@ -399,7 +412,7 @@ function dormantSection(pool: DormantPool): string {
             <td class="num">${count(pool.opportunityCount)}</td>
             <td class="num"></td>
             <td></td>
-            <td class="num">${money(pool.expectedValueCents)}</td>
+            <td class="num">${moneyTotal(pool.categories.map((c) => c.expectedValueCents))}</td>
           </tr>
         </tfoot>
       </table>
@@ -539,9 +552,21 @@ function dataQualitySection(data: LeakReportData): string {
         <tbody>${ledger}</tbody>
       </table>
       <p>
-        Staging currently holds ${count(data.staged.patients)} patient records,
+        The figures above are computed from ${count(data.staged.patients)} patient records,
         ${count(data.staged.appointments)} appointments, ${count(data.staged.consults)} consults,
         and ${count(data.staged.transactions)} revenue rows.
+      </p>
+      <h3>Superseded rows</h3>
+      <p>
+        Imports never delete: a line corrected or voided in the practice system arrives as a new
+        row and the original stays behind. Every figure in this report reads only the rows the
+        most recent import of each export still contains, so
+        ${plural(data.superseded.patients, "patient record", "patient records")},
+        ${plural(data.superseded.appointments, "appointment", "appointments")},
+        ${plural(data.superseded.consults, "consult", "consults")}, and
+        ${plural(data.superseded.transactions, "revenue row", "revenue rows")} superseded by a
+        later import were left out. That reading holds because each export is a full dump of its
+        date range; a narrower re-pull would supersede rows it simply never covered.
       </p>
       <h3>Reconciliation</h3>
       <p>

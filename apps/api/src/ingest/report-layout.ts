@@ -29,10 +29,13 @@ import { SourceFileError, type DeclaredTotal } from "./types.js";
  *   - exactly ONE non-empty cell → resolved in this order, and the order is the rule:
  *     a calendar date is a DAY SEPARATOR (entities that carry a day); a row whose next
  *     non-blank neighbour is a reprinted header row is a page-break TITLE (adjacency is
- *     the only honest signal — the text is not); anything else is a SECTION row whose
- *     label becomes group context (entities that carry a section); failing all three, a
- *     cell sitting in a column the entity's map CONSUMES is a data row — the Patient
- *     Export prints a roster row with only its id filled — and a cell anywhere else is
+ *     the only honest signal — the text is not); after those two, WHERE the cell sits
+ *     decides, because what it says cannot: a cell in the entity's own SECTION column, or
+ *     in a column the map consumes nothing from, is a SECTION row whose label becomes
+ *     group context (entities that carry a section) — never a cell holding only a TIME,
+ *     which the section label would reduce to its minutes; a cell in any OTHER column the
+ *     map consumes is a one-cell DATA row — the Patient Export prints a roster row with
+ *     only its id filled — and stages or rejects on its own merits; anything left is
  *     furniture;
  *   - a row whose PATIENT COLUMN is blank or holds a non-patient marker ("#",
  *     "Happening") → a non-patient calendar block (R0 (iv)), furniture; a marker in any
@@ -49,6 +52,17 @@ import { SourceFileError, type DeclaredTotal } from "./types.js";
  * alternative (swallowing the whole run) is worse: it drops a section row that happens to
  * sit against the page break, and every row after the break then inherits the PREVIOUS
  * section silently.
+ *
+ * The section rule carries its own limit, and it is the deliberate side of the trade: a
+ * section row 4D prints in a column the entity MAPS — its date column, say, rather than
+ * the provider column the context flows into — reads as a one-cell data row. It rejects
+ * with the column at fault (or, in the appointment export, drops as a non-patient
+ * calendar block), and the rows beneath it keep the previous section instead of gaining
+ * one. Taking any lone cell as the section is what this replaces, and that was worse in
+ * both directions: a lone `11:00` became a provider called `00`, and a stray patient name
+ * in the consult export became the provider of every row under it. Which column 4D prints
+ * its section rows in is a first-run observation; if it is not the carried column, the
+ * pre-pass needs that column named separately in `CarrySpec`.
  */
 
 /** One column the entity's map can consume, with the aliases it may be spelled as. */
@@ -231,6 +245,7 @@ export function normalizeReport(content: string, spec: LayoutSpec): NormalizedFi
   }
 
   const carry = spec.carry ?? {};
+  const sectionAt = carry.section === undefined ? undefined : columnAt.get(carry.section);
   const body = items.slice(headerAt + 1);
 
   // Every body row's shape, decided before anything is carried: a lone cell can only be
@@ -294,9 +309,11 @@ export function normalizeReport(content: string, spec: LayoutSpec): NormalizedFi
       return;
     }
 
-    // A lone cell is furniture in three ways before it can be anything else — and only
-    // then, if it sits in a column the map consumes, is it a one-cell DATA row that
-    // falls through to the rest of this loop.
+    // A lone cell is a day separator or a page-break title before it can be anything
+    // else; after that WHERE it sits decides, because what it SAYS cannot. A cell in a
+    // column the map consumes is that column's value — a one-cell DATA row that falls
+    // through to the rest of this loop and stages or rejects on its merits — unless the
+    // column it sits in is the section's own.
     if (kind === "lone") {
       const cellAt = cells.findIndex((cell) => cell !== "");
       const value = cells[cellAt]!;
@@ -310,7 +327,14 @@ export function normalizeReport(content: string, spec: LayoutSpec): NormalizedFi
         layoutRowCount += 1;
         return;
       }
-      if (carry.section !== undefined) {
+      // A cell holding only a TIME is never group context, wherever it sits: the section
+      // label is stripped off it and "11:00" becomes a provider called "00", which then
+      // rides down onto every row beneath it.
+      const isSection =
+        carry.section !== undefined &&
+        !TIME_ONLY.test(value) &&
+        (cellAt === sectionAt || !mappedColumns.has(cellAt));
+      if (isSection) {
         section = value.replace(SECTION_LABEL, "").trim();
         layoutRowCount += 1;
         return;
@@ -335,7 +359,6 @@ export function normalizeReport(content: string, spec: LayoutSpec): NormalizedFi
     }
 
     const record = [...item.record];
-    const sectionAt = carry.section === undefined ? undefined : columnAt.get(carry.section);
     if (
       sectionAt !== undefined &&
       section !== undefined &&

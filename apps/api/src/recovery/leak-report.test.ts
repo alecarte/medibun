@@ -21,6 +21,7 @@ const data = (parts: Partial<LeakReportData> = {}): LeakReportData => ({
     consultsTo: ymd(2026, 5, 1),
   },
   staged: { patients: 40, appointments: 90, consults: 12, transactions: 300 },
+  superseded: { patients: 0, appointments: 0, consults: 0, transactions: 4 },
   ledger: [
     {
       entity: "patients",
@@ -131,6 +132,29 @@ describe("leak report — rendering", () => {
     // The consult pool's honesty section.
     expect(html).toContain("name");
     expect(html).toMatch(/ambiguous/i);
+  });
+
+  // A reader adds the column up. Two $125.50 categories print as two $126 rows, so a
+  // footer that rounds the exact cents once — $251 — reads as an arithmetic error.
+  it("totals the category rows as they are printed, not the cents behind them", () => {
+    const report = data();
+    const row = report.dormant.categories[0]!;
+    const html = renderLeakReport({
+      ...report,
+      dormant: {
+        ...report.dormant,
+        categories: [
+          { ...row, expectedValueCents: 12_550 },
+          { ...row, code: "peels", display: "Peels", expectedValueCents: 12_550 },
+        ],
+        expectedValueCents: 25_100,
+      },
+    });
+    const footer = html.slice(html.indexOf("<tfoot>"), html.indexOf("</tfoot>"));
+
+    expect(prose(html)).toContain("$126");
+    expect(footer).toContain("$252");
+    expect(footer).not.toContain("$251");
   });
 
   it("reads a report with nothing in it without inventing numbers", () => {

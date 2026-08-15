@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { and, eq, getTableColumns, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, getTableColumns, inArray, sql } from "drizzle-orm";
 import type { PgColumn, PgDatabase, PgQueryResultHKT, PgTable } from "drizzle-orm/pg-core";
 
 import type { DeclaredTotal, RejectedRow, SourceAdapter } from "./types.js";
@@ -49,6 +49,17 @@ const STAGING_TABLES: Record<StagedEntity, StagingTable> = {
  *  rows; Postgres caps a statement at 65535 bind parameters. */
 const UPSERT_CHUNK = 500;
 
+/** Columns an upsert never refreshes from the incoming export: the pair it matched on,
+ *  the row's own key and creation stamp, and the two columns this service sets itself. */
+const NEVER_REFRESHED = new Set([
+  "id",
+  "sourceSystem",
+  "sourceIdentity",
+  "createdAt",
+  "importId",
+  "updatedAt",
+]);
+
 export type ImportSummary = {
   readonly importId: string;
   /** Data rows read from the file = staged + rejected. */
@@ -81,6 +92,31 @@ export type ImportService = {
    *  when the file cannot be staged at all — nothing is written in that case. */
   readonly runImport: <E extends StagedEntity>(request: ImportRequest<E>) => Promise<ImportSummary>;
 };
+
+/**
+ * The run stamp a CURRENT staged row carries: the latest import per (source system,
+ * entity). The upsert above re-stamps `import_id` on every row a fresh export contains,
+ * so a row still carrying an older run's stamp is precisely a row the newest export no
+ * longer has — a line voided or corrected at the source, whose replacement staged under a
+ * new derived identity while the original stayed behind (imports never delete).
+ *
+ * This holds only while each export is a FULL dump of its date range, which is what R0
+ * recorded (the revenue re-pull covers the whole 24-month window). A narrower re-pull
+ * would eclipse every row outside its range, which is why every reader counts what it
+ * excluded rather than filtering quietly.
+ */
+export async function currentImportIds(db: Db): Promise<ReadonlySet<string>> {
+  const runs = await db
+    .select({ id: imports.id, sourceSystem: imports.sourceSystem, entity: imports.entity })
+    .from(imports)
+    .orderBy(asc(imports.createdAt));
+
+  const latest = new Map<string, string>();
+  for (const run of runs) {
+    latest.set(`${run.sourceSystem}\u0000${run.entity}`, run.id);
+  }
+  return new Set(latest.values());
+}
 
 /** Path chain out, filename in: a directory a human chose can itself name a patient
  *  ("~/exports/jane-doe/roster.csv"), so nothing path-shaped reaches a column. */
@@ -139,15 +175,24 @@ export function createImportService(deps: { readonly db: Db }): ImportService {
 
         // Everything the adapter filled is refreshed from the incoming export; the
         // run stamp and updatedAt come from this run. id/createdAt stay put.
+        //
+        // Which columns those are is read from the TABLE — the same schema source the
+        // conflict target uses — intersected with the keys this batch actually fills.
+        // Neither half is enough on its own: the schema alone would refresh a column no
+        // adapter fills, and `excluded.medplum_patient_id` is null on every upsert, so a
+        // promoted identity link would be cleared by a routine re-import; one sample row
+        // alone would silently drop a column that row happens to omit, leaving a stale
+        // value behind a ledger row that says the run reconciled.
+        const filled = new Set(values.flatMap((row) => Object.keys(row)));
         const set: Record<string, unknown> = {
           importId,
           updatedAt: new Date(),
         };
-        for (const key of Object.keys(values[0] ?? {})) {
-          if (key === "sourceIdentity") {
+        for (const [key, column] of Object.entries(columns)) {
+          if (!filled.has(key) || NEVER_REFRESHED.has(key)) {
             continue;
           }
-          set[key] = sql`excluded.${sql.identifier(columns[key]!.name)}`;
+          set[key] = sql`excluded.${sql.identifier(column.name)}`;
         }
 
         for (const batch of chunk(values, UPSERT_CHUNK)) {

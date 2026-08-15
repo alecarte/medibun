@@ -75,6 +75,10 @@ const appointmentRow = (
     ...extra,
   });
 
+/** A provider section row as the report prints one: a lone cell in the PROVIDER column,
+ *  the column the pre-pass carries group context into. */
+const appointmentSection = (provider: string) => sparseRow(APPOINTMENT_WIDTH, { 1: provider });
+
 /** Conversion By Provider (R0): columns at A, D, G, I, N, O, R, T, W, Y — sparse by
  *  construction, which is exactly what the pre-pass has to survive. */
 const CONSULT_WIDTH = 25;
@@ -90,6 +94,8 @@ const CONSULT_HEADERS = sparseRow(CONSULT_WIDTH, {
   22: "Completed",
   24: "Days To Book",
 });
+/** The same, for the consult export: its Provider column is at I. */
+const consultSection = (provider: string) => sparseRow(CONSULT_WIDTH, { 8: provider });
 const consultRow = (quote: string, date: string, extra: Readonly<Record<number, string>> = {}) =>
   sparseRow(CONSULT_WIDTH, {
     0: date,
@@ -297,7 +303,7 @@ describe("4D adapter — patients (Patient Export)", () => {
 describe("4D adapter — appointments (Detailed Appointment List)", () => {
   it("carries provider sections and day separators down onto the rows beneath them", () => {
     const content = reportFile(PREAMBLE, APPOINTMENT_HEADERS, [
-      ["Dr Fakeman"],
+      appointmentSection("Dr Fakeman"),
       [mdy(2026, 7, 15)],
       appointmentRow("9:00 AM", "Testerly F"),
       appointmentRow("2:30 PM", "Otherly F"),
@@ -354,7 +360,7 @@ describe("4D adapter — appointments (Detailed Appointment List)", () => {
   // R0 (iv): the calendar carries blocks that are not patients at all.
   it("drops non-patient calendar blocks as layout, not as rejects", () => {
     const content = reportFile(PREAMBLE, APPOINTMENT_HEADERS, [
-      ["Dr Fakeman"],
+      appointmentSection("Dr Fakeman"),
       [mdy(2026, 7, 15)],
       appointmentRow("09:00", "Testerly F"),
       appointmentRow("10:00", "Happening", { 7: "Staff meeting" }),
@@ -437,8 +443,14 @@ describe("4D adapter — appointments (Detailed Appointment List)", () => {
     const layouts = [
       // Carried from a section row, from a DIFFERENT section row, printed in its own
       // column, and absent because the break left the row above the row that names it.
-      reportFile([], APPOINTMENT_HEADERS, [["Dr Fakeman"], appointmentRow(when, "Testerly F")]),
-      reportFile([], APPOINTMENT_HEADERS, [["Dr Otherly"], appointmentRow(when, "Testerly F")]),
+      reportFile([], APPOINTMENT_HEADERS, [
+        appointmentSection("Dr Fakeman"),
+        appointmentRow(when, "Testerly F"),
+      ]),
+      reportFile([], APPOINTMENT_HEADERS, [
+        appointmentSection("Dr Otherly"),
+        appointmentRow(when, "Testerly F"),
+      ]),
       reportFile([], APPOINTMENT_HEADERS, [
         appointmentRow(when, "Testerly F", { 1: "Dr Fakeman" }),
       ]),
@@ -496,7 +508,7 @@ describe("4D adapter — consults (Conversion By Provider)", () => {
     const content = reportFile(
       [["Fakeman Plastic Surgery"], ["Conversion By Provider"]],
       CONSULT_HEADERS,
-      [["Dr Fakeman"], consultRow("q-1", ymd(2026, 7, 15)), ["Total Quotes = 1"]],
+      [consultSection("Dr Fakeman"), consultRow("q-1", ymd(2026, 7, 15)), ["Total Quotes = 1"]],
     );
 
     const { rows, rejects, declaredTotals } = adapter.parse("consults", content);
@@ -532,6 +544,23 @@ describe("4D adapter — consults (Conversion By Provider)", () => {
 
     expect(rows).toEqual([]);
     expect(rejects[0]?.reason).toContain("patient");
+  });
+
+  // A lone cell in a column the map CONSUMES is that column's value, not group context.
+  // Read as the section, a stray patient name would ride down as the provider of every
+  // consult beneath it; read as the row it is, it rejects with the column at fault.
+  it("rejects a lone patient name rather than reading it as the provider section", () => {
+    const content = reportFile([], CONSULT_HEADERS, [
+      consultSection("Dr Fakeman"),
+      sparseRow(CONSULT_WIDTH, { 3: "Testerly Fakeman" }),
+      consultRow("q-1", ymd(2026, 7, 15)),
+    ]);
+
+    const { rows, rejects } = adapter.parse("consults", content);
+
+    expect(rejects).toHaveLength(1);
+    expect(rejects[0]?.reason).toContain("consult date");
+    expect(rows.map((r) => r.providerRaw)).toEqual(["Dr Fakeman"]);
   });
 
   it("rejects a quote amount it cannot read rather than staging a zero", () => {
@@ -577,6 +606,32 @@ describe("4D adapter — transactions (Revenue by Staff)", () => {
     );
 
     expect(adapter.parse("transactions", content).rows[0]?.transactionDate).toBe(ymd(2026, 7, 15));
+  });
+
+  // A refund is as likely to be printed the way an accounting package writes one:
+  // parentheses for the sign, which may also sit on either side of the currency symbol.
+  it("reads a refund written in accounting spelling", () => {
+    const content = reportFile([], TRANSACTION_HEADERS, [
+      transactionRow("p-1", mdy(2026, 7, 15), "(250.00)"),
+      transactionRow("p-2", mdy(2026, 7, 16), "($250.00)"),
+      transactionRow("p-3", mdy(2026, 7, 17), "$-250.00"),
+    ]);
+
+    const { rows, rejects } = adapter.parse("transactions", content);
+
+    expect(rejects).toEqual([]);
+    expect(rows.map((r) => r.amountCents)).toEqual([-25_000, -25_000, -25_000]);
+  });
+
+  it("rejects a bracketed value that is not money at all", () => {
+    const content = reportFile([], TRANSACTION_HEADERS, [
+      transactionRow("p-1", mdy(2026, 7, 15), "(abc)"),
+    ]);
+
+    const { rows, rejects } = adapter.parse("transactions", content);
+
+    expect(rows).toEqual([]);
+    expect(rejects[0]?.reason).toContain("amount");
   });
 
   it("rejects an unreadable amount rather than staging a zero", () => {

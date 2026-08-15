@@ -203,8 +203,50 @@ describe("import CLI — what reaches the operator", () => {
     const result = await run(path);
 
     const printed = out.join("\n");
-    expect(printed).toContain("⚠ file declares 9 · staged 1 + rejected 0 (8 unaccounted)");
+    expect(printed).toContain(
+      "⚠ no declared total matches · closest 9 · staged 1 + rejected 0 (8 unaccounted)",
+    );
     expect(result.rejectedCount).toBe(0);
+  });
+
+  // A file declares more than one total, and the largest is not the row count: a dollar
+  // total reads as 152,340. Every declared number is checked, so the row total is found.
+  it("checks the run against every total the file declares, not the largest", async () => {
+    const path = join(dir, "roster.csv");
+    writeFileSync(
+      path,
+      reportFile([], PATIENT_HEADERS, [
+        goodRow("p-1"),
+        badRow("p-2"),
+        ["Total Collected = 152,340"],
+        ["Total Patients = 2"],
+      ]),
+    );
+
+    await run(path);
+
+    expect(out.join("\n")).toContain("file declares 2 · staged 1 + rejected 1 ✓");
+  });
+
+  // Per-section subtotals with no grand total: the honest line names the closest number
+  // as the closest, rather than claiming the file declared a row count it never did.
+  it("says so plainly when no declared total matches the run", async () => {
+    const path = join(dir, "roster.csv");
+    writeFileSync(
+      path,
+      reportFile([], PATIENT_HEADERS, [
+        goodRow("p-1"),
+        ["Total Patients = 1"],
+        goodRow("p-2"),
+        ["Total Patients = 1"],
+      ]),
+    );
+
+    await run(path);
+
+    expect(out.join("\n")).toContain(
+      "⚠ no declared total matches · closest 1 · staged 2 + rejected 0 (1 unaccounted)",
+    );
   });
 
   it("prints no reconciliation line when the export declares no total", async () => {

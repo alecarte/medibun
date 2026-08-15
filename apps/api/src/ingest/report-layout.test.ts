@@ -151,10 +151,13 @@ describe("report layout — locating the real header row", () => {
   });
 });
 
+/** A section row as the report prints one: a lone cell in the SECTION's own column. */
+const sectionRow = (value: string) => sparseRow(WIDTH, { 1: value });
+
 describe("report layout — classifying the report's furniture", () => {
   it("skips a reprinted title + header block without carrying the title as a section", () => {
     const content = reportFile(PREAMBLE, HEADERS, [
-      sparseRow(WIDTH, { 0: "Dr Fakeman" }),
+      sectionRow("Dr Fakeman"),
       dataRow("09:00", "Testerly F"),
       // The page break reprints a title — which R0 warns can differ from the report's
       // own name — immediately above a reprinted header row.
@@ -178,9 +181,9 @@ describe("report layout — classifying the report's furniture", () => {
   // row after the break would silently inherit the PREVIOUS section's provider.
   it("keeps a section row that sits immediately before a page-break block", () => {
     const content = reportFile(PREAMBLE, HEADERS, [
-      sparseRow(WIDTH, { 0: "Dr Fakeman" }),
+      sectionRow("Dr Fakeman"),
       dataRow("09:00", "Testerly F"),
-      sparseRow(WIDTH, { 0: "Dr Otherly" }),
+      sectionRow("Dr Otherly"),
       sparseRow(WIDTH, { 0: "Detailed Appointment List" }),
       HEADERS,
       dataRow("10:00", "Otherly F"),
@@ -198,9 +201,9 @@ describe("report layout — classifying the report's furniture", () => {
 
   it("carries a section row's provider down onto rows that leave the column blank", () => {
     const content = reportFile(PREAMBLE, HEADERS, [
-      sparseRow(WIDTH, { 0: "Dr Fakeman" }),
+      sectionRow("Dr Fakeman"),
       dataRow("09:00", "Testerly F"),
-      sparseRow(WIDTH, { 0: "Provider: Dr Otherly" }),
+      sectionRow("Provider: Dr Otherly"),
       dataRow("10:00", "Otherly F"),
       // A row that names its own provider keeps it — carry-down fills blanks only.
       dataRow("11:00", "Thirdly F", "Dr Thirdly"),
@@ -212,6 +215,25 @@ describe("report layout — classifying the report's furniture", () => {
       "Dr Fakeman",
       "Dr Otherly",
       "Dr Thirdly",
+    ]);
+  });
+
+  // A lone cell in a column the map CONSUMES is that column's value, not group context:
+  // read as a section, "11:00" loses its digits to the section label and becomes a
+  // provider called "00" that then rides down onto every row beneath it.
+  it("never reads a lone cell in a mapped column as the section", () => {
+    const content = reportFile(PREAMBLE, HEADERS, [
+      sectionRow("Dr Fakeman"),
+      dataRow("09:00", "Testerly F"),
+      sparseRow(WIDTH, { 0: "11:00" }),
+      dataRow("12:00", "Otherly F"),
+    ]);
+
+    const file = normalizeReport(content, SPEC);
+
+    expect(file.rows.map((r) => cellsOf(r.record, file.columnAt).provider)).toEqual([
+      "Dr Fakeman",
+      "Dr Fakeman",
     ]);
   });
 
@@ -297,7 +319,7 @@ describe("report layout — classifying the report's furniture", () => {
   it("skips blank rows and counts every skipped row exactly once", () => {
     const content = reportFile(PREAMBLE, HEADERS, [
       sparseRow(WIDTH, {}),
-      sparseRow(WIDTH, { 0: "Dr Fakeman" }),
+      sectionRow("Dr Fakeman"),
       dataRow("09:00", "Testerly F"),
       sparseRow(WIDTH, { 0: "Total = 1" }),
     ]);
@@ -310,7 +332,7 @@ describe("report layout — classifying the report's furniture", () => {
 
   it("reports each data row's line number and verbatim source line", () => {
     const content = reportFile(PREAMBLE, HEADERS, [
-      sparseRow(WIDTH, { 0: "Dr Fakeman" }),
+      sectionRow("Dr Fakeman"),
       dataRow("09:00", "Testerly F"),
     ]);
 
@@ -365,6 +387,35 @@ describe("report layout — a lone cell in a column the entity maps", () => {
 
     expect(file.rows.map((r) => r.record[0])).toEqual(["p-1", "p-2"]);
     expect(file.layoutRowCount).toBe(2);
+  });
+});
+
+/**
+ * The Conversion By Provider shape: a section to carry, no calendar blocks, and a patient
+ * column that is the report's only join key. A lone cell there is a broken data row, not
+ * the provider — read as a section it would ride down onto every row beneath it.
+ */
+describe("report layout — a lone cell in a mapped column of a section-carrying entity", () => {
+  const CONSULT_HEADERS = ["Consult Date", "Patient", "Provider"];
+  const CONSULT_SPEC: LayoutSpec = {
+    columns: [column("consult date", true), column("patient", true), column("provider")],
+    carry: { section: "provider" },
+  };
+
+  it("passes it through as a data row and leaves the section standing", () => {
+    const content = reportFile([], CONSULT_HEADERS, [
+      sparseRow(3, { 2: "Dr Fakeman" }),
+      [ymd(2026, 7, 15), "Testerly F", ""],
+      sparseRow(3, { 1: "Otherly F" }),
+      [ymd(2026, 7, 16), "Thirdly F", ""],
+    ]);
+
+    const file = normalizeReport(content, CONSULT_SPEC);
+
+    // The lone patient name reaches the adapter, which rejects it on its own merits
+    // (its consult date is missing) instead of it vanishing as the provider.
+    expect(file.rows.map((r) => r.record[1])).toEqual(["Testerly F", "Otherly F", "Thirdly F"]);
+    expect(file.rows.map((r) => r.record[2])).toEqual(["Dr Fakeman", "Dr Fakeman", "Dr Fakeman"]);
   });
 });
 

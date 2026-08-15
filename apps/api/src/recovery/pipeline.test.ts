@@ -348,9 +348,14 @@ describe("the leak report", () => {
     expect(out.join("\n")).not.toContain(dir);
   });
 
-  it("re-asserts owner-only permissions when overwriting an existing report", async () => {
-    // writeFileSync's mode applies on CREATE only — a pre-existing world-readable file
-    // would otherwise keep its looser permissions across a re-run.
+  it("states what the latest import superseded, none of it here", () => {
+    expect(reportProse).toContain("0 revenue rows superseded by a later import");
+  });
+
+  it("replaces a pre-existing world-readable report instead of writing into it", async () => {
+    // writeFileSync's mode applies on CREATE only, so a file already sitting there would
+    // otherwise keep its looser permissions — holding a confidential report at 0644 for
+    // as long as it takes the next line to run. The previous file is removed first.
     const stalePath = join(dir, "stale-report.html");
     writeFileSync(stalePath, "stale");
     chmodSync(stalePath, 0o644);
@@ -359,5 +364,76 @@ describe("the leak report", () => {
 
     expect(statSync(stalePath).mode & 0o777).toBe(0o600);
     expect(readFileSync(stalePath, "utf8")).not.toContain("stale");
+  });
+});
+
+/**
+ * A corrected export, which is what makes the "read only the latest import" rule load
+ * bearing. 4D voids a revenue line and re-prints it at another amount: the correction
+ * stages under a NEW identity (the amount is hashed into the derived one) while the old
+ * row stays behind, because imports never delete. Read together, the two net into one
+ * visit and inflate the ticket, the expected value, and the headline above it.
+ */
+describe("the leak report — a corrected re-import", () => {
+  const VISIT_DATE = ymd(2025, 1, 10);
+  let corrected: ReturnType<typeof drizzle>;
+  let run: Awaited<ReturnType<typeof runLeakReportCli>>;
+
+  beforeAll(async () => {
+    corrected = await bootTestDb();
+    const importer = createImportService({ db: corrected });
+    const adapter = createFourDAdapter(TZ);
+    const revenue = (rows: readonly (readonly string[])[]) => csvFile(TRANSACTION_HEADERS, rows);
+    const runImport = (content: string) =>
+      importer.runImport({ adapter, entity: "transactions", fileName: "revenue.csv", content });
+
+    await runImport(
+      revenue([
+        [VISIT_DATE, "p-1", INJECTABLES, "500.00"],
+        [VISIT_DATE, "p-8", INJECTABLES, "300.00"],
+      ]),
+    );
+    // The next export prices p-1's line at $250 and no longer carries p-8's line at all.
+    await runImport(revenue([[VISIT_DATE, "p-1", INJECTABLES, "250.00"]]));
+
+    const configPath = join(dir, "corrected-cadence.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({ categories: { [INJECTABLES]: { expectedReturnIntervalDays: 120 } } }),
+    );
+    await runSeedCategoriesCli({ argv: ["--config", configPath], db: corrected, out: () => {} });
+    run = await runLeakReportCli({
+      argv: ["--out", join(dir, "corrected.html"), "--timezone", TZ, "--as-of", AS_OF],
+      db: corrected,
+      out: () => {},
+    });
+  }, 60_000);
+
+  it("keeps every staged row but tickets the category from the latest export alone", async () => {
+    const staged = await corrected.select().from(schema.stagedTransactions);
+    const categories = await corrected.select().from(schema.serviceCategories);
+
+    expect(staged).toHaveLength(3);
+    expect(categories.find((r) => r.code === "example-injectables")).toMatchObject({
+      // $250, the corrected amount — not $525, the average of a netted $750 visit and a
+      // visit the practice no longer has on its books.
+      typicalTicketCents: 25_000,
+      ticketBasis: "revenue-average",
+    });
+  });
+
+  it("pools the one patient the latest export still anchors, at the corrected value", () => {
+    expect(run.data.dormant).toMatchObject({
+      opportunityCount: 1,
+      patientCount: 1,
+      expectedValueCents: 25_000,
+    });
+  });
+
+  it("counts the superseded rows in the report rather than dropping them silently", () => {
+    expect(run.data.superseded.transactions).toBe(2);
+    expect(prose(readFileSync(run.outPath, "utf8"))).toContain(
+      "2 revenue rows superseded by a later import",
+    );
   });
 });

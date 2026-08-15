@@ -6,6 +6,7 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createFourDAdapter } from "./adapter-4d.js";
 import { createImportService, type ImportService } from "./importer.js";
 import { csvFile, ymd, ymdhm } from "./test-fixtures.js";
+import type { SourceAdapter, StagedPatientRow } from "./types.js";
 import * as schema from "../db/schema.js";
 import { bootTestDb } from "../db/test-db.js";
 
@@ -46,6 +47,20 @@ const patientRow = (id: string, first: string, birth: string) => [
   "555-0100",
   `${id}@example.invalid`,
 ];
+
+/** An adapter that stages rows built by hand — a source whose rows do not all carry the
+ *  same keys, which no CSV adapter can produce (`buildRow` sets every mapped column on
+ *  every row) and which the importer must still refresh correctly. */
+const batchAdapter = (rows: readonly Partial<StagedPatientRow>[]): SourceAdapter => ({
+  sourceSystem: "4d",
+  entities: ["patients"],
+  parse: (() => ({
+    rows,
+    rejects: [],
+    layoutRowCount: 0,
+    declaredTotals: [],
+  })) as SourceAdapter["parse"],
+});
 
 const runPatients = (content: string, rejectsUri?: string) =>
   importer.runImport({
@@ -194,6 +209,44 @@ describe("import service — idempotency", () => {
     expect(after!.importId).toBe(second.importId);
     expect(after!.importId).not.toBe(first.importId);
     expect(after!.updatedAt.getTime()).toBeGreaterThanOrEqual(before!.updatedAt.getTime());
+  });
+
+  // The refresh set is derived per BATCH, and one row's shape is not the batch's shape.
+  // The 4D adapter fills every column on every row, so this is latent there — a source
+  // whose rows omit an absent field would leave that column stale while the ledger says
+  // the run reconciled.
+  it("refreshes every column the batch fills, not the ones its first row happens to carry", async () => {
+    await runPatients(
+      roster([
+        patientRow("p-1", "Testerly", ymd(1970, 4, 12)),
+        patientRow("p-2", "Otherly", ymd(1971, 5, 13)),
+      ]),
+    );
+
+    await importer.runImport({
+      adapter: batchAdapter([
+        { sourceIdentity: "p-1", firstName: "Renamed" },
+        { sourceIdentity: "p-2", firstName: "Renamed", email: "fresh@example.invalid" },
+      ]),
+      entity: "patients",
+      fileName: "roster.csv",
+      content: "hand-built rows",
+    });
+
+    const rows = await db.select().from(schema.stagedPatients);
+    expect(rows.find((r) => r.sourceIdentity === "p-2")?.email).toBe("fresh@example.invalid");
+    expect(rows.find((r) => r.sourceIdentity === "p-1")?.firstName).toBe("Renamed");
+  });
+
+  // The mirror of the rule above: a column NO adapter fills is not the export's to clear.
+  it("leaves a column the adapter never fills alone", async () => {
+    await runPatients(roster([patientRow("p-1", "Testerly", ymd(1970, 4, 12))]));
+    await db.update(schema.stagedPatients).set({ medplumPatientId: "Patient/abc" });
+
+    await runPatients(roster([["p-1", "Renamed", "Fakeman", ymd(1970, 4, 12), "555-0100", ""]]));
+
+    const [row] = await db.select().from(schema.stagedPatients);
+    expect(row).toMatchObject({ firstName: "Renamed", medplumPatientId: "Patient/abc" });
   });
 
   it("keeps the same source identity from another source system distinct", async () => {

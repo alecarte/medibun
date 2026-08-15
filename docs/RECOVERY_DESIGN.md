@@ -167,6 +167,41 @@ campaign-builder UI · automation levels above approve-every-touch · external-c
 
 ## Review log
 
+- 2026-08-15 — **R2 code-review round 2 (correctness; four numbers moved).** The headline one:
+  the pools and the category seeder now read only the staged rows the **most recent import of
+  each export still contains** (`currentImportIds`, importer.ts — the upsert re-stamps
+  `import_id` on every row a fresh export carries, so a row wearing an older stamp is exactly a
+  row the newest export dropped). Without it a voided or corrected revenue line re-imported
+  under a NEW derived identity — the amount is hashed into it — while the stale row lingered,
+  and `groupVisits` netted both into one visit: tickets, expected value, and the headline all
+  inflated. **The assumption this rests on, stated because it is load-bearing:** each 4D export
+  is a FULL dump of its date range (true of the R0-recorded exports — the revenue re-pull covers
+  the whole 24-month window); a narrower re-pull would eclipse the rows it never covered, which
+  is why every excluded row is counted per entity and printed in the report's data-quality
+  section rather than dropped in silence. Second: the dormant pool's "holds no appointment after
+  the as-of date" cutoff is now the **practice-local** start of the following day (`timeZone`
+  threaded through `prepareIndexes` and both pool signatures) — read in UTC it under-excluded
+  east of UTC, which is the one direction that matters, because it contacts a patient who has
+  already rebooked. Third: the report-layout pre-pass decides a lone cell by **where it sits** —
+  day separator, then page-break title, then the section's own column or an unmapped column
+  (never a time-only cell) for group context, and any other mapped column as a one-cell data row
+  that stages or rejects on its merits. Taking any lone cell as the section had turned `11:00`
+  into a provider called `00` and let a stray patient name in the consult export ride down as the
+  provider of every row beneath it; the accepted cost — a section row printed in a column the
+  entity maps reads as a data row and lands in rejects — is recorded in the module's Known
+  Limits, and which column 4D prints section rows in is a first-run observation.
+  Smaller, same round: the report's category total adds the rows **as printed** rather than
+  rounding the exact cents once; the import CLI checks its run against **every** declared total
+  (a comma-formatted `Total Collected = 152,340` had been read as the row count) and names the
+  closest one honestly when none matches; the leak report is rendered before the write is
+  attempted and the previous file is removed before writing at 0600, so a template bug reads as
+  itself and a pre-existing loose-mode file never holds the report; accounting spellings of a
+  refund — `(250.00)`, `($250.00)`, `$-250.00` — read as negative money; a revenue row missing
+  both a category and a patient id counts under both; the upsert's refresh set is derived from
+  the table's columns intersected with the keys the whole batch fills (never one sample row,
+  never a column no adapter fills); `scripts/seed-demo.ts` joined the shared failure-printing
+  rule; and the NUL byte in `adapter-4d.ts` is spelled `\u0000`, so the one file that parses
+  patient identities is no longer classified as binary by content sweeps.
 - 2026-08-15 — **R2 code-review follow-ups (quality round, no behavior change).** The rules
   the R2 CLIs hold twice are now held once: the PHI-safe failure line is one parameterized
   implementation (`ingest/import-cli.ts` `makeErrorLine`, each CLI supplying its own safe

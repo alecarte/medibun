@@ -1,4 +1,4 @@
-import { chmodSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
 
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
@@ -182,11 +182,17 @@ export async function runLeakReportCli(deps: {
     ...(minAgeDays === undefined ? {} : { minAgeDays }),
   });
 
+  // Rendered BEFORE the write is attempted: a template bug is not a disk problem, and
+  // reporting it as one sends the operator looking in the wrong place.
+  const document = renderLeakReport(data);
   try {
-    writeFileSync(outPath, renderLeakReport(data), { mode: 0o600 });
-    // mode is honored on CREATE only — overwriting a pre-existing world-readable file
-    // would silently keep its looser permissions, so re-assert after every write.
-    chmodSync(outPath, 0o600);
+    // Clear any previous report FIRST, the same posture as the import CLI's rejects file:
+    // `mode` is honored on create only, so writing over a file already there would leave
+    // a confidential document sitting at whatever permissions it had — and a chmod after
+    // the fact leaves it exposed for as long as the write takes, or forever if the chmod
+    // is the call that fails.
+    rmSync(outPath, { force: true });
+    writeFileSync(outPath, document, { mode: 0o600 });
   } catch (err) {
     throw new UsageError(`could not write the report (${errorCodeOf(err) ?? "unwritable"})`);
   }

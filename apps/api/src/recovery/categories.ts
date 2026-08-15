@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 
 import { serviceCategories, stagedTransactions } from "../db/schema.js";
+import { currentImportIds } from "../ingest/importer.js";
 
 /**
  * Service-category seeding (R2c, RECOVERY_DESIGN.md §3). Two numbers per category, from
@@ -107,12 +108,16 @@ export function groupVisits(rows: readonly TransactionInput[]): VisitGrouping {
 
   for (const row of rows) {
     const label = row.serviceCategoryRaw?.trim() ?? "";
+    // Each condition is counted on its own, so a row missing BOTH increments both: the
+    // seed CLI prints these as two independent answers ("N rows carry no category · M
+    // carry no patient id"), and they deliberately do not sum to the rows dropped.
     if (label === "") {
       rowsWithoutCategory += 1;
-      continue;
     }
     if (!row.patientSourceIdentity) {
       rowsWithoutPatient += 1;
+    }
+    if (label === "" || !row.patientSourceIdentity) {
       continue;
     }
     const code = categoryCode(label);
@@ -309,14 +314,22 @@ function merge(tickets: TicketSummary, config: CadenceConfig): SeededCategory[] 
  * export and config rewrites the same rows.
  */
 export async function seedServiceCategories(db: Db, config: CadenceConfig): Promise<SeedSummary> {
-  const rows = await db
-    .select({
-      patientSourceIdentity: stagedTransactions.patientSourceIdentity,
-      transactionDate: stagedTransactions.transactionDate,
-      serviceCategoryRaw: stagedTransactions.serviceCategoryRaw,
-      amountCents: stagedTransactions.amountCents,
-    })
-    .from(stagedTransactions);
+  // Only the rows the LATEST revenue import still contains — the same rule the pools read
+  // staging by (`currentImportIds`, and the full-dump assumption it carries). A corrected
+  // line stages as a new row beside the old one, and averaging both would net a single
+  // visit twice over.
+  const current = await currentImportIds(db);
+  const rows = (
+    await db
+      .select({
+        patientSourceIdentity: stagedTransactions.patientSourceIdentity,
+        transactionDate: stagedTransactions.transactionDate,
+        serviceCategoryRaw: stagedTransactions.serviceCategoryRaw,
+        amountCents: stagedTransactions.amountCents,
+        importId: stagedTransactions.importId,
+      })
+      .from(stagedTransactions)
+  ).filter((row) => current.has(row.importId));
 
   const tickets = typicalTickets(rows);
   const categories = merge(tickets, config);
