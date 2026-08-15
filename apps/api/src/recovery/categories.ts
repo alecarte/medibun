@@ -73,13 +73,34 @@ export type TicketSummary = {
 const visitKey = (patient: string, date: string, code: string): string =>
   `${patient}\u0000${date}\u0000${code}`;
 
+/** One patient's spending on one date in one category, netted across its line items. */
+export type Visit = {
+  readonly patient: string;
+  readonly date: string;
+  readonly code: string;
+  readonly cents: number;
+};
+
+export type VisitGrouping = {
+  /** The netted visits, in the order their first line item appeared. */
+  readonly visits: readonly Visit[];
+  /** Category code → the first spelling seen for it. */
+  readonly displays: ReadonlyMap<string, string>;
+  /** Rows with no category label: nothing to attribute them to. */
+  readonly rowsWithoutCategory: number;
+  /** Rows with no patient id: the export's non-patient rows (R0). */
+  readonly rowsWithoutPatient: number;
+};
+
 /**
- * Groups the revenue export into per-visit tickets and averages them per category.
- * Pure: same rows in, same numbers out — the whole point of the report's methodology
- * note is that this calculation can be re-run and checked.
+ * Groups the line-level revenue export into visits. ONE implementation on purpose: the
+ * ticket math below and the dormant pool's "last paid visit" (segmentation.ts) are the
+ * same grouping — same key, same netting, same exclusion of a group that nets to nothing —
+ * so both numbers mean one thing. Held by hand in two places, that is a rule waiting to
+ * drift. Pure: same rows in, same visits out.
  */
-export function typicalTickets(rows: readonly TransactionInput[]): TicketSummary {
-  const visits = new Map<string, { code: string; cents: number }>();
+export function groupVisits(rows: readonly TransactionInput[]): VisitGrouping {
+  const visits = new Map<string, { patient: string; date: string; code: string; cents: number }>();
   const displays = new Map<string, string>();
   let rowsWithoutCategory = 0;
   let rowsWithoutPatient = 0;
@@ -100,14 +121,30 @@ export function typicalTickets(rows: readonly TransactionInput[]): TicketSummary
       displays.set(code, label);
     }
     const key = visitKey(row.patientSourceIdentity, row.transactionDate, code);
-    const visit = visits.get(key) ?? { code, cents: 0 };
+    const visit = visits.get(key) ?? {
+      patient: row.patientSourceIdentity,
+      date: row.transactionDate,
+      code,
+      cents: 0,
+    };
     visit.cents += row.amountCents;
     visits.set(key, visit);
   }
 
+  return { visits: [...visits.values()], displays, rowsWithoutCategory, rowsWithoutPatient };
+}
+
+/**
+ * Averages the grouped visits into a typical ticket per category. Pure: same rows in,
+ * same numbers out — the whole point of the report's methodology note is that this
+ * calculation can be re-run and checked.
+ */
+export function typicalTickets(rows: readonly TransactionInput[]): TicketSummary {
+  const { visits, displays, rowsWithoutCategory, rowsWithoutPatient } = groupVisits(rows);
+
   const totals = new Map<string, { count: number; cents: number }>();
   let nonPositiveVisits = 0;
-  for (const visit of visits.values()) {
+  for (const visit of visits) {
     if (visit.cents <= 0) {
       nonPositiveVisits += 1;
       continue;

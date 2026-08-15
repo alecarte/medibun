@@ -1,9 +1,10 @@
 /**
- * TEST-ONLY synthetic CSV builders for the ingestion suites (same posture as
- * db/test-db.ts). Fixtures are COMPOSED here rather than checked in as literal CSV
- * files: every value is obviously fake and every date is assembled from numeric parts,
- * so no fixture in this repo ever carries a real-looking identity (security.md — test
- * data is synthetic and non-PHI, and the pre-edit tripwires stay meaningful).
+ * TEST-ONLY helpers for the ingestion and recovery suites (same posture as
+ * db/test-db.ts): synthetic CSV builders, and the reader's-eye view of a rendered
+ * document. Fixtures are COMPOSED here rather than checked in as literal CSV files:
+ * every value is obviously fake and every date is assembled from numeric parts, so no
+ * fixture in this repo ever carries a real-looking identity (security.md — test data is
+ * synthetic and non-PHI, and the pre-edit tripwires stay meaningful).
  */
 
 const pad = (n: number): string => String(n).padStart(2, "0");
@@ -47,6 +48,12 @@ export const reportFile = (
   headers: readonly string[],
   body: readonly (readonly string[])[],
 ): string => [...preamble, headers, ...body].map((r) => csvRow(...r)).join("\n") + "\n";
+
+/** The text a reader actually sees in a rendered document: markup stripped and
+ *  whitespace collapsed, so an assertion never depends on where the template happens to
+ *  wrap or how it indents. One helper, so two suites cannot read "the prose" differently. */
+export const prose = (html: string): string =>
+  html.replaceAll(/<[^>]*>/g, " ").replaceAll(/\s+/g, " ");
 
 /** A sparse spreadsheet row: `width` cells, empty except the ones named by index. */
 export const sparseRow = (

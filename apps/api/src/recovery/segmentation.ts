@@ -1,6 +1,6 @@
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 
-import { categoryCode, type TicketBasis, type TransactionInput } from "./categories.js";
+import { groupVisits, type TicketBasis, type TransactionInput } from "./categories.js";
 import {
   serviceCategories,
   stagedAppointments,
@@ -137,57 +137,61 @@ export function defaultAsOf(snapshot: StagingSnapshot): string | undefined {
   return latest;
 }
 
-/** One patient's paid visits: `${patient} ${code}` → the newest date, plus the newest
- *  date in any category. A visit is one patient, one date, one category, netted — the
- *  same grouping the ticket math uses (categories.ts), so both numbers mean one thing. */
-type PaidVisits = {
-  readonly lastByCategory: ReadonlyMap<string, string>;
+/** The newest paid visit one patient made in one category. */
+export type LastPaidVisit = {
+  readonly patient: string;
+  readonly code: string;
+  readonly date: string;
+};
+
+/** One patient's paid visits: the newest per category, plus the newest in any category.
+ *  Grouped by `categories.ts`'s own `groupVisits` — a visit is one patient, one date, one
+ *  category, netted, the same grouping the ticket math averages over, so both numbers
+ *  mean one thing. A group that nets to nothing is a refund, not a visit. */
+export type PaidVisits = {
+  readonly lastByCategory: readonly LastPaidVisit[];
   readonly lastAny: ReadonlyMap<string, string>;
 };
 
 function paidVisits(transactions: readonly TransactionInput[]): PaidVisits {
-  const visits = new Map<string, { patient: string; code: string; date: string; cents: number }>();
-  for (const row of transactions) {
-    const label = row.serviceCategoryRaw?.trim() ?? "";
-    if (label === "" || !row.patientSourceIdentity) {
-      continue;
-    }
-    const code = categoryCode(label);
-    const key = `${row.patientSourceIdentity} ${row.transactionDate} ${code}`;
-    const visit = visits.get(key) ?? {
-      patient: row.patientSourceIdentity,
-      code,
-      date: row.transactionDate,
-      cents: 0,
-    };
-    visit.cents += row.amountCents;
-    visits.set(key, visit);
-  }
-
-  const lastByCategory = new Map<string, string>();
+  const lastByCategory = new Map<string, { patient: string; code: string; date: string }>();
   const lastAny = new Map<string, string>();
-  for (const visit of visits.values()) {
+  for (const visit of groupVisits(transactions).visits) {
     if (visit.cents <= 0) {
       continue;
     }
     const key = `${visit.patient} ${visit.code}`;
-    if ((lastByCategory.get(key) ?? "") < visit.date) {
-      lastByCategory.set(key, visit.date);
+    const last = lastByCategory.get(key);
+    if (last === undefined) {
+      lastByCategory.set(key, { patient: visit.patient, code: visit.code, date: visit.date });
+    } else if (last.date < visit.date) {
+      last.date = visit.date;
     }
     if ((lastAny.get(visit.patient) ?? "") < visit.date) {
       lastAny.set(visit.patient, visit.date);
     }
   }
-  return { lastByCategory, lastAny };
+  return { lastByCategory: [...lastByCategory.values()], lastAny };
 }
 
 /** Roster lookups: by the source's patient id, by the appointment triple, by name alone
  *  (the consult report's only option). A key claimed by more than one patient is
  *  AMBIGUOUS and resolves to nothing — never to a guess (R0). */
-type RosterIndex = {
+export type RosterIndex = {
   readonly byIdentity: ReadonlyMap<string, RosterRow>;
   readonly byTriple: ReadonlyMap<string, readonly string[]>;
   readonly byName: ReadonlyMap<string, readonly string[]>;
+};
+
+/** Appends to a collision list in place. Rebuilding the list per collision would make
+ *  indexing a roster quadratic in its largest set of same-key patients. */
+const addTo = (index: Map<string, string[]>, key: string, identity: string): void => {
+  const identities = index.get(key);
+  if (identities === undefined) {
+    index.set(key, [identity]);
+  } else {
+    identities.push(identity);
+  }
 };
 
 function indexRoster(patients: readonly RosterRow[]): RosterIndex {
@@ -199,11 +203,11 @@ function indexRoster(patients: readonly RosterRow[]): RosterIndex {
     const full = `${row.firstName ?? ""} ${row.lastName ?? ""}`;
     const key = nameKey(full);
     if (key !== "") {
-      byName.set(key, [...(byName.get(key) ?? []), row.sourceIdentity]);
+      addTo(byName, key, row.sourceIdentity);
     }
     const triple = tripleKey(full, row.dob ?? "", row.phone ?? "");
     if (triple !== undefined) {
-      byTriple.set(triple, [...(byTriple.get(triple) ?? []), row.sourceIdentity]);
+      addTo(byTriple, triple, row.sourceIdentity);
     }
   }
   return { byIdentity, byTriple, byName };
@@ -255,6 +259,30 @@ function futureAppointments(
   return { patients, join: { rows: appointments.length, resolvedRows, futureRows } };
 }
 
+/** Everything both pools read: the roster index, the netted paid visits, and the
+ *  future-appointment join. Each is a full pass over the snapshot, and each is identical
+ *  between the pools — computed once, the Leak Report makes every pass once. */
+export type SnapshotIndexes = {
+  readonly roster: RosterIndex;
+  readonly visits: PaidVisits;
+  /** Patients holding an appointment after the as-of date — the exclusion set. */
+  readonly futurePatients: ReadonlySet<string>;
+  readonly appointmentJoin: AppointmentJoin;
+};
+
+/** The shared passes, done once. Bound to `asOf`: the future-appointment join is measured
+ *  from it, so indexes must not be carried across as-of dates. */
+export function prepareIndexes(snapshot: StagingSnapshot, asOf: string): SnapshotIndexes {
+  const roster = indexRoster(snapshot.patients);
+  const future = futureAppointments(snapshot.appointments, roster, asOf);
+  return {
+    roster,
+    visits: paidVisits(snapshot.transactions),
+    futurePatients: future.patients,
+    appointmentJoin: future.join,
+  };
+}
+
 export type DormantCategory = {
   readonly code: string;
   readonly display: string;
@@ -296,10 +324,14 @@ export type DormantPool = {
 /**
  * The dormant pool. `asOf` anchors everything: dormancy is measured from it, and a visit
  * exactly `interval` days old is NOT yet dormant — the interval has only just come due.
+ *
+ * `indexes` is the shared work, passed in when the caller already did it (the Leak Report
+ * runs both pools) and done here when the pool is called on its own.
  */
 export function dormantPool(
   snapshot: StagingSnapshot,
   options: { readonly asOf: string },
+  indexes: SnapshotIndexes = prepareIndexes(snapshot, options.asOf),
 ): DormantPool {
   const { asOf } = options;
   const categories = new Map(
@@ -307,23 +339,17 @@ export function dormantPool(
       .filter((c) => c.expectedReturnIntervalDays !== null)
       .map((c) => [c.code, c]),
   );
-  const visits = paidVisits(snapshot.transactions);
-  const roster = indexRoster(snapshot.patients);
-  const future = futureAppointments(snapshot.appointments, roster, asOf);
 
   const perCategory = new Map<string, Set<string>>();
   const pooled = new Set<string>();
   const excluded = new Set<string>();
 
-  for (const [key, lastVisit] of visits.lastByCategory) {
-    const gap = key.lastIndexOf(" ");
-    const patient = key.slice(0, gap);
-    const code = key.slice(gap + 1);
+  for (const { patient, code, date } of indexes.visits.lastByCategory) {
     const category = categories.get(code);
-    if (!category || daysBetween(lastVisit, asOf) <= category.expectedReturnIntervalDays!) {
+    if (!category || daysBetween(date, asOf) <= category.expectedReturnIntervalDays!) {
       continue;
     }
-    if (future.patients.has(patient)) {
+    if (indexes.futurePatients.has(patient)) {
       excluded.add(patient);
       continue;
     }
@@ -353,7 +379,7 @@ export function dormantPool(
   let withEither = 0;
   let notInRoster = 0;
   for (const identity of pooled) {
-    const row = roster.byIdentity.get(identity);
+    const row = indexes.roster.byIdentity.get(identity);
     if (!row) {
       notInRoster += 1;
       continue;
@@ -378,7 +404,7 @@ export function dormantPool(
       withNeither: pooled.size - notInRoster - withEither,
       notInRoster,
     },
-    appointmentJoin: future.join,
+    appointmentJoin: indexes.appointmentJoin,
     excludedByFutureAppointment: excluded.size,
     categoriesWithoutTicket: rows.filter((row) => row.typicalTicketCents === null).length,
   };
@@ -416,12 +442,10 @@ export type ConsultPool = {
 export function unconvertedConsults(
   snapshot: StagingSnapshot,
   options: { readonly asOf: string; readonly minAgeDays?: number },
+  indexes: SnapshotIndexes = prepareIndexes(snapshot, options.asOf),
 ): ConsultPool {
   const { asOf } = options;
   const minAgeDays = options.minAgeDays ?? DEFAULT_CONSULT_MIN_AGE_DAYS;
-  const roster = indexRoster(snapshot.patients);
-  const visits = paidVisits(snapshot.transactions);
-  const future = futureAppointments(snapshot.appointments, roster, asOf);
 
   let poolCount = 0;
   let quotedValueCents = 0;
@@ -449,7 +473,7 @@ export function unconvertedConsults(
     }
 
     const key = nameKey(row.patientName);
-    const matches = roster.byName.get(key) ?? [];
+    const matches = indexes.roster.byName.get(key) ?? [];
     const identity = row.patientSourceIdentity ?? only(matches);
     if (identity === undefined) {
       if (matches.length > 1) {
@@ -458,8 +482,11 @@ export function unconvertedConsults(
       }
       unresolvedNameCount += 1;
     } else {
-      const lastPaid = visits.lastAny.get(identity);
-      if ((lastPaid !== undefined && lastPaid > row.consultDate) || future.patients.has(identity)) {
+      const lastPaid = indexes.visits.lastAny.get(identity);
+      if (
+        (lastPaid !== undefined && lastPaid > row.consultDate) ||
+        indexes.futurePatients.has(identity)
+      ) {
         excludedReturnedCount += 1;
         continue;
       }

@@ -58,27 +58,40 @@ export function errorCodeOf(err: unknown): string | undefined {
   return undefined;
 }
 
+/** An error class a CLI wrote itself, and whose message is therefore safe in full. */
+type SafeErrorClass = abstract new (...args: never[]) => Error;
+
 /**
- * The one line a failure is allowed to print. ONLY our own typed errors are safe in
- * full: drizzle wraps a failed query as `Failed query: <sql> params: <bound values>`,
+ * Builds the one line a failure is allowed to print. ONLY our own typed errors are safe
+ * in full: drizzle wraps a failed query as `Failed query: <sql> params: <bound values>`,
  * so a mid-batch database error would otherwise print up to a whole chunk of staged
  * names, dates of birth, phones, and emails to stderr. Everything else degrades to the
  * error's class name plus its driver code — enough to diagnose, nothing to leak.
+ *
+ * One implementation, every CLI: the recovery CLIs apply the same rule with their own
+ * safe classes and their own prefix, and a rule this load-bearing is not maintained twice.
  */
-export function errorLine(err: unknown): string {
-  if (
-    err instanceof UsageError ||
-    err instanceof SourceFileError ||
-    err instanceof UnknownTimeZoneError
-  ) {
-    return err.message;
-  }
-  if (err instanceof Error) {
-    const code = errorCodeOf(err);
-    return `import failed: ${err.name}${code ? ` (${code})` : ""}`;
-  }
-  return "import failed";
+export function makeErrorLine(
+  safe: readonly SafeErrorClass[],
+  prefix: string,
+): (err: unknown) => string {
+  return (err) => {
+    if (safe.some((cls) => err instanceof cls)) {
+      return (err as Error).message;
+    }
+    if (err instanceof Error) {
+      const code = errorCodeOf(err);
+      return `${prefix}: ${err.name}${code ? ` (${code})` : ""}`;
+    }
+    return prefix;
+  };
 }
+
+/** The import CLI's failure line. */
+export const errorLine = makeErrorLine(
+  [UsageError, SourceFileError, UnknownTimeZoneError],
+  "import failed",
+);
 
 /** Excel and Sheets execute a cell that opens with = + - @ (or a tab/CR before one).
  *  The rejects file exists to be opened by a human for triage, so such a cell is
@@ -108,7 +121,9 @@ function reconciliationLine(summary: ImportSummary): string | undefined {
         `rejected ${summary.rejectedCount} (${Math.abs(declared - accounted)} unaccounted)`;
 }
 
-const readArg = (argv: readonly string[], name: string): string | undefined => {
+/** `--name value` out of an argv slice. Shared with the recovery CLIs: all three read
+ *  the same flag grammar. */
+export const readArg = (argv: readonly string[], name: string): string | undefined => {
   const index = argv.indexOf(`--${name}`);
   return index === -1 ? undefined : argv[index + 1];
 };

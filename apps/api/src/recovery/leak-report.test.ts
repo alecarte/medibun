@@ -6,10 +6,7 @@ import {
   renderLeakReport,
   type LeakReportData,
 } from "./leak-report.js";
-import { ymd } from "../ingest/test-fixtures.js";
-
-/** Text a reader actually sees, with the markup taken out. */
-const prose = (html: string): string => html.replaceAll(/<[^>]*>/g, " ");
+import { prose, ymd } from "../ingest/test-fixtures.js";
 
 const data = (parts: Partial<LeakReportData> = {}): LeakReportData => ({
   practiceName: "Example Plastic Surgery",
