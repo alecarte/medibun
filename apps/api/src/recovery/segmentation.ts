@@ -1,13 +1,19 @@
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 
-import { groupVisits, type TicketBasis, type TransactionInput } from "./categories.js";
+import {
+  groupVisits,
+  selectStagedTransactions,
+  type TicketBasis,
+  type TransactionInput,
+} from "./categories.js";
+import { currentImportIds } from "../ingest/importer.js";
 import {
   serviceCategories,
   stagedAppointments,
   stagedConsults,
   stagedPatients,
-  stagedTransactions,
 } from "../db/schema.js";
+import { zonedYmd } from "../staff.js";
 
 /**
  * Pool segmentation (R2c, RECOVERY_DESIGN.md §1). Two pools, both as R0 found them:
@@ -66,6 +72,16 @@ export type CategoryRow = {
   readonly ticketBasis: TicketBasis | null;
 };
 
+/** Rows staging still holds that the latest import of their export no longer contains —
+ *  excluded from the snapshot above, counted here so the report can state the exclusion
+ *  instead of quietly making it. */
+export type SupersededCounts = {
+  readonly patients: number;
+  readonly appointments: number;
+  readonly consults: number;
+  readonly transactions: number;
+};
+
 /** One read of staging; both pools compute from it. */
 export type StagingSnapshot = {
   readonly patients: readonly RosterRow[];
@@ -73,6 +89,7 @@ export type StagingSnapshot = {
   readonly consults: readonly ConsultRow[];
   readonly transactions: readonly TransactionInput[];
   readonly categories: readonly CategoryRow[];
+  readonly superseded: SupersededCounts;
 };
 
 const DAY_MS = 86_400_000;
@@ -220,8 +237,6 @@ export type AppointmentJoin = {
   readonly rows: number;
   /** Rows resolved to a roster patient, by id or by the name+DOB+phone triple. */
   readonly resolvedRows: number;
-  /** Resolved rows starting after the as-of date — the exclusion signal. */
-  readonly futureRows: number;
 };
 
 /** Patients holding an appointment after the as-of date, plus how well the join ran. */
@@ -229,14 +244,18 @@ function futureAppointments(
   appointments: readonly AppointmentRow[],
   roster: RosterIndex,
   asOf: string,
+  timeZone: string,
 ): { readonly patients: ReadonlySet<string>; readonly join: AppointmentJoin } {
-  // End of the as-of day, read in UTC. An evening appointment in a practice west of UTC
-  // therefore counts as future a few hours early — deliberately: over-excluding costs one
-  // opportunity, while under-excluding contacts a patient who already holds a booking.
-  const cutoff = Date.parse(`${asOf}T23:59:59.999Z`);
+  // "After the as-of date" is a CALENDAR claim, so it is decided on calendar days: the
+  // day the appointment falls on in the PRACTICE's zone, compared as text against the
+  // as-of date. Read in UTC the comparison is wrong east of UTC, where that day has
+  // already ended — the mistake that matters, because it contacts a patient who already
+  // holds a booking. An instant BOUND would be right in most zones and wrong in the ones
+  // whose clocks skip midnight: a spring-forward day with no 00:00 makes "the start of
+  // the following day" resolve to 23:00, and the last hour of the as-of evening reads as
+  // tomorrow. Comparing days carries no arithmetic to get wrong.
   const patients = new Set<string>();
   let resolvedRows = 0;
-  let futureRows = 0;
 
   for (const row of appointments) {
     const triple =
@@ -250,13 +269,14 @@ function futureAppointments(
       continue;
     }
     resolvedRows += 1;
-    if (row.startAt.getTime() > cutoff) {
-      futureRows += 1;
+    // Strictly after: the as-of day itself is not future, and any later practice-local
+    // day is — midnight the morning after included, whatever the clocks did that night.
+    if (zonedYmd(row.startAt, timeZone) > asOf) {
       patients.add(identity);
     }
   }
 
-  return { patients, join: { rows: appointments.length, resolvedRows, futureRows } };
+  return { patients, join: { rows: appointments.length, resolvedRows } };
 }
 
 /** Everything both pools read: the roster index, the netted paid visits, and the
@@ -270,11 +290,16 @@ export type SnapshotIndexes = {
   readonly appointmentJoin: AppointmentJoin;
 };
 
-/** The shared passes, done once. Bound to `asOf`: the future-appointment join is measured
- *  from it, so indexes must not be carried across as-of dates. */
-export function prepareIndexes(snapshot: StagingSnapshot, asOf: string): SnapshotIndexes {
+/** The shared passes, done once. Bound to `asOf` AND to the practice's zone: the
+ *  future-appointment join is measured from the as-of day as that practice's clock ends
+ *  it, so indexes must not be carried across either. */
+export function prepareIndexes(
+  snapshot: StagingSnapshot,
+  asOf: string,
+  timeZone: string,
+): SnapshotIndexes {
   const roster = indexRoster(snapshot.patients);
-  const future = futureAppointments(snapshot.appointments, roster, asOf);
+  const future = futureAppointments(snapshot.appointments, roster, asOf, timeZone);
   return {
     roster,
     visits: paidVisits(snapshot.transactions),
@@ -317,7 +342,7 @@ export type DormantPool = {
   /** Patients dropped because they already hold a future appointment. */
   readonly excludedByFutureAppointment: number;
   /** Categories in the pool with no ticket value — their opportunities are counted but
-   *  contribute nothing to the dollars. */
+   *  contribute nothing to the dollars, which the report says in those words. */
   readonly categoriesWithoutTicket: number;
 };
 
@@ -330,8 +355,8 @@ export type DormantPool = {
  */
 export function dormantPool(
   snapshot: StagingSnapshot,
-  options: { readonly asOf: string },
-  indexes: SnapshotIndexes = prepareIndexes(snapshot, options.asOf),
+  options: { readonly asOf: string; readonly timeZone: string },
+  indexes: SnapshotIndexes = prepareIndexes(snapshot, options.asOf, options.timeZone),
 ): DormantPool {
   const { asOf } = options;
   const categories = new Map(
@@ -441,8 +466,8 @@ export type ConsultPool = {
  */
 export function unconvertedConsults(
   snapshot: StagingSnapshot,
-  options: { readonly asOf: string; readonly minAgeDays?: number },
-  indexes: SnapshotIndexes = prepareIndexes(snapshot, options.asOf),
+  options: { readonly asOf: string; readonly timeZone: string; readonly minAgeDays?: number },
+  indexes: SnapshotIndexes = prepareIndexes(snapshot, options.asOf, options.timeZone),
 ): ConsultPool {
   const { asOf } = options;
   const minAgeDays = options.minAgeDays ?? DEFAULT_CONSULT_MIN_AGE_DAYS;
@@ -515,8 +540,25 @@ export function unconvertedConsults(
   };
 }
 
+/**
+ * Rows the LATEST import of their export still contains, and a count of the rest.
+ * Staging never deletes, so a corrected or voided source line leaves its old row behind —
+ * and for the two exports with derived identities the correction stages as a NEW row, so
+ * both spellings of one visit would net together and inflate every number downstream.
+ * `currentImportIds` is the rule and carries its assumption (each export is a full dump of
+ * its range); this is where the exclusion is counted so the report can state it.
+ */
+const currentRows = <T extends { readonly importId: string }>(
+  rows: readonly T[],
+  current: ReadonlySet<string>,
+): { readonly rows: readonly T[]; readonly superseded: number } => {
+  const kept = rows.filter((row) => current.has(row.importId));
+  return { rows: kept, superseded: rows.length - kept.length };
+};
+
 /** Reads staging once, selecting only the columns the pools compute from. */
 export async function readStaging(db: Db): Promise<StagingSnapshot> {
+  const current = await currentImportIds(db);
   const [patients, appointments, consults, transactions, categories] = await Promise.all([
     db
       .select({
@@ -526,6 +568,7 @@ export async function readStaging(db: Db): Promise<StagingSnapshot> {
         dob: stagedPatients.dob,
         phone: stagedPatients.phone,
         email: stagedPatients.email,
+        importId: stagedPatients.importId,
       })
       .from(stagedPatients),
     db
@@ -535,6 +578,7 @@ export async function readStaging(db: Db): Promise<StagingSnapshot> {
         dob: stagedAppointments.dob,
         phone: stagedAppointments.phone,
         startAt: stagedAppointments.startAt,
+        importId: stagedAppointments.importId,
       })
       .from(stagedAppointments),
     db
@@ -544,16 +588,10 @@ export async function readStaging(db: Db): Promise<StagingSnapshot> {
         consultDate: stagedConsults.consultDate,
         quoteAmountCents: stagedConsults.quoteAmountCents,
         bookedRaw: stagedConsults.bookedRaw,
+        importId: stagedConsults.importId,
       })
       .from(stagedConsults),
-    db
-      .select({
-        patientSourceIdentity: stagedTransactions.patientSourceIdentity,
-        transactionDate: stagedTransactions.transactionDate,
-        serviceCategoryRaw: stagedTransactions.serviceCategoryRaw,
-        amountCents: stagedTransactions.amountCents,
-      })
-      .from(stagedTransactions),
+    selectStagedTransactions(db),
     db
       .select({
         code: serviceCategories.code,
@@ -565,5 +603,21 @@ export async function readStaging(db: Db): Promise<StagingSnapshot> {
       .from(serviceCategories),
   ]);
 
-  return { patients, appointments, consults, transactions, categories };
+  const roster = currentRows(patients, current);
+  const booked = currentRows(appointments, current);
+  const quoted = currentRows(consults, current);
+  const paid = currentRows(transactions, current);
+  return {
+    patients: roster.rows,
+    appointments: booked.rows,
+    consults: quoted.rows,
+    transactions: paid.rows,
+    categories,
+    superseded: {
+      patients: roster.superseded,
+      appointments: booked.superseded,
+      consults: quoted.superseded,
+      transactions: paid.superseded,
+    },
+  };
 }

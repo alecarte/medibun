@@ -1,6 +1,7 @@
 import { parse as parseCsv } from "csv-parse/sync";
 
-import { SourceFileError, type DeclaredTotal } from "./types.js";
+import { calendarDate } from "./dates.js";
+import { SourceFileError } from "./types.js";
 
 /**
  * The report-layout pre-pass (R0, RECOVERY_DESIGN.md review log 2026-08-14). The real
@@ -29,11 +30,14 @@ import { SourceFileError, type DeclaredTotal } from "./types.js";
  *   - exactly ONE non-empty cell → resolved in this order, and the order is the rule:
  *     a calendar date is a DAY SEPARATOR (entities that carry a day); a row whose next
  *     non-blank neighbour is a reprinted header row is a page-break TITLE (adjacency is
- *     the only honest signal — the text is not); anything else is a SECTION row whose
- *     label becomes group context (entities that carry a section); failing all three, a
- *     cell sitting in a column the entity's map CONSUMES is a data row — the Patient
- *     Export prints a roster row with only its id filled — and a cell anywhere else is
- *     furniture;
+ *     the only honest signal — the text is not); a cell holding only a TIME is never group
+ *     context, whatever column it sits in, because the section label would reduce it to
+ *     its minutes; after those three, an entity that CARRIES A SECTION reads the cell as a
+ *     SECTION row wherever it sits — R0's exports print theirs in column 0, which the
+ *     appointment and consult maps both consume, so the column cannot be the test — and an
+ *     entity that carries none reads a cell in a column the map consumes as a one-cell
+ *     DATA row (the Patient Export prints a roster row with only its id filled) that
+ *     stages or rejects on its own merits; anything left is furniture;
  *   - a row whose PATIENT COLUMN is blank or holds a non-patient marker ("#",
  *     "Happening") → a non-patient calendar block (R0 (iv)), furniture; a marker in any
  *     other column is just a value, and the row stays;
@@ -49,6 +53,18 @@ import { SourceFileError, type DeclaredTotal } from "./types.js";
  * alternative (swallowing the whole run) is worse: it drops a section row that happens to
  * sit against the page break, and every row after the break then inherits the PREVIOUS
  * section silently.
+ *
+ * The section rule carries its own limit, and it is the deliberate side of the trade: in
+ * an entity that carries a section, any lone cell left after those three carve-outs
+ * becomes the section, so a row that legitimately fills ONE cell — a lone patient name,
+ * every other column blank — reads as the provider of every row beneath it until the next
+ * section row. Deciding by COLUMN instead was worse where it actually matters: R0's
+ * section rows sit in column 0, which the appointment and consult maps both consume, so
+ * every real section row rejected (`patient is required`) or dropped as a non-patient
+ * calendar block, and every row under it lost its provider. Systematic furniture beats a
+ * degenerate one-cell data row that would reject on its own merits anyway. Which column 4D
+ * prints its section rows in is a first-run observation, and so is whether these exports
+ * ever print a lone data row at all.
  */
 
 /** One column the entity's map can consume, with the aliases it may be spelled as. */
@@ -94,7 +110,8 @@ export type NormalizedFile = {
   readonly rows: readonly NormalizedRow[];
   /** Rows recognized as report furniture and skipped (never rejects). */
   readonly layoutRowCount: number;
-  readonly declaredTotals: readonly DeclaredTotal[];
+  /** The counts the file's own `Total X = N` rows declare. */
+  readonly declaredTotals: readonly number[];
 };
 
 /** csv-parse output with `info` + `raw`: the fields, the line number, and the verbatim
@@ -118,14 +135,15 @@ const HEADER_MIN_COLUMNS = 2;
  *  the matching it guards. */
 export const normalizeHeader = (value: string): string => value.trim().toLowerCase();
 
-const ISO_DATE = /^(\d{4})-(\d{1,2})-(\d{1,2})$/;
-const US_DATE = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
-/** A day separator: a bare date, optionally introduced by a weekday name. */
-const DAY_SEPARATOR = /^(?:[a-z]+,?\s+)?(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\/\d{1,2}\/\d{4})$/i;
+/** The weekday a separator row may introduce its date with ("Mon, 04/02/2026"). Stripped
+ *  here; what is left has to be a date on its own. */
+const WEEKDAY_PREFIX = /^[a-z]+,?\s+/i;
 /** A cell holding only a time — the appointment rows under a day separator. */
 const TIME_ONLY = /^\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\.?m\.?)?$/i;
-/** `Total X = N`, `Total: 1,204` — the file's own count of what it printed. */
-const DECLARED_TOTAL = /^total\b(.*?)[=:]\s*([\d,]+)\s*$/i;
+/** `Total X = N`, `Total: 1,204` — the file's own count of what it printed. What the
+ *  total is OF is not captured: reconciliation compares counts, and a label read off
+ *  report furniture would be one more piece of source text with somewhere to go. */
+const DECLARED_TOTAL = /^total\b.*?[=:]\s*([\d,]+)\s*$/i;
 /** How many cells a total row may fill and still be furniture: the count, and at most a
  *  label beside it. Anything fuller is a data row that merely SAYS "total". */
 const TOTAL_MAX_CELLS = 2;
@@ -158,20 +176,37 @@ function headerScore(record: readonly string[], columns: readonly ColumnSpec[]):
   return columns.filter((column) => column.names.some((name) => names.has(name))).length;
 }
 
-/** A calendar date rendered "YYYY-MM-DD", or undefined. Shape only: the adapter's own
- *  reader is what validates a data row's date. */
-function separatorDate(value: string): string | undefined {
-  const match = DAY_SEPARATOR.exec(value.trim());
-  if (!match) {
-    return undefined;
+/** A day separator's date rendered "YYYY-MM-DD", or undefined when the cell is not one.
+ *  The weekday comes off here and the rest goes through the adapter's OWN date reader:
+ *  a shape check would make `2026-02-30` the day every row beneath it belongs to, and a
+ *  second copy of the accepted formats is a copy that drifts from the one that stages
+ *  them. A cell this rejects is not a separator — it falls through the lone-cell rules. */
+const separatorDate = (value: string): string | undefined =>
+  calendarDate(value.trim().replace(WEEKDAY_PREFIX, ""));
+
+/** What a body row is, before any group context is carried onto it. */
+type RowKind = "blank" | "header" | "total" | "lone" | "data";
+
+/** One row's shape, from its already-trimmed cells. */
+function classifyRow(
+  record: readonly string[],
+  cells: readonly string[],
+  columns: readonly ColumnSpec[],
+): RowKind {
+  const filled = cells.filter((cell) => cell !== "");
+  if (filled.length === 0) {
+    return "blank";
   }
-  const date = match[1]!;
-  const us = US_DATE.exec(date);
-  if (!us) {
-    const iso = ISO_DATE.exec(date)!;
-    return `${iso[1]}-${iso[2]!.padStart(2, "0")}-${iso[3]!.padStart(2, "0")}`;
+  if (headerScore(record, columns) >= HEADER_MIN_COLUMNS) {
+    return "header";
   }
-  return `${us[3]}-${us[1]!.padStart(2, "0")}-${us[2]!.padStart(2, "0")}`;
+  // Furniture-SHAPED only: a total row is a count on an otherwise empty row. A revenue
+  // line item may be CALLED "Total Body Lift: 1", and swallowing that populated row
+  // would delete a real record invisibly (furniture is counted, never rejected).
+  if (filled.length <= TOTAL_MAX_CELLS && cells.some((cell) => DECLARED_TOTAL.test(cell))) {
+    return "total";
+  }
+  return filled.length === 1 ? "lone" : "data";
 }
 
 /** Writes into a record that may be shorter than the column it is filling. */
@@ -231,26 +266,15 @@ export function normalizeReport(content: string, spec: LayoutSpec): NormalizedFi
   }
 
   const carry = spec.carry ?? {};
+  const sectionAt = carry.section === undefined ? undefined : columnAt.get(carry.section);
   const body = items.slice(headerAt + 1);
 
-  // Every body row's shape, decided before anything is carried: a lone cell can only be
-  // told from a page-break title by what FOLLOWS it (R0: the title text itself lies).
-  const kinds = body.map((item) => {
+  // Every body row's trimmed cells and its shape, decided before anything is carried: a
+  // lone cell can only be told from a page-break title by what FOLLOWS it (R0: the title
+  // text itself lies).
+  const classified = body.map((item) => {
     const cells = item.record.map((cell) => cell.trim());
-    const filled = cells.filter((cell) => cell !== "");
-    if (filled.length === 0) {
-      return "blank" as const;
-    }
-    if (headerScore(item.record, spec.columns) >= HEADER_MIN_COLUMNS) {
-      return "header" as const;
-    }
-    // Furniture-SHAPED only: a total row is a count on an otherwise empty row. A revenue
-    // line item may be CALLED "Total Body Lift: 1", and swallowing that populated row
-    // would delete a real record invisibly (furniture is counted, never rejected).
-    if (filled.length <= TOTAL_MAX_CELLS && cells.some((cell) => DECLARED_TOTAL.test(cell))) {
-      return "total" as const;
-    }
-    return filled.length === 1 ? ("lone" as const) : ("data" as const);
+    return { kind: classifyRow(item.record, cells, spec.columns), cells };
   });
 
   /** The page-break TITLE: the lone row sitting against a reprinted header row. Only
@@ -259,10 +283,10 @@ export function normalizeReport(content: string, spec: LayoutSpec): NormalizedFi
    *  onto every row after the break. */
   const isPageBreakTitle = (at: number): boolean => {
     let next = at + 1;
-    while (next < kinds.length && kinds[next] === "blank") {
+    while (next < classified.length && classified[next]!.kind === "blank") {
       next += 1;
     }
-    return kinds[next] === "header";
+    return classified[next]?.kind === "header";
   };
 
   /** Column indices the entity's map consumes: a lone cell in one of them is a data row
@@ -270,14 +294,13 @@ export function normalizeReport(content: string, spec: LayoutSpec): NormalizedFi
   const mappedColumns = new Set(columnAt.values());
 
   const rows: NormalizedRow[] = [];
-  const declaredTotals: DeclaredTotal[] = [];
+  const declaredTotals: number[] = [];
   let layoutRowCount = headerAt;
   let section: string | undefined;
   let day: string | undefined;
 
   body.forEach((item, at) => {
-    const cells = item.record.map((cell) => cell.trim());
-    const kind = kinds[at]!;
+    const { kind, cells } = classified[at]!;
 
     if (kind === "blank" || kind === "header") {
       layoutRowCount += 1;
@@ -286,17 +309,16 @@ export function normalizeReport(content: string, spec: LayoutSpec): NormalizedFi
 
     if (kind === "total") {
       const total = cells.map((cell) => DECLARED_TOTAL.exec(cell)).find((match) => match !== null)!;
-      declaredTotals.push({
-        label: total[1]!.trim(),
-        count: Number(total[2]!.replaceAll(",", "")),
-      });
+      declaredTotals.push(Number(total[1]!.replaceAll(",", "")));
       layoutRowCount += 1;
       return;
     }
 
-    // A lone cell is furniture in three ways before it can be anything else — and only
-    // then, if it sits in a column the map consumes, is it a one-cell DATA row that
-    // falls through to the rest of this loop.
+    // A lone cell is a day separator or a page-break title before it can be anything
+    // else; after that WHERE it sits decides, because what it SAYS cannot. A cell in a
+    // column the map consumes is that column's value — a one-cell DATA row that falls
+    // through to the rest of this loop and stages or rejects on its merits — unless the
+    // column it sits in is the section's own.
     if (kind === "lone") {
       const cellAt = cells.findIndex((cell) => cell !== "");
       const value = cells[cellAt]!;
@@ -310,7 +332,12 @@ export function normalizeReport(content: string, spec: LayoutSpec): NormalizedFi
         layoutRowCount += 1;
         return;
       }
-      if (carry.section !== undefined) {
+      // A cell holding only a TIME is never group context, wherever it sits: the section
+      // label is stripped off it and "11:00" becomes a provider called "00", which then
+      // rides down onto every row beneath it. Everything else, in ANY column, is the
+      // section — R0's exports print section rows in column 0, not in the column the
+      // context flows into.
+      if (carry.section !== undefined && !TIME_ONLY.test(value)) {
         section = value.replace(SECTION_LABEL, "").trim();
         layoutRowCount += 1;
         return;
@@ -335,7 +362,6 @@ export function normalizeReport(content: string, spec: LayoutSpec): NormalizedFi
     }
 
     const record = [...item.record];
-    const sectionAt = carry.section === undefined ? undefined : columnAt.get(carry.section);
     if (
       sectionAt !== undefined &&
       section !== undefined &&

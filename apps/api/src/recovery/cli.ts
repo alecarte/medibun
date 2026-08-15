@@ -1,4 +1,4 @@
-import { chmodSync, readFileSync, writeFileSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
 
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
@@ -11,13 +11,20 @@ import {
 } from "./categories.js";
 import {
   buildLeakReport,
+  displayedTotals,
   formatDollars,
   NoStagedRevenueError,
   renderLeakReport,
   type LeakReportData,
 } from "./leak-report.js";
 import { calendarDate, isKnownTimeZone } from "../ingest/dates.js";
-import { errorCodeOf, makeErrorLine, readArg, UsageError } from "../ingest/import-cli.js";
+import {
+  errorCodeOf,
+  makeErrorLine,
+  readArg,
+  readLocalFile,
+  UsageError,
+} from "../ingest/import-cli.js";
 
 /**
  * The two recovery CLIs' bodies, separated from `scripts/` so they can be tested — the
@@ -46,16 +53,6 @@ export const errorLine = makeErrorLine(
   [UsageError, ConfigError, NoStagedRevenueError],
   "command failed",
 );
-
-/** Reads a file for the operator without letting its path reach the terminal: a
- *  directory a human chose can itself name a patient. */
-function readLocalFile(path: string, what: string): string {
-  try {
-    return readFileSync(path, "utf8");
-  } catch (err) {
-    throw new UsageError(`could not read the ${what} (${errorCodeOf(err) ?? "unreadable"})`);
-  }
-}
 
 export const SEED_CATEGORIES_USAGE = [
   "usage: pnpm --filter @medibun/api categories:seed -- --config <path>",
@@ -100,6 +97,11 @@ export async function runSeedCategoriesCli(deps: {
   }
   if (summary.nonPositiveVisits > 0) {
     deps.out(`  ${summary.nonPositiveVisits} visits netted to nothing and were not averaged`);
+  }
+  // The seeder reads only what the latest counted import still carries. Counting the rest
+  // out loud is what keeps the exclusion an operator decision rather than a silent filter.
+  if (summary.superseded > 0) {
+    deps.out(`  ${summary.superseded} revenue rows superseded by the latest import were excluded`);
   }
   // Category labels are the practice's own menu vocabulary — printable, unlike anything
   // patient-level. The interval column is what the operator is really checking.
@@ -172,36 +174,41 @@ export async function runLeakReportCli(deps: {
     throw new UsageError("--min-age-days must be a whole number of days");
   }
   const minAgeDays = rawMinAge === undefined ? undefined : Number(rawMinAge);
+  const practiceName = readArg(deps.argv, "practice");
 
   const data = await buildLeakReport(deps.db, {
     timeZone,
-    ...(readArg(deps.argv, "practice") === undefined
-      ? {}
-      : { practiceName: readArg(deps.argv, "practice")! }),
+    ...(practiceName === undefined ? {} : { practiceName }),
     ...(asOf === undefined ? {} : { asOf }),
     ...(minAgeDays === undefined ? {} : { minAgeDays }),
   });
 
+  // Rendered BEFORE the write is attempted: a template bug is not a disk problem, and
+  // reporting it as one sends the operator looking in the wrong place.
+  const document = renderLeakReport(data);
   try {
-    writeFileSync(outPath, renderLeakReport(data), { mode: 0o600 });
-    // mode is honored on CREATE only — overwriting a pre-existing world-readable file
-    // would silently keep its looser permissions, so re-assert after every write.
-    chmodSync(outPath, 0o600);
+    // Clear any previous report FIRST, the same posture as the import CLI's rejects file:
+    // `mode` is honored on create only, so writing over a file already there would leave
+    // a confidential document sitting at whatever permissions it had — and a chmod after
+    // the fact leaves it exposed for as long as the write takes, or forever if the chmod
+    // is the call that fails.
+    rmSync(outPath, { force: true });
+    writeFileSync(outPath, document, { mode: 0o600 });
   } catch (err) {
     throw new UsageError(`could not write the report (${errorCodeOf(err) ?? "unwritable"})`);
   }
 
+  // The document's own totals, not a second rounding of the same cents: the terminal
+  // summary and the report a practice reads have to state one figure each.
+  const totals = displayedTotals(data);
   // Basename only, same rule as the import CLI's output: captured terminal output must
   // not carry the directory a practice's file was filed under.
   deps.out(`✓ ${basename(outPath)} written (as of ${data.asOf})`);
   deps.out(
     `  dormant: ${data.dormant.opportunityCount} opportunities · ` +
-      `${data.dormant.patientCount} patients · ${formatDollars(data.dormant.expectedValueCents)}`,
+      `${data.dormant.patientCount} patients · ${totals.dormant}`,
   );
-  deps.out(
-    `  unconverted consults: ${data.consults.poolCount} · ` +
-      `${formatDollars(data.consults.quotedValueCents)} quoted`,
-  );
-  deps.out(`  identified: ${formatDollars(data.headlineCents)}`);
+  deps.out(`  unconverted consults: ${data.consults.poolCount} · ${totals.consults} quoted`);
+  deps.out(`  identified: ${totals.headline}`);
   return { outPath, data };
 }

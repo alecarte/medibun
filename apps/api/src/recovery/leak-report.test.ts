@@ -21,6 +21,8 @@ const data = (parts: Partial<LeakReportData> = {}): LeakReportData => ({
     consultsTo: ymd(2026, 5, 1),
   },
   staged: { patients: 40, appointments: 90, consults: 12, transactions: 300 },
+  superseded: { patients: 0, appointments: 0, consults: 0, transactions: 4 },
+  rejectShadowed: [],
   ledger: [
     {
       entity: "patients",
@@ -48,7 +50,7 @@ const data = (parts: Partial<LeakReportData> = {}): LeakReportData => ({
     patientCount: 8,
     expectedValueCents: 400_000,
     contactability: { withPhone: 7, withEmail: 5, withEither: 8, withNeither: 0, notInRoster: 0 },
-    appointmentJoin: { rows: 90, resolvedRows: 86, futureRows: 12 },
+    appointmentJoin: { rows: 90, resolvedRows: 86 },
     excludedByFutureAppointment: 3,
     categoriesWithoutTicket: 0,
   },
@@ -133,6 +135,65 @@ describe("leak report — rendering", () => {
     expect(html).toMatch(/ambiguous/i);
   });
 
+  // The mirror of the consult pool's "carry no quoted amount" line: a category with no
+  // ticket contributes nothing to the dollars, and the report says so rather than letting
+  // the reader infer it from a dash in the table.
+  it("states how many pooled categories carry no ticket value", () => {
+    const report = data();
+    const html = prose(
+      renderLeakReport({ ...report, dormant: { ...report.dormant, categoriesWithoutTicket: 2 } }),
+    );
+
+    expect(html).toContain("2 categories in this pool carry no ticket value");
+    // Nothing to say when every category is valued.
+    expect(prose(renderLeakReport(report))).not.toContain("no ticket value");
+  });
+
+  // A reader adds the column up. Two $125.50 categories print as two $126 rows, so a total
+  // that rounds the exact cents once — $251 — reads as an arithmetic error. One policy, so
+  // the table footer, the summary card, and the headline cannot state it three ways.
+  it("states one total everywhere: the sum of the parts as displayed", () => {
+    const report = data();
+    const row = report.dormant.categories[0]!;
+    const html = renderLeakReport({
+      ...report,
+      dormant: {
+        ...report.dormant,
+        categories: [
+          { ...row, expectedValueCents: 12_550 },
+          { ...row, code: "peels", display: "Peels", expectedValueCents: 12_550 },
+        ],
+        expectedValueCents: 25_100,
+      },
+      // Nothing on the consult side, so the headline is the dormant total alone.
+      consults: { ...report.consults, poolCount: 0, quotedValueCents: 0 },
+      headlineCents: 25_100,
+    });
+    const footer = html.slice(html.indexOf("<tfoot>"), html.indexOf("</tfoot>"));
+    const summary = html.slice(
+      html.indexOf('<section id="summary">'),
+      html.indexOf('<section id="dormant">'),
+    );
+
+    expect(prose(html)).toContain("$126");
+    expect(footer).toContain("$252");
+    // The headline and the dormant card, both reading the same total as the table.
+    expect(summary.match(/\$252/g)).toHaveLength(2);
+    // No second variant of that figure anywhere in the document.
+    expect(html).not.toContain("$251");
+  });
+
+  // A rejected row never reaches staging, so it is indistinguishable from a row the
+  // source dropped: the superseded count has to say so rather than read as fact.
+  it("caveats a superseded count the latest counted import may have reject-shadowed", () => {
+    const html = prose(renderLeakReport(data({ rejectShadowed: ["transactions"] })));
+
+    expect(html).toContain("transactions export never reached staging");
+    expect(html).toContain("Re-import cleanly");
+    // Nothing to caveat when every counted import came back clean.
+    expect(prose(renderLeakReport(data()))).not.toContain("Re-import cleanly");
+  });
+
   it("reads a report with nothing in it without inventing numbers", () => {
     const empty = renderLeakReport(
       data({
@@ -159,7 +220,7 @@ describe("leak report — rendering", () => {
             withNeither: 0,
             notInRoster: 0,
           },
-          appointmentJoin: { rows: 0, resolvedRows: 0, futureRows: 0 },
+          appointmentJoin: { rows: 0, resolvedRows: 0 },
           excludedByFutureAppointment: 0,
           categoriesWithoutTicket: 0,
         },

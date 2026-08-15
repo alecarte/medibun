@@ -1,10 +1,10 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { sql } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/pglite";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { ConfigError } from "./categories.js";
 import { errorLine, runLeakReportCli, runSeedCategoriesCli, UsageError } from "./cli.js";
@@ -21,6 +21,25 @@ import { bootTestDb } from "../db/test-db.js";
  */
 
 const TZ = "America/New_York";
+
+/**
+ * The renderer, made to fail on demand. Rendering happens BEFORE the write is attempted,
+ * so a template bug has to surface as itself: reported as a write failure it would send
+ * an operator hunting a disk that is fine.
+ */
+const render = vi.hoisted(() => ({ fails: false }));
+vi.mock("./leak-report.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./leak-report.js")>();
+  return {
+    ...actual,
+    renderLeakReport: (data: Parameters<typeof actual.renderLeakReport>[0]) => {
+      if (render.fails) {
+        throw new TypeError("value.replaceAll is not a function");
+      }
+      return actual.renderLeakReport(data);
+    },
+  };
+});
 
 /** Synthetic values distinctive enough that any leak into output is unmistakable. */
 const LEAKY = {
@@ -94,6 +113,23 @@ describe("recovery CLIs — what a failure prints", () => {
     for (const value of Object.values(LEAKY)) {
       expect(line).not.toContain(value);
     }
+  });
+
+  it("lets a rendering failure surface as itself, not as a write failure", async () => {
+    const outPath = join(dir, "unrendered.html");
+    render.fails = true;
+
+    const err = await leakReport(["--out", outPath, "--timezone", TZ]).catch(
+      (thrown: unknown) => thrown,
+    );
+    render.fails = false;
+
+    expect(err).not.toBeInstanceOf(UsageError);
+    expect(errorLine(err)).not.toContain("could not write the report");
+    // A template bug is ours, but its message is not written here — it degrades like any
+    // other untyped error, to a class name.
+    expect(errorLine(err)).toBe("command failed: TypeError");
+    expect(existsSync(outPath)).toBe(false);
   });
 
   it("reports an unreadable config without echoing the path it tried", async () => {

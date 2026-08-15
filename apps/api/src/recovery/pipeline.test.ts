@@ -348,9 +348,14 @@ describe("the leak report", () => {
     expect(out.join("\n")).not.toContain(dir);
   });
 
-  it("re-asserts owner-only permissions when overwriting an existing report", async () => {
-    // writeFileSync's mode applies on CREATE only — a pre-existing world-readable file
-    // would otherwise keep its looser permissions across a re-run.
+  it("states what the latest import superseded, none of it here", () => {
+    expect(reportProse).toContain("0 revenue rows superseded by a later import");
+  });
+
+  it("replaces a pre-existing world-readable report instead of writing into it", async () => {
+    // writeFileSync's mode applies on CREATE only, so a file already sitting there would
+    // otherwise keep its looser permissions — holding a confidential report at 0644 for
+    // as long as it takes the next line to run. The previous file is removed first.
     const stalePath = join(dir, "stale-report.html");
     writeFileSync(stalePath, "stale");
     chmodSync(stalePath, 0o644);
@@ -359,5 +364,168 @@ describe("the leak report", () => {
 
     expect(statSync(stalePath).mode & 0o777).toBe(0o600);
     expect(readFileSync(stalePath, "utf8")).not.toContain("stale");
+  });
+});
+
+/**
+ * A corrected export, which is what makes the "read only the latest import" rule load
+ * bearing. 4D voids a revenue line and re-prints it at another amount: the correction
+ * stages under a NEW identity (the amount is hashed into the derived one) while the old
+ * row stays behind, because imports never delete. Read together, the two net into one
+ * visit and inflate the ticket, the expected value, and the headline above it.
+ */
+describe("the leak report — a corrected re-import", () => {
+  const VISIT_DATE = ymd(2025, 1, 10);
+  let corrected: ReturnType<typeof drizzle>;
+  let run: Awaited<ReturnType<typeof runLeakReportCli>>;
+
+  beforeAll(async () => {
+    corrected = await bootTestDb();
+    const importer = createImportService({ db: corrected });
+    const adapter = createFourDAdapter(TZ);
+    const revenue = (rows: readonly (readonly string[])[]) => csvFile(TRANSACTION_HEADERS, rows);
+    const runImport = (content: string) =>
+      importer.runImport({ adapter, entity: "transactions", fileName: "revenue.csv", content });
+
+    await runImport(
+      revenue([
+        [VISIT_DATE, "p-1", INJECTABLES, "500.00"],
+        [VISIT_DATE, "p-8", INJECTABLES, "300.00"],
+      ]),
+    );
+    // The next export prices p-1's line at $250 and no longer carries p-8's line at all.
+    await runImport(revenue([[VISIT_DATE, "p-1", INJECTABLES, "250.00"]]));
+
+    const configPath = join(dir, "corrected-cadence.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({ categories: { [INJECTABLES]: { expectedReturnIntervalDays: 120 } } }),
+    );
+    await runSeedCategoriesCli({ argv: ["--config", configPath], db: corrected, out: () => {} });
+    run = await runLeakReportCli({
+      argv: ["--out", join(dir, "corrected.html"), "--timezone", TZ, "--as-of", AS_OF],
+      db: corrected,
+      out: () => {},
+    });
+  }, 60_000);
+
+  it("keeps every staged row but tickets the category from the latest export alone", async () => {
+    const staged = await corrected.select().from(schema.stagedTransactions);
+    const categories = await corrected.select().from(schema.serviceCategories);
+
+    expect(staged).toHaveLength(3);
+    expect(categories.find((r) => r.code === "example-injectables")).toMatchObject({
+      // $250, the corrected amount — not $525, the average of a netted $750 visit and a
+      // visit the practice no longer has on its books.
+      typicalTicketCents: 25_000,
+      ticketBasis: "revenue-average",
+    });
+  });
+
+  it("pools the one patient the latest export still anchors, at the corrected value", () => {
+    expect(run.data.dormant).toMatchObject({
+      opportunityCount: 1,
+      patientCount: 1,
+      expectedValueCents: 25_000,
+    });
+  });
+
+  it("counts the superseded rows in the report rather than dropping them silently", () => {
+    expect(run.data.superseded.transactions).toBe(2);
+    expect(prose(readFileSync(run.outPath, "utf8"))).toContain(
+      "2 revenue rows superseded by a later import",
+    );
+  });
+
+  // The seed reads the same rule and had been the one reader making the exclusion in
+  // silence (security review, LOW): what a terminal prints is the operator's only view of
+  // it. Counts only — no label, no row content.
+  it("states the exclusion at the terminal too, in counts alone", async () => {
+    const lines: string[] = [];
+
+    await runSeedCategoriesCli({
+      argv: ["--config", join(dir, "corrected-cadence.json")],
+      db: corrected,
+      out: (line) => lines.push(line),
+    });
+
+    expect(lines.join("\n")).toContain(
+      "2 revenue rows superseded by the latest import were excluded",
+    );
+  });
+});
+
+/**
+ * Two re-imports that did not come back clean, and the two different things the report has
+ * to do about them: a run that staged NOTHING must never become the run every reader
+ * filters by, and a run that staged some rows and rejected others makes its superseded
+ * count ambiguous — a rejected row never reached staging, so it is indistinguishable from
+ * a row the practice system no longer carries.
+ */
+describe("the leak report — re-imports that rejected rows", () => {
+  const VISIT_DATE = ymd(2025, 1, 10);
+  let rejected: ReturnType<typeof drizzle>;
+  let run: Awaited<ReturnType<typeof runLeakReportCli>>;
+
+  beforeAll(async () => {
+    rejected = await bootTestDb();
+    const importer = createImportService({ db: rejected });
+    const adapter = createFourDAdapter(TZ);
+    const runImport = (entity: StagedEntity, content: string) =>
+      importer.runImport({ adapter, entity, fileName: `${entity}.csv`, content });
+    const roster = (dob: string) =>
+      csvFile(PATIENT_HEADERS, [
+        ["p-1", "Zzyzxine", SURNAME, dob, "555-0100", "p1@example.invalid"],
+      ]);
+
+    // The roster: one good import, then a re-import in which EVERY row rejects.
+    await runImport("patients", roster(ymd(1970, 4, 12)));
+    const allBad = await runImport("patients", roster("not-a-date"));
+    expect(allBad).toMatchObject({ stagedCount: 0, rejectedCount: 1 });
+
+    // Revenue: two rows, then a corrected re-import that also carries one unreadable row.
+    await runImport(
+      "transactions",
+      csvFile(TRANSACTION_HEADERS, [
+        [VISIT_DATE, "p-1", INJECTABLES, "500.00"],
+        [VISIT_DATE, "p-2", INJECTABLES, "300.00"],
+      ]),
+    );
+    const partial = await runImport(
+      "transactions",
+      csvFile(TRANSACTION_HEADERS, [
+        [VISIT_DATE, "p-1", INJECTABLES, "250.00"],
+        [VISIT_DATE, "p-2", INJECTABLES, "n/a"],
+      ]),
+    );
+    expect(partial).toMatchObject({ stagedCount: 1, rejectedCount: 1 });
+
+    const configPath = join(dir, "rejected-cadence.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({ categories: { [INJECTABLES]: { expectedReturnIntervalDays: 120 } } }),
+    );
+    await runSeedCategoriesCli({ argv: ["--config", configPath], db: rejected, out: () => {} });
+    run = await runLeakReportCli({
+      argv: ["--out", join(dir, "rejected.html"), "--timezone", TZ, "--as-of", AS_OF],
+      db: rejected,
+      out: () => {},
+    });
+  }, 60_000);
+
+  it("keeps counting the rows the last COUNTED import staged", () => {
+    // The all-reject run staged nothing, so it never became the filtering run: the roster
+    // row is still current, and nothing about it reads as superseded.
+    expect(run.data.staged.patients).toBe(1);
+    expect(run.data.superseded.patients).toBe(0);
+    expect(run.data.dormant.contactability.withEither).toBe(1);
+  });
+
+  it("caveats a superseded count the partial re-import may have reject-shadowed", () => {
+    expect(run.data.superseded.transactions).toBe(2);
+    expect(run.data.rejectShadowed).toEqual(["transactions"]);
+    const html = prose(readFileSync(run.outPath, "utf8"));
+    expect(html).toContain("transactions export never reached staging");
+    expect(html).toContain("Re-import cleanly");
   });
 });

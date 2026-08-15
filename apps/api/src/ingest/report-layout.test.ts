@@ -151,10 +151,14 @@ describe("report layout — locating the real header row", () => {
   });
 });
 
+/** A section row as R0's exports print one: a lone cell in COLUMN 0 — which this entity
+ *  maps (its date column), not the provider column the context flows into. */
+const sectionRow = (value: string) => sparseRow(WIDTH, { 0: value });
+
 describe("report layout — classifying the report's furniture", () => {
   it("skips a reprinted title + header block without carrying the title as a section", () => {
     const content = reportFile(PREAMBLE, HEADERS, [
-      sparseRow(WIDTH, { 0: "Dr Fakeman" }),
+      sectionRow("Dr Fakeman"),
       dataRow("09:00", "Testerly F"),
       // The page break reprints a title — which R0 warns can differ from the report's
       // own name — immediately above a reprinted header row.
@@ -178,9 +182,9 @@ describe("report layout — classifying the report's furniture", () => {
   // row after the break would silently inherit the PREVIOUS section's provider.
   it("keeps a section row that sits immediately before a page-break block", () => {
     const content = reportFile(PREAMBLE, HEADERS, [
-      sparseRow(WIDTH, { 0: "Dr Fakeman" }),
+      sectionRow("Dr Fakeman"),
       dataRow("09:00", "Testerly F"),
-      sparseRow(WIDTH, { 0: "Dr Otherly" }),
+      sectionRow("Dr Otherly"),
       sparseRow(WIDTH, { 0: "Detailed Appointment List" }),
       HEADERS,
       dataRow("10:00", "Otherly F"),
@@ -198,9 +202,9 @@ describe("report layout — classifying the report's furniture", () => {
 
   it("carries a section row's provider down onto rows that leave the column blank", () => {
     const content = reportFile(PREAMBLE, HEADERS, [
-      sparseRow(WIDTH, { 0: "Dr Fakeman" }),
+      sectionRow("Dr Fakeman"),
       dataRow("09:00", "Testerly F"),
-      sparseRow(WIDTH, { 0: "Provider: Dr Otherly" }),
+      sectionRow("Provider: Dr Otherly"),
       dataRow("10:00", "Otherly F"),
       // A row that names its own provider keeps it — carry-down fills blanks only.
       dataRow("11:00", "Thirdly F", "Dr Thirdly"),
@@ -212,6 +216,25 @@ describe("report layout — classifying the report's furniture", () => {
       "Dr Fakeman",
       "Dr Otherly",
       "Dr Thirdly",
+    ]);
+  });
+
+  // The one carve-out from "any lone cell is the section": read as a section, "11:00"
+  // loses its digits to the section label and becomes a provider called "00" that then
+  // rides down onto every row beneath it. It falls through as a data row instead.
+  it("never reads a lone TIME as the section", () => {
+    const content = reportFile(PREAMBLE, HEADERS, [
+      sectionRow("Dr Fakeman"),
+      dataRow("09:00", "Testerly F"),
+      sparseRow(WIDTH, { 0: "11:00" }),
+      dataRow("12:00", "Otherly F"),
+    ]);
+
+    const file = normalizeReport(content, SPEC);
+
+    expect(file.rows.map((r) => cellsOf(r.record, file.columnAt).provider)).toEqual([
+      "Dr Fakeman",
+      "Dr Fakeman",
     ]);
   });
 
@@ -234,6 +257,26 @@ describe("report layout — classifying the report's furniture", () => {
     ]);
   });
 
+  // A separator is validated against a real calendar, not against a date-shaped regex:
+  // February 30th is not a day, so it cannot become the day every row beneath it belongs
+  // to. It falls through the lone-cell rules instead (here: read as a section row, which
+  // changes no row's DAY — the point of this test).
+  it("never carries a date-shaped cell that is not a real date as the day", () => {
+    const content = reportFile(PREAMBLE, HEADERS, [
+      sparseRow(WIDTH, { 0: ymd(2026, 7, 15) }),
+      dataRow("09:00", "Testerly F"),
+      sparseRow(WIDTH, { 0: ymd(2026, 2, 30) }),
+      dataRow("10:30", "Otherly F"),
+    ]);
+
+    const file = normalizeReport(content, SPEC);
+
+    expect(file.rows.map((r) => cellsOf(r.record, file.columnAt).when)).toEqual([
+      `${ymd(2026, 7, 15)} 09:00`,
+      `${ymd(2026, 7, 15)} 10:30`,
+    ]);
+  });
+
   it("captures each Total row as the file's own reconciliation count", () => {
     const content = reportFile(PREAMBLE, HEADERS, [
       dataRow("09:00", "Testerly F"),
@@ -245,8 +288,7 @@ describe("report layout — classifying the report's furniture", () => {
     const file = normalizeReport(content, SPEC);
 
     expect(file.rows).toHaveLength(2);
-    expect(file.declaredTotals.map((t) => t.count)).toEqual([1204, 2]);
-    expect(file.declaredTotals[0]?.label).toBe("Appointments");
+    expect(file.declaredTotals).toEqual([1204, 2]);
   });
 
   // A revenue line item can be CALLED "Total Body Lift" — furniture is a shape (a lone
@@ -262,7 +304,7 @@ describe("report layout — classifying the report's furniture", () => {
     expect(file.rows).toHaveLength(1);
     expect(cellsOf(file.rows[0]!.record, file.columnAt).patient).toBe("Testerly F");
     // Only the furniture row declares a total; the data row contributes none.
-    expect(file.declaredTotals).toEqual([{ label: "Appointments", count: 1 }]);
+    expect(file.declaredTotals).toEqual([1]);
   });
 
   it("drops non-patient calendar blocks as structure rather than rejecting them", () => {
@@ -297,7 +339,7 @@ describe("report layout — classifying the report's furniture", () => {
   it("skips blank rows and counts every skipped row exactly once", () => {
     const content = reportFile(PREAMBLE, HEADERS, [
       sparseRow(WIDTH, {}),
-      sparseRow(WIDTH, { 0: "Dr Fakeman" }),
+      sectionRow("Dr Fakeman"),
       dataRow("09:00", "Testerly F"),
       sparseRow(WIDTH, { 0: "Total = 1" }),
     ]);
@@ -310,7 +352,7 @@ describe("report layout — classifying the report's furniture", () => {
 
   it("reports each data row's line number and verbatim source line", () => {
     const content = reportFile(PREAMBLE, HEADERS, [
-      sparseRow(WIDTH, { 0: "Dr Fakeman" }),
+      sectionRow("Dr Fakeman"),
       dataRow("09:00", "Testerly F"),
     ]);
 
@@ -365,6 +407,52 @@ describe("report layout — a lone cell in a column the entity maps", () => {
 
     expect(file.rows.map((r) => r.record[0])).toEqual(["p-1", "p-2"]);
     expect(file.layoutRowCount).toBe(2);
+  });
+});
+
+/**
+ * The Conversion By Provider shape: a section to carry, no calendar blocks, and a patient
+ * column that is the report's only join key. Its section rows land in COLUMN 0 — a column
+ * the map consumes — so an entity that carries a section reads a lone cell as the section
+ * wherever it sits. The residual ambiguity is the deliberate cost, pinned below.
+ */
+describe("report layout — a lone cell in a section-carrying entity", () => {
+  const CONSULT_HEADERS = ["Consult Date", "Patient", "Provider"];
+  const CONSULT_SPEC: LayoutSpec = {
+    columns: [column("consult date", true), column("patient", true), column("provider")],
+    carry: { section: "provider" },
+  };
+
+  it("reads a section row printed in a MAPPED column and carries it down", () => {
+    const content = reportFile([], CONSULT_HEADERS, [
+      sparseRow(3, { 0: "Dr Fakeman" }),
+      [ymd(2026, 7, 15), "Testerly F", ""],
+      [ymd(2026, 7, 16), "Thirdly F", ""],
+    ]);
+
+    const file = normalizeReport(content, CONSULT_SPEC);
+
+    expect(file.rows.map((r) => r.record[1])).toEqual(["Testerly F", "Thirdly F"]);
+    expect(file.rows.map((r) => r.record[2])).toEqual(["Dr Fakeman", "Dr Fakeman"]);
+  });
+
+  // KNOWN LIMIT, deliberately taken: a row that legitimately fills one cell — a patient
+  // name with every other column blank — reads as a section here. The alternative
+  // (deciding by column) broke the systematic case, because R0's section rows sit in a
+  // column the map consumes; a degenerate one-cell data row would reject anyway. Whether
+  // these exports print such a row at all is a first-run observation.
+  it("reads a lone patient name as a section too — the residual ambiguity", () => {
+    const content = reportFile([], CONSULT_HEADERS, [
+      sparseRow(3, { 0: "Dr Fakeman" }),
+      [ymd(2026, 7, 15), "Testerly F", ""],
+      sparseRow(3, { 1: "Otherly F" }),
+      [ymd(2026, 7, 16), "Thirdly F", ""],
+    ]);
+
+    const file = normalizeReport(content, CONSULT_SPEC);
+
+    expect(file.rows.map((r) => r.record[1])).toEqual(["Testerly F", "Thirdly F"]);
+    expect(file.rows.map((r) => r.record[2])).toEqual(["Dr Fakeman", "Otherly F"]);
   });
 });
 
