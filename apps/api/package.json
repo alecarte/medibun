@@ -10,6 +10,8 @@
     "e2e:harness": "tsx scripts/e2e-harness.ts",
     "demo:seed": "tsx --env-file-if-exists=../../infra/medplum/.env scripts/seed-demo.ts",
     "import:4d": "tsx --env-file-if-exists=../../infra/medplum/.env scripts/import-4d.ts",
+    "categories:seed": "tsx --env-file-if-exists=../../infra/medplum/.env scripts/seed-categories.ts",
+    "report:leak": "tsx --env-file-if-exists=../../infra/medplum/.env scripts/leak-report.ts",
     "db:migrate": "tsx --env-file-if-exists=../../infra/medplum/.env src/db/migrate.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",

@@ -26,11 +26,14 @@ import { SourceFileError, type DeclaredTotal } from "./types.js";
  *     header row (the same two-column bar the real header row is located by);
  *   - a row of at most two filled cells, one reading `Total … = N` → a declared total,
  *     furniture (a FULL row may legitimately be named "Total Body Lift: 1");
- *   - exactly ONE non-empty cell → the report's own furniture, resolved in this order:
- *     a calendar date is a DAY SEPARATOR; a row whose run of lone/blank neighbours ends
- *     at a reprinted header row is a page-break TITLE (adjacency is the only honest
- *     signal — the text is not); anything else is a SECTION row whose label becomes
- *     group context;
+ *   - exactly ONE non-empty cell → resolved in this order, and the order is the rule:
+ *     a calendar date is a DAY SEPARATOR (entities that carry a day); a row whose next
+ *     non-blank neighbour is a reprinted header row is a page-break TITLE (adjacency is
+ *     the only honest signal — the text is not); anything else is a SECTION row whose
+ *     label becomes group context (entities that carry a section); failing all three, a
+ *     cell sitting in a column the entity's map CONSUMES is a data row — the Patient
+ *     Export prints a roster row with only its id filled — and a cell anywhere else is
+ *     furniture;
  *   - a row whose PATIENT COLUMN is blank or holds a non-patient marker ("#",
  *     "Happening") → a non-patient calendar block (R0 (iv)), furniture; a marker in any
  *     other column is just a value, and the row stays;
@@ -39,7 +42,13 @@ import { SourceFileError, type DeclaredTotal } from "./types.js";
  * Known limits, to be pinned at the first real local run: a page-break block whose
  * decoration spans MORE than one cell per row reads as a data row and lands in rejects
  * (visible immediately, a one-line fix); a title row that is NOT followed by a reprinted
- * header reads as a section row.
+ * header reads as a section row; and a page-break block that reprints SEVERAL lone rows
+ * (practice name, then title) has only its last row read as the title — the rows above
+ * it read as section rows, so a reprinted preamble line can ride down as group context
+ * until the next real section row. R0's exports reprint a single title row, and the
+ * alternative (swallowing the whole run) is worse: it drops a section row that happens to
+ * sit against the page break, and every row after the break then inherits the PREVIOUS
+ * section silently.
  */
 
 /** One column the entity's map can consume, with the aliases it may be spelled as. */
@@ -240,15 +249,21 @@ export function normalizeReport(content: string, spec: LayoutSpec): NormalizedFi
     return filled.length === 1 ? ("lone" as const) : ("data" as const);
   });
 
-  /** A run of lone/blank rows that ends at a reprinted header row is a page-break
-   *  block — title and any reprinted preamble — not a run of section rows. */
-  const inPageBreakBlock = (at: number): boolean => {
+  /** The page-break TITLE: the lone row sitting against a reprinted header row. Only
+   *  that row — an earlier lone row in the same run is a section row that happens to
+   *  precede the page break, and swallowing it would carry the PREVIOUS section down
+   *  onto every row after the break. */
+  const isPageBreakTitle = (at: number): boolean => {
     let next = at + 1;
-    while (next < kinds.length && (kinds[next] === "lone" || kinds[next] === "blank")) {
+    while (next < kinds.length && kinds[next] === "blank") {
       next += 1;
     }
     return kinds[next] === "header";
   };
+
+  /** Column indices the entity's map consumes: a lone cell in one of them is a data row
+   *  with every optional column blank, not decoration. */
+  const mappedColumns = new Set(columnAt.values());
 
   const rows: NormalizedRow[] = [];
   const declaredTotals: DeclaredTotal[] = [];
@@ -275,16 +290,31 @@ export function normalizeReport(content: string, spec: LayoutSpec): NormalizedFi
       return;
     }
 
+    // A lone cell is furniture in three ways before it can be anything else — and only
+    // then, if it sits in a column the map consumes, is it a one-cell DATA row that
+    // falls through to the rest of this loop.
     if (kind === "lone") {
-      const value = cells.find((cell) => cell !== "")!;
+      const cellAt = cells.findIndex((cell) => cell !== "");
+      const value = cells[cellAt]!;
       const date = carry.day === undefined ? undefined : separatorDate(value);
       if (date !== undefined) {
         day = date;
-      } else if (carry.section !== undefined && !inPageBreakBlock(at)) {
-        section = value.replace(SECTION_LABEL, "").trim();
+        layoutRowCount += 1;
+        return;
       }
-      layoutRowCount += 1;
-      return;
+      if (isPageBreakTitle(at)) {
+        layoutRowCount += 1;
+        return;
+      }
+      if (carry.section !== undefined) {
+        section = value.replace(SECTION_LABEL, "").trim();
+        layoutRowCount += 1;
+        return;
+      }
+      if (!mappedColumns.has(cellAt)) {
+        layoutRowCount += 1;
+        return;
+      }
     }
 
     if (carry.patient !== undefined) {

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { calendarDate, isKnownTimeZone, pad } from "./dates.js";
 import { normalizeReport, type CarrySpec, type ColumnSpec } from "./report-layout.js";
 import { zonedInstant } from "../staff.js";
 import {
@@ -55,36 +56,9 @@ export class UnknownTimeZoneError extends Error {
   }
 }
 
-const pad = (n: number): string => String(n).padStart(2, "0");
-
-const ISO_DATE = /^(\d{4})-(\d{1,2})-(\d{1,2})$/;
-const US_DATE = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
 /** "<date> <HH:mm>" or "<date>T<HH:mm>", with optional seconds and an optional AM/PM
  *  (minute precision is what the schedule works in; a trailing :ss is read and dropped). */
 const DATE_TIME = /^(.+?)[ T](\d{1,2}):(\d{2})(?::\d{2})?\s*(?:([ap])\.?m\.?)?$/i;
-
-/** A real calendar date rendered as "YYYY-MM-DD", or undefined if it is neither. */
-function calendarDate(value: string): string | undefined {
-  const iso = ISO_DATE.exec(value);
-  const us = iso ? null : US_DATE.exec(value);
-  const parts = iso
-    ? { year: iso[1]!, month: iso[2]!, day: iso[3]! }
-    : us
-      ? { year: us[3]!, month: us[1]!, day: us[2]! }
-      : undefined;
-  if (!parts) {
-    return undefined;
-  }
-  const year = Number(parts.year);
-  const month = Number(parts.month);
-  const day = Number(parts.day);
-  const at = new Date(Date.UTC(year, month - 1, day));
-  // Round-trip check: rejects month 13, February 30, and friends.
-  if (at.getUTCFullYear() !== year || at.getUTCMonth() !== month - 1 || at.getUTCDate() !== day) {
-    return undefined;
-  }
-  return `${year}-${pad(month)}-${pad(day)}`;
-}
 
 /** Money written as dollars ("1234.56", "$1,234.56", "-250.00" for a refund) as integer
  *  cents, or undefined if it is not a money amount at all. A value we cannot read is a
@@ -258,22 +232,25 @@ function entitySpecs(timeZone: string): EntitySpecs {
     // identifying fields, plus an occurrence suffix (#2, #3 … in file order) that keeps
     // two genuinely identical printed rows apart.
     //
+    // Only fields the ROW ITSELF prints are hashed. `providerRaw` is excluded although
+    // it is staged: the export names the provider in a section row, so the value on a
+    // row is INFERRED from where the page break happened to fall — a re-export that
+    // paginates differently would change it, change the hash, and re-import the same
+    // appointment as a duplicate. (The day carried onto `startAt` is not inferred: the
+    // separator row states a real date the row's own time belongs to.) The cost is
+    // accepted: two appointments identical in every printed field but their provider now
+    // collide, and the occurrence suffix — already the rule for true duplicates — keeps
+    // them apart.
+    //
     // Reconciliation limits, accepted deliberately: the identity is only as stable as
-    // the fields it hashes, so an appointment RESCHEDULED, reassigned, or whose phone is
-    // corrected in 4D re-imports as a NEW row while the old one lingers (imports never
-    // delete), and if one of several identical rows disappears from a later export the
-    // highest occurrence suffix goes stale. Both are visible as unmatched staging rows,
-    // and neither can double-count a recovery: attribution runs off the Medplum booking,
-    // not off staging. A source that carries a real row id never has this problem.
+    // the fields it hashes, so an appointment RESCHEDULED or whose phone is corrected in
+    // 4D re-imports as a NEW row while the old one lingers (imports never delete), and
+    // if one of several identical rows disappears from a later export the highest
+    // occurrence suffix goes stale. Both are visible as unmatched staging rows, and
+    // neither can double-count a recovery: attribution runs off the Medplum booking, not
+    // off staging. A source that carries a real row id never has this problem.
     identity: {
-      derive: (row) => [
-        row.patientName,
-        row.dob,
-        row.phone,
-        row.startAt,
-        row.providerRaw,
-        row.serviceCategoryRaw,
-      ],
+      derive: (row) => [row.patientName, row.dob, row.phone, row.startAt, row.serviceCategoryRaw],
     },
     map: {
       patientSourceIdentity: text("patient id", false, ["patient number"]),
@@ -448,9 +425,7 @@ export const FOUR_D_ENTITIES: readonly StagedEntity[] = [
  * schedule actors; the CLI passes it explicitly rather than guessing).
  */
 export function createFourDAdapter(timeZone: string): SourceAdapter {
-  try {
-    new Intl.DateTimeFormat("en-CA", { timeZone });
-  } catch {
+  if (!isKnownTimeZone(timeZone)) {
     throw new UnknownTimeZoneError();
   }
   const specs = entitySpecs(timeZone) as Partial<Record<StagedEntity, unknown>>;
