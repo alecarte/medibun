@@ -22,7 +22,14 @@ type AdapterFields<T, K extends keyof T> = Required<Pick<T, K>>;
 
 export type StagedPatientRow = AdapterFields<
   typeof stagedPatients.$inferInsert,
-  "sourceIdentity" | "firstName" | "lastName" | "dob" | "phone" | "email"
+  | "sourceIdentity"
+  | "firstName"
+  | "lastName"
+  | "dob"
+  | "phone"
+  | "phoneType"
+  | "email"
+  | "spendCents"
 >;
 
 export type StagedAppointmentRow = AdapterFields<
@@ -98,6 +105,15 @@ export type ParseResult<E extends StagedEntity> = {
    *  them in one statement and relies on that uniqueness. */
   readonly rows: readonly StagedRowByEntity[E][];
   readonly rejects: readonly RejectedRow[];
+  /** Rows the source's own report layout contributed — preamble, section and day rows,
+   *  totals, reprinted headers, non-patient calendar blocks. Skipped, NOT rejected (a
+   *  rejects file full of decoration helps nobody), but counted so the operator sees
+   *  what the pre-pass swallowed. */
+  readonly layoutRowCount: number;
+  /** The counts `Total X = N` rows declare about the file — its own reconciliation
+   *  totals (R0). Counts only: what each total is OF is report furniture the
+   *  reconciliation never compares. Empty when the export prints none. */
+  readonly declaredTotals: readonly number[];
 };
 
 /** The file cannot be staged at all — wrong shape, not a bad row. Carries column names

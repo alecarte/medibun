@@ -10,6 +10,11 @@
  *
  * Self-verifies: runs $find against the seeded schedule and fails loudly if no slots come
  * back. Requires the local Medplum stack (infra/medplum/setup-dev.sh) and its .env.
+ *
+ * Failure posture is the local scripts' shared one (src/local-script.ts): the connection,
+ * the exit code, and the print-`errorLine`-only rule come from `runLocalScript`, because a
+ * driver failure's raw message carries the query it failed on and its bound parameters.
+ * Synthetic data today — but the rule does not depend on what is in the database.
  */
 import {
   authenticatedMedplumClient,
@@ -20,9 +25,9 @@ import {
   readConfigFromEnv,
 } from "@medibun/medplum-backend";
 import type { Identifier, Location, Organization, Resource } from "@medibun/fhir-types";
-import { drizzle } from "drizzle-orm/node-postgres";
-import pg from "pg";
 
+import { makeErrorLine, UsageError } from "../src/ingest/import-cli.js";
+import { runLocalScript, type LocalScriptCli } from "../src/local-script.js";
 import { createServiceCatalog } from "../src/services/catalog.js";
 
 const IDENTIFIER_SYSTEM = "https://medibun.com/fhir/identifiers/demo-seed";
@@ -64,11 +69,16 @@ const PRACTITIONERS = [
   { key: "maya-chen", given: "Maya", family: "Chen", services: ["svc-lip-filler"] },
 ] as const;
 
-async function main(): Promise<void> {
+/** The one line a failure may print. Only messages written in this file are safe in full;
+ *  everything else — a driver error, a Medplum client error — degrades to a class name. */
+const errorLine = makeErrorLine([UsageError], "demo seed failed");
+
+async function main({ db, out }: Parameters<LocalScriptCli["run"]>[0]): Promise<void> {
   // Friendly preflight: the env comes from infra/medplum/.env, which setup-dev.sh writes
-  // as its LAST step — if it's missing, setup didn't complete.
-  if (!process.env.MEDPLUM_BASE_URL || !process.env.EXPERIENCE_DATABASE_URL) {
-    throw new Error(
+  // as its LAST step — if it's missing, setup didn't complete. (EXPERIENCE_DATABASE_URL
+  // is `runLocalScript`'s own guard, and it has already passed by the time we are here.)
+  if (!process.env.MEDPLUM_BASE_URL) {
+    throw new UsageError(
       "Medplum env not found. Run the local stack setup first:\n" +
         "  cd infra/medplum && docker compose up -d && ./setup-dev.sh\n" +
         "(setup-dev.sh writes infra/medplum/.env when it completes successfully)",
@@ -97,7 +107,7 @@ async function main(): Promise<void> {
     },
     "loc-aureva-studio",
   );
-  console.log(`✓ Organization/${org.id} (Aureva) + Location`);
+  out(`✓ Organization/${org.id} (Aureva) + Location`);
 
   const serviceIds = new Map<string, string>();
   for (const s of SERVICES) {
@@ -106,7 +116,7 @@ async function main(): Promise<void> {
       `hs-${s.code}`,
     );
     serviceIds.set(s.code, hs.id!);
-    console.log(`✓ HealthcareService/${hs.id} (${s.name})`);
+    out(`✓ HealthcareService/${hs.id} (${s.name})`);
   }
 
   const scheduleIds: string[] = [];
@@ -133,20 +143,17 @@ async function main(): Promise<void> {
         `sched-${p.key}-${code}`,
       );
       scheduleIds.push(schedule.id!);
-      console.log(`✓ Schedule/${schedule.id} (${p.family} · ${service.name})`);
+      out(`✓ Schedule/${schedule.id} (${p.family} · ${service.name})`);
     }
   }
 
-  // Experience-DB catalog rows, reconciled to the FHIR ids.
-  const dbUrl = process.env.EXPERIENCE_DATABASE_URL;
-  if (!dbUrl) throw new Error("EXPERIENCE_DATABASE_URL unset — run infra/medplum/setup-dev.sh");
-  const pool = new pg.Pool({ connectionString: dbUrl });
-  const catalog = createServiceCatalog(drizzle(pool));
+  // Experience-DB catalog rows, reconciled to the FHIR ids. The connection is
+  // runLocalScript's — it opened it and it closes it.
+  const catalog = createServiceCatalog(db);
   for (const s of SERVICES) {
     await catalog.upsert({ ...s, healthcareServiceId: serviceIds.get(s.code) });
   }
-  await pool.end();
-  console.log(`✓ experience-DB service catalog (${SERVICES.length} rows)`);
+  out(`✓ experience-DB service catalog (${SERVICES.length} rows)`);
 
   // Self-verify: $find on the first schedule for the next 7 days must yield slots.
   const start = new Date();
@@ -159,15 +166,10 @@ async function main(): Promise<void> {
     count: 5,
   });
   if (slots.length === 0) {
-    throw new Error("self-check FAILED: $find returned no slots for the seeded schedule");
+    throw new UsageError("self-check FAILED: $find returned no slots for the seeded schedule");
   }
-  console.log(
-    `✓ self-check: $find returned ${slots.length} free slots (first: ${slots[0]!.start})`,
-  );
-  console.log("DEMO SEED COMPLETE");
+  out(`✓ self-check: $find returned ${slots.length} free slots (first: ${slots[0]!.start})`);
+  out("DEMO SEED COMPLETE");
 }
 
-main().catch((err: unknown) => {
-  console.error(err instanceof Error ? err.message : err);
-  process.exit(1);
-});
+await runLocalScript({ run: main, errorLine });

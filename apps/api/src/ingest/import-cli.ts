@@ -3,8 +3,8 @@ import { basename } from "node:path";
 
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 
-import { createFourDAdapter, UnknownTimeZoneError } from "./adapter-4d.js";
-import { createImportService } from "./importer.js";
+import { createFourDAdapter, FOUR_D_ENTITIES, UnknownTimeZoneError } from "./adapter-4d.js";
+import { createImportService, type ImportSummary } from "./importer.js";
 import { SourceFileError } from "./types.js";
 import type { StagedEntity } from "../db/schema.js";
 
@@ -21,13 +21,9 @@ import type { StagedEntity } from "../db/schema.js";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = PgDatabase<PgQueryResultHKT, any, any>;
 
-const ENTITIES: readonly StagedEntity[] = [
-  "patients",
-  "appointments",
-  "inquiries",
-  "consults",
-  "transactions",
-];
+/** Exactly what the 4D adapter can stage — `inquiries` is not among them (R0: 4D
+ *  tracks none), and the usage line says so rather than failing halfway through. */
+const ENTITIES: readonly StagedEntity[] = FOUR_D_ENTITIES;
 
 export const USAGE = [
   "usage: pnpm --filter @medibun/api import:4d -- \\",
@@ -50,8 +46,9 @@ export class UsageError extends Error {
   }
 }
 
-/** First `code` in the error's cause chain (pg's SQLSTATE, node's ENOENT, …). */
-function errorCodeOf(err: unknown): string | undefined {
+/** First `code` in the error's cause chain (pg's SQLSTATE, node's ENOENT, …). Shared
+ *  with the recovery CLIs, which apply the same failure-printing rule. */
+export function errorCodeOf(err: unknown): string | undefined {
   for (let e: unknown = err; e; e = (e as { cause?: unknown }).cause) {
     const code = (e as { code?: unknown }).code;
     if (typeof code === "string") {
@@ -61,27 +58,40 @@ function errorCodeOf(err: unknown): string | undefined {
   return undefined;
 }
 
+/** An error class a CLI wrote itself, and whose message is therefore safe in full. */
+type SafeErrorClass = abstract new (...args: never[]) => Error;
+
 /**
- * The one line a failure is allowed to print. ONLY our own typed errors are safe in
- * full: drizzle wraps a failed query as `Failed query: <sql> params: <bound values>`,
+ * Builds the one line a failure is allowed to print. ONLY our own typed errors are safe
+ * in full: drizzle wraps a failed query as `Failed query: <sql> params: <bound values>`,
  * so a mid-batch database error would otherwise print up to a whole chunk of staged
  * names, dates of birth, phones, and emails to stderr. Everything else degrades to the
  * error's class name plus its driver code — enough to diagnose, nothing to leak.
+ *
+ * One implementation, every CLI: the recovery CLIs apply the same rule with their own
+ * safe classes and their own prefix, and a rule this load-bearing is not maintained twice.
  */
-export function errorLine(err: unknown): string {
-  if (
-    err instanceof UsageError ||
-    err instanceof SourceFileError ||
-    err instanceof UnknownTimeZoneError
-  ) {
-    return err.message;
-  }
-  if (err instanceof Error) {
-    const code = errorCodeOf(err);
-    return `import failed: ${err.name}${code ? ` (${code})` : ""}`;
-  }
-  return "import failed";
+export function makeErrorLine(
+  safe: readonly SafeErrorClass[],
+  prefix: string,
+): (err: unknown) => string {
+  return (err) => {
+    if (safe.some((cls) => err instanceof cls)) {
+      return (err as Error).message;
+    }
+    if (err instanceof Error) {
+      const code = errorCodeOf(err);
+      return `${prefix}: ${err.name}${code ? ` (${code})` : ""}`;
+    }
+    return prefix;
+  };
 }
+
+/** The import CLI's failure line. */
+export const errorLine = makeErrorLine(
+  [UsageError, SourceFileError, UnknownTimeZoneError],
+  "import failed",
+);
 
 /** Excel and Sheets execute a cell that opens with = + - @ (or a tab/CR before one).
  *  The rejects file exists to be opened by a human for triage, so such a cell is
@@ -91,10 +101,54 @@ const FORMULA_LEAD = /^[=+\-@\t\r]/;
 const rejectCell = (value: string): string =>
   `"${(FORMULA_LEAD.test(value) ? `'${value}` : value).replaceAll('"', '""')}"`;
 
-const readArg = (argv: readonly string[], name: string): string | undefined => {
+/**
+ * The per-file reconciliation line (R0 win (b)): 4D's exports print their own
+ * `Total X = N`, so a run can be checked against the source with no side channel. A file
+ * may declare SEVERAL — per-section subtotals, a grand total, a dollar total beside a row
+ * count — so EVERY declared number is checked and a match anywhere is the answer. Reading
+ * the largest one instead was confidently wrong on both shapes: a comma-formatted
+ * `Total Collected = 152,340` became the row count, and subtotals alone never matched.
+ * Where nothing matches, the closest number is named as the closest rather than as a row
+ * total the file never declared. COUNTS ONLY — no label, no content — and a mismatch is a
+ * warning, never a failure: the operator decides what it means.
+ */
+function reconciliationLine(summary: ImportSummary): string | undefined {
+  const declared = summary.declaredTotals;
+  if (declared.length === 0) {
+    return undefined;
+  }
+  const accounted = summary.stagedCount + summary.rejectedCount;
+  const counts = `staged ${summary.stagedCount} + rejected ${summary.rejectedCount}`;
+  if (declared.includes(accounted)) {
+    return `  file declares ${accounted} · ${counts} ✓`;
+  }
+  const closest = declared.reduce((best, count) =>
+    Math.abs(count - accounted) < Math.abs(best - accounted) ? count : best,
+  );
+  return (
+    `  ⚠ no declared total matches · closest ${closest} · ${counts} ` +
+    `(${Math.abs(closest - accounted)} unaccounted)`
+  );
+}
+
+/** `--name value` out of an argv slice. Shared with the recovery CLIs: all three read
+ *  the same flag grammar. */
+export const readArg = (argv: readonly string[], name: string): string | undefined => {
   const index = argv.indexOf(`--${name}`);
   return index === -1 ? undefined : argv[index + 1];
 };
+
+/** Reads a file the operator named, without letting its path reach the terminal: the
+ *  error's own message embeds it, and a directory a human chose can itself name a patient
+ *  ("~/exports/jane-doe/roster.csv"). Shared with the recovery CLIs — `what` is the phrase
+ *  the message names the file by. */
+export function readLocalFile(path: string, what: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch (err) {
+    throw new UsageError(`could not read the ${what} (${errorCodeOf(err) ?? "unreadable"})`);
+  }
+}
 
 export type ImportCliRun = {
   readonly importId: string;
@@ -119,15 +173,7 @@ export async function runImportCli(deps: {
     throw new UsageError(USAGE);
   }
 
-  let content: string;
-  try {
-    content = readFileSync(file, "utf8");
-  } catch (err) {
-    // Not the raw error: its message embeds the path, and a captured terminal log
-    // shouldn't carry the directory a real export was filed under.
-    throw new UsageError(`could not read the input file (${errorCodeOf(err) ?? "unreadable"})`);
-  }
-
+  const content = readLocalFile(file, "input file");
   const adapter = createFourDAdapter(timezone);
   const rejectsPath = `${file}.rejects.csv`;
   // Always clear the previous run's rejects FIRST. It holds raw source rows: a clean
@@ -156,6 +202,26 @@ export async function runImportCli(deps: {
     `  ${summary.rowCount} rows · ${summary.insertedCount} new · ` +
       `${summary.updatedCount} reconciled · ${summary.rejectedCount} rejected`,
   );
+  if (summary.layoutRowCount > 0) {
+    // Report furniture the pre-pass skipped: preamble, section and day rows, totals,
+    // reprinted headers, non-patient calendar blocks. Counted, never rejected.
+    deps.out(`  ${summary.layoutRowCount} report-layout rows skipped`);
+  }
+  const reconciliation = reconciliationLine(summary);
+  if (reconciliation) {
+    deps.out(reconciliation);
+  }
+  // Split exports are NOT supported: segmentation reads only the latest run per export
+  // (`currentImportIds`, importer.ts), so a second file for the same entity supersedes
+  // every row of the first wholesale. The hazard is invisible in the numbers and obvious
+  // here, at the moment it is created. Both names are basenames the ledger already holds.
+  if (summary.previousFileName !== null && summary.previousFileName !== basename(file)) {
+    deps.out(
+      `  ⚠ the previous ${entity} import read ${summary.previousFileName}, this one reads ` +
+        `${basename(file)} — only the latest run of an export is read, so a split export ` +
+        "supersedes the file before it; import one full-range file per entity",
+    );
+  }
   if (summary.rejects.length > 0) {
     // Basename only, same rule as the ledger columns and the unreadable-input error:
     // captured terminal output must not carry the directory an export was filed under.

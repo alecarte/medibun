@@ -119,11 +119,23 @@ local Postgres). Cloud promotion of real data is a single explicit cut-over once
 required for the touched services is signed (`docs/BAA_CHECKLIST.md` rows — the all-signed
 release rule stated there and in `security.md`), recorded in this review log.
 
+**Export rule — one full-range file per entity.** Every reader (the pools, the category
+seeder) counts only the rows the latest COUNTED import of an export still contains, because
+that is what makes a corrected or voided line reconcile instead of double-counting. An entity
+delivered as SEVERAL files therefore supersedes itself: the second file's run becomes the one
+that filters, and every row of the first reads as absent from the source. Pull each entity as
+one file covering its whole range; the import CLI prints a warning when an entity's file name
+changes between runs, and a run that staged nothing at all never becomes the filtering run.
+
 **Cut-over checklist (added as items are found):** BAAs signed for every touched service ·
 **import actor attribution** — `imports` records what ran, not who ran it, which is tolerable
 for one operator on one machine but not once an endpoint, a second person, or a hosted stack can
 trigger an import (an actor column lands before any of those, per CLAUDE.md's "every PHI write
-attributable to an authenticated principal").
+attributable to an authenticated principal") · **read-path attribution** (security review,
+2026-08-14) — the R2c CLIs (`categories:seed`, `report:leak`) read staged identity/contact
+columns and leave no access record; same deferral, same bound as the import-actor item: an
+access ledger (or equivalent attribution) lands before any endpoint, second operator, or
+hosted stack can trigger a read.
 
 ## 8. Write-back at Handal (gate B6 — **decided: (a)**, Alec 2026-08-13, V1 §12)
 
@@ -163,6 +175,190 @@ campaign-builder UI · automation levels above approve-every-touch · external-c
 
 ## Review log
 
+- 2026-08-15 — **R2 verifier round on the round-2 fixes (six findings, all remediated).**
+  **One presentation policy.** The round-2 fix taught the dormant table's footer to add its
+  rows as printed, and left the summary card and the headline rounding the exact cents — so
+  the same figure read `$251` in one place and `$252` in another. Every total the Leak Report
+  prints is now the SUM OF ITS DISPLAYED PARTS, computed once (`displayedTotals`) and handed
+  to the table footer, both summary cards, the headline, and the CLI's own summary lines;
+  `LeakReportData` still keeps the exact cents. **The latest-import filter, hardened three
+  ways.** A run that staged NOTHING never becomes the filtering run — a re-import whose rows
+  all rejected would otherwise supersede every good row before it, and a practice's whole
+  export would read as zero; a PARTIAL-reject re-import now earns a caveat in the report's
+  superseded paragraph, because a rejected row never reaches staging and is therefore
+  indistinguishable from a row the source dropped (counts and export names only, with
+  "re-import cleanly" stated); and SPLIT EXPORTS are named as unsupported — one entity
+  delivered as two files makes the second supersede the first wholesale, so the import CLI
+  warns when an entity's file name changes (both basenames, already ledger data) and §7 now
+  carries the rule: one full-range file per entity. The fold also breaks a `createdAt` tie by
+  id, so every reader folds the ledger the same way. **Section rows, restored to any column.**
+  Round 2's "decide a lone cell by which column it sits in" made the R0-documented shape worse
+  than the base: R0 prints section rows in COLUMN 0, which the appointment and consult maps
+  both consume, so every real section row rejected (`patient is required`) or dropped as a
+  calendar block and every row beneath it lost its provider. For an entity that carries a
+  section, a lone cell is the section wherever it sits — after a valid calendar date (day
+  separator), a page-break title, and a time-only cell, which stays out (the `11:00`-becomes-
+  `00` fix holds). The stated tradeoff: a lone patient name reads as a section too, which is
+  a degenerate one-cell data row that would have rejected anyway, against every systematic
+  section row — recorded in the module's Known Limits and pinned by a test, and a first-run
+  observation point. **The as-of cutoff, DST-proof by construction.** "Holds an appointment
+  after the as-of date" is now decided on calendar days — `zonedYmd(startAt, zone) > asOf` —
+  rather than against an instant bound. `dayBoundsFor(asOf).end` is 23:00 in a zone whose
+  clocks skip midnight (America/Santiago, 2026-09-06), so the last hour of the as-of evening
+  read as tomorrow and excluded a patient holding no future booking. Observation, not a
+  change: `dayBoundsFor` carries the same 23-hour-day quirk for the day-sheet window in
+  `staff.ts`; the schedule family is frozen (§4), so it is recorded here as a follow-up for
+  whoever next opens it. **The batch contract, enforced.** The upsert's `set` clause applies
+  to the whole statement, so deriving the refresh set from the UNION of the batch's keys would
+  clear a value on any row that omitted one. Adapter rows are homogeneous by construction
+  (`buildRow` fills every mapped column on every row, null for an absent value); the importer
+  now checks that and refuses a batch that breaks it with a typed internal error naming the
+  entity and the differing COLUMN — a programming error, never operator data. **Silent filter,
+  spoken.** `categories:seed` counted its superseded exclusion nowhere; it now returns and
+  prints it, which is what the `currentImportIds` comment already claimed of every reader.
+- 2026-08-15 — **R2 code-review round 2, consolidation half (no behavior change but one).**
+  The day-separator classifier no longer keeps its own date regexes: it strips the optional
+  weekday and hands the rest to the adapter's own `calendarDate`, so a separator is validated
+  against a real calendar (`2026-02-30` is not a day and cannot become the day every row
+  beneath it belongs to — the one behavior change, with a test) and the accepted formats have
+  one definition rather than two that drift. Fields nothing rendered are gone: the appointment
+  join's `futureRows`, and the declared totals' label — reconciliation compares counts, so
+  `declaredTotals` is `readonly number[]` and the label is not captured at all, which is one
+  less piece of source text with somewhere to go. The dormant pool's `categoriesWithoutTicket`
+  was the third such field and is now WIRED instead: the report states, in the consult pool's
+  own words, how many pooled categories carry no ticket value and contribute nothing to the
+  dollars — the dash in the table said it per row, the prose says it once. Held once now: the
+  staged-revenue select (one column list for the pools and the category seeder), the
+  practice-local day formatter (`zonedYmd`, staff.ts — the schedule's memoized one, not a
+  second Intl formatter in the report), and `readLocalFile` (both CLIs read an operator's file
+  the same way, path never reaching the terminal). Also: the report's two body passes trim each
+  row once, the leak report's two independent reads run in parallel, `BASIS_LABEL` is keyed by
+  the basis union so a fourth basis fails the build instead of rendering `undefined`, and the
+  `--practice` flag is read once. **Dependency record, noted here to be greppable:** `csv-parse`
+  — the only third-party code on the staged-PHI read path — was approved under CLAUDE.md's
+  PHI-touching-dependency gate at R1, by Alec's walkthrough and merge of PR #21 (commit
+  `6ede2ce`); nothing has been added to that path since.
+- 2026-08-15 — **R2 code-review round 2 (correctness; four numbers moved).** The headline one:
+  the pools and the category seeder now read only the staged rows the **most recent import of
+  each export still contains** (`currentImportIds`, importer.ts — the upsert re-stamps
+  `import_id` on every row a fresh export carries, so a row wearing an older stamp is exactly a
+  row the newest export dropped). Without it a voided or corrected revenue line re-imported
+  under a NEW derived identity — the amount is hashed into it — while the stale row lingered,
+  and `groupVisits` netted both into one visit: tickets, expected value, and the headline all
+  inflated. **The assumption this rests on, stated because it is load-bearing:** each 4D export
+  is a FULL dump of its date range (true of the R0-recorded exports — the revenue re-pull covers
+  the whole 24-month window); a narrower re-pull would eclipse the rows it never covered, which
+  is why every excluded row is counted per entity and printed in the report's data-quality
+  section rather than dropped in silence. Second: the dormant pool's "holds no appointment after
+  the as-of date" cutoff is now the **practice-local** start of the following day (`timeZone`
+  threaded through `prepareIndexes` and both pool signatures) — read in UTC it under-excluded
+  east of UTC, which is the one direction that matters, because it contacts a patient who has
+  already rebooked. Third: the report-layout pre-pass decides a lone cell by **where it sits** —
+  day separator, then page-break title, then the section's own column or an unmapped column
+  (never a time-only cell) for group context, and any other mapped column as a one-cell data row
+  that stages or rejects on its merits. Taking any lone cell as the section had turned `11:00`
+  into a provider called `00` and let a stray patient name in the consult export ride down as the
+  provider of every row beneath it; the accepted cost — a section row printed in a column the
+  entity maps reads as a data row and lands in rejects — is recorded in the module's Known
+  Limits, and which column 4D prints section rows in is a first-run observation.
+  Smaller, same round: the report's category total adds the rows **as printed** rather than
+  rounding the exact cents once; the import CLI checks its run against **every** declared total
+  (a comma-formatted `Total Collected = 152,340` had been read as the row count) and names the
+  closest one honestly when none matches; the leak report is rendered before the write is
+  attempted and the previous file is removed before writing at 0600, so a template bug reads as
+  itself and a pre-existing loose-mode file never holds the report; accounting spellings of a
+  refund — `(250.00)`, `($250.00)`, `$-250.00` — read as negative money; a revenue row missing
+  both a category and a patient id counts under both; the upsert's refresh set is derived from
+  the table's columns intersected with the keys the whole batch fills (never one sample row,
+  never a column no adapter fills); `scripts/seed-demo.ts` joined the shared failure-printing
+  rule; and the NUL byte in `adapter-4d.ts` is spelled `\u0000`, so the one file that parses
+  patient identities is no longer classified as binary by content sweeps.
+- 2026-08-15 — **R2 code-review follow-ups (quality round, no behavior change).** The rules
+  the R2 CLIs hold twice are now held once: the PHI-safe failure line is one parameterized
+  implementation (`ingest/import-cli.ts` `makeErrorLine`, each CLI supplying its own safe
+  classes and prefix) with `readArg` shared beside it; the local scripts' bootstrap —
+  `EXPERIENCE_DATABASE_URL` guard, pool, exit code, print-`errorLine`-only failure posture —
+  is one `runLocalScript` (`src/local-script.ts`), leaving each `scripts/*.ts` a two-line
+  composition root; per-visit grouping is one `groupVisits` (`recovery/categories.ts`) that
+  both the ticket average and the dormant pool's last-paid-visit fold over, so "both numbers
+  mean one thing" is enforced rather than maintained; the NEVER_MAPPED guard normalizes
+  through header matching's own `normalizeHeader`, so guard and matching cannot drift. Also:
+  the roster index and the future-appointment join are computed ONCE per report and passed
+  into both pools (`prepareIndexes`) instead of rebuilt per pool, and the index appends to
+  its collision lists instead of rebuilding them. The existing suites are the proof — no
+  test changed except the two leak suites, which now share one `prose` helper.
+- 2026-08-14 — **R2c built: the pool queries and the Leak Report v1.** Segmentation
+  (`apps/api/src/recovery/segmentation.ts`) is a pure layer over one read of staging, so
+  every pool rule is testable without a database. **Dormant** runs on revenue exactly as R0
+  required: a patient's last PAID visit per category — line items grouped to a per-visit
+  ticket by (patient, date, category) with refunds netted in, a group netting to zero or
+  less counted as a refund rather than a visit — older than that category's hand-set
+  interval, with no appointment after the anchor date. **`asOf` defaults to the export's own
+  horizon** (the newest staged transaction date, overridable), so a report is reproducible
+  against a fixed export rather than against the day it happened to run; the dormancy edge is
+  exclusive — a visit exactly `interval` days old is not yet dormant. Revenue joins the
+  roster by patient id (R0 win (a)); the appointment export has none, so it joins on
+  name + DOB + phone (case-folded, order-independent name tokens, digits-only phone) and the
+  **join coverage is printed rather than assumed** — an unmatched row can never remove a
+  patient from the pool, so the pool over-counts instead of quietly filtering.
+  **Unconverted consults** carry each R0 degradation as its own counter: `booked` is read
+  from closed yes-/no-shaped vocabularies and anything else — a blank included — is
+  **uninterpretable**, never guessed into the pool; a consult must be at least **30 days**
+  old (configurable) to count as lost; a name matching more than one roster patient is
+  **ambiguous** and held back for a human; a patient with a later paid visit or a future
+  appointment is excluded as returned, mirroring B8's own exclusion.
+  **`service_categories` seeding** is its own local CLI (`categories:seed`): tickets are the
+  per-category average visit total, basis `revenue-average`, while
+  `expected_return_interval_days` comes ONLY from an operator-written JSON config (keyed by
+  label or code; a category absent from it defines no dormancy; an optional per-category
+  ticket override lands as `hand-set`, and a config-only category still lands). A synthetic
+  example config is committed (`apps/api/config/service-categories.example.json`); the real
+  one is written locally at the §7 run and never enters the repo.
+  The **Leak Report** (`report:leak`) renders one self-contained print-quality HTML file — no
+  scripts, no external assets — and is **aggregates only**: category labels, counts, and
+  dollars are its whole vocabulary, pinned by a test asserting that no fixture identity
+  reaches the document. It prints the B8 definition verbatim, the 20% holdout plan, the
+  per-visit ticket methodology with each category's basis, the deliberate list-price
+  exclusion (anesthesia and facility fees), the import ledger, the appointment join coverage,
+  and the export-horizon caveat. One gap found while writing it and stated in the report
+  rather than papered over: the per-file `Total X = N` reconciliation the import CLI performs
+  is **not retained in the ledger**, so the import session's terminal output is its only
+  record — a column for it is a small follow-up if that check has to survive the run.
+  Verified end to end on synthetic report-layout fixtures. No HTTP surface, no Medplum
+  access, no new dependency. Code-review round (same day): `--as-of` is
+  now validated against a real calendar rather than a shape (a NaN date inverted every
+  comparison and pooled everyone) and `--min-age-days` against a whole-number guard that no
+  longer accepts blanks, a section row sitting against a page break is no longer
+  swallowed as title furniture and a one-cell row in a mapped column stages instead of
+  vanishing, appointment identities dropped the section-carried provider so the same
+  appointment hashes the same however the export paginated (a staging DB written BEFORE
+  this change must truncate and re-import appointments and consults — the old identities
+  no longer match, and a re-import would duplicate rather than reconcile), and the report dates its windows
+  and ledger in the practice's zone (`--timezone`, required for the same reason the import CLI
+  requires it) rather than in UTC.
+- 2026-08-14 — **R2b built: the report-layout pre-pass; the 4D maps are now the real
+  exports.** The R0→R1 correction is in: `report-layout.ts` normalizes 4D's report dumps —
+  locates the real header row, classifies furniture STRUCTURALLY (never by title text, per
+  R0), carries provider/day group context down onto data rows, and captures the file's own
+  `Total X = N` so the CLI reconciles every run against the source's own count (counts only,
+  mismatch is a warning). Furniture is counted, never rejected. The column maps now carry the
+  four real exports (Patient Export, Detailed Appointment List, Conversion By Provider,
+  Revenue by Staff); `inquiries` left the adapter's entity list (infeasible at Handal — the
+  staging table stays); `Allergy`, `Description`, the revenue line-item text, and
+  `Report Tag` are excluded by construction (`NEVER_MAPPED`, pinned by test — the two-store
+  rule's live test, R0 (i)). The two exports with no row id (appointments, revenue) get
+  DERIVED identities — sha256 over normalized identifying fields + an occurrence suffix for true
+  duplicates; the accepted limit (a rescheduled appointment re-imports as a new row; staging
+  never deletes) is documented in the adapter, and attribution never runs off staging rows.
+  Header-spelling posture: R0 recorded column MEANINGS, not exact strings, so matching is
+  alias-tolerant and a missing required column fails by printing the header NAMES found
+  (report vocabulary, never values) — the first §7 local run pins any mismatch as a one-line
+  map fix. Verified on synthetic report-layout fixtures; real-data verification (counts vs
+  in-file totals) runs at the first local import. Security-review remediation (same day):
+  header-row acceptance now requires two known columns and the missing-columns error prints
+  only recognized column names; totals only classify on furniture-shaped rows;
+  `NEVER_MAPPED` is enforced at adapter construction; non-patient markers match the patient
+  column only.
 - 2026-08-14 — **R2a built, at the B2 gate: §3's schema, corrected by R0 (PENDING Alec's
   walkthrough + merge).** Migration `0004` carries what R2 segmentation needs and nothing else:
   **`service_categories`** as designed here (code slugged from 4D's own coded Category taxonomy,

@@ -1,70 +1,156 @@
 import { describe, expect, it } from "vitest";
 
-import { createFourDAdapter, UnknownTimeZoneError } from "./adapter-4d.js";
-import { csvFile, csvRow, mdy, ymd, ymdhm } from "./test-fixtures.js";
+import {
+  createFourDAdapter,
+  fourDColumnNames,
+  NEVER_MAPPED,
+  text,
+  UnknownTimeZoneError,
+} from "./adapter-4d.js";
+import { csvRow, mdy, reportFile, sparseRow, ymd, ymdhm } from "./test-fixtures.js";
 import { SourceFileError } from "./types.js";
+
+/**
+ * The 4D adapter against R0's REAL export shapes (RECOVERY_DESIGN.md review log,
+ * 2026-08-14): report-layout dumps with preamble rows, section rows, day separators,
+ * reprinted title/header blocks, `Total X = N` rows, and values scattered across sparse
+ * spreadsheet columns. Every value here is synthetic (test-fixtures.ts).
+ */
 
 const TZ = "America/New_York";
 const adapter = createFourDAdapter(TZ);
 
-const PATIENT_HEADERS = ["patient_id", "first_name", "last_name", "dob", "phone", "email"];
-const APPOINTMENT_HEADERS = [
-  "appointment_id",
-  "patient_id",
-  "start_datetime",
-  "status",
-  "service_category",
-  "provider",
+/** Patient Export (R0 (3)). Address columns are present in the export and never mapped. */
+const PATIENT_HEADERS = [
+  "First Name",
+  "Last Name",
+  "Id",
+  "DOB",
+  "Email",
+  "Phone",
+  "Phone Type",
+  "Address 1",
+  "City",
+  "Spend",
 ];
-const INQUIRY_HEADERS = [
-  "inquiry_id",
-  "patient_id",
-  "inquiry_datetime",
-  "channel",
-  "outcome",
-  "name",
-  "phone",
-];
-const CONSULT_HEADERS = [
-  "consult_id",
-  "patient_id",
-  "patient_name",
-  "consult_date",
-  "service_category",
-  "outcome",
-  "provider",
-  "quote_amount",
-  "booked",
-  "completed",
-];
-const TRANSACTION_HEADERS = [
-  "transaction_id",
-  "patient_id",
-  "transaction_date",
-  "category",
-  "amount",
-];
-
-/** Synthetic patient row: obviously-fake identity, birth date assembled from parts. */
-const patientRow = (id: string, birth: string) => [
-  id,
+const patientRow = (id: string, birth: string, spend = "1,250.00") => [
   "Testerly",
   "Fakeman",
+  id,
   birth,
-  "555-0100",
   `${id}@example.invalid`,
+  "555-0100",
+  "Mobile",
+  "1 Nowhere Ln",
+  "Faketown",
+  spend,
+];
+
+/** Detailed Appointment List — All Calendars (R0 (9)), Allergy and Description included
+ *  exactly as the export prints them — the adapter must never stage either. */
+const APPOINTMENT_HEADERS = [
+  "Date/Time",
+  "Provider",
+  "Patient",
+  "DOB",
+  "Age",
+  "Phone",
+  "Allergy",
+  "Appt Type",
+  "Description",
+  "Created",
+];
+const APPOINTMENT_WIDTH = APPOINTMENT_HEADERS.length;
+const appointmentRow = (
+  when: string,
+  patient: string,
+  extra: Readonly<Record<number, string>> = {},
+) =>
+  sparseRow(APPOINTMENT_WIDTH, {
+    0: when,
+    2: patient,
+    3: ymd(1970, 4, 12),
+    5: "555-0100",
+    7: "Injectables",
+    ...extra,
+  });
+
+/** Conversion By Provider (R0): columns at A, D, G, I, N, O, R, T, W, Y — sparse by
+ *  construction, which is exactly what the pre-pass has to survive. */
+const CONSULT_WIDTH = 25;
+const CONSULT_HEADERS = sparseRow(CONSULT_WIDTH, {
+  0: "Consult Date",
+  3: "Patient",
+  6: "Quote Number",
+  8: "Provider",
+  13: "Coordinator",
+  14: "Procedure",
+  17: "Quote Amount",
+  19: "Booked",
+  22: "Completed",
+  24: "Days To Book",
+});
+const consultRow = (quote: string, date: string, extra: Readonly<Record<number, string>> = {}) =>
+  sparseRow(CONSULT_WIDTH, {
+    0: date,
+    3: "Testerly Fakeman",
+    6: quote,
+    13: "Coordinator Fakeman",
+    14: "Surgical",
+    17: "$7,500.00",
+    19: "No",
+    22: "Yes",
+    24: "12",
+    ...extra,
+  });
+
+/** Revenue by Staff Incl. Procedure Prepayments (R0 (8)). */
+const TRANSACTION_HEADERS = [
+  "DOS",
+  "Paid Date",
+  "Id",
+  "Patient",
+  "Description",
+  "Category",
+  "Report Tag",
+  "Amount",
+];
+const transactionRow = (id: string, dos: string, amount: string, category = "Injectables") => [
+  dos,
+  mdy(2026, 8, 1),
+  id,
+  "Testerly Fakeman",
+  "operator typed this",
+  category,
+  "INJ",
+  amount,
+];
+
+const PREAMBLE = [
+  ["Fakeman Plastic Surgery"],
+  ["Detailed Appointment List — All Calendars"],
+  ["Filters: All Calendars"],
+  ["Range", mdy(2026, 7, 1), mdy(2026, 7, 31)],
 ];
 
 describe("4D adapter — contract", () => {
-  it("declares its source system and the entities it can produce", () => {
+  it("declares its source system and only the entities 4D actually exports", () => {
     expect(adapter.sourceSystem).toBe("4d");
     expect([...adapter.entities].sort()).toEqual([
       "appointments",
       "consults",
-      "inquiries",
       "patients",
       "transactions",
     ]);
+  });
+
+  // R0: 4D tracks no inquiries — that pool is infeasible at Handal, so asking for them
+  // fails loudly instead of quietly staging nothing.
+  it("refuses an entity 4D does not export, naming it", () => {
+    const content = reportFile([], PATIENT_HEADERS, [patientRow("p-1", ymd(1970, 4, 12))]);
+
+    expect(() => adapter.parse("inquiries", content)).toThrow(SourceFileError);
+    expect(() => adapter.parse("inquiries", content)).toThrow(/inquiries/);
   });
 
   it("refuses to build against an unknown practice timezone", () => {
@@ -72,43 +158,45 @@ describe("4D adapter — contract", () => {
   });
 });
 
-describe("4D adapter — patients", () => {
-  it("parses a roster, trimming values and nulling blanks", () => {
-    const content = csvFile(PATIENT_HEADERS, [
-      ["  p-1  ", " Testerly ", "Fakeman", ymd(1970, 4, 12), " 555-0100 ", ""],
-      ["p-2", "", "", "", "", "second@example.invalid"],
+describe("4D adapter — patients (Patient Export)", () => {
+  it("reads the roster past the preamble, staging identity, contact, and spend", () => {
+    const content = reportFile(PREAMBLE, PATIENT_HEADERS, [
+      patientRow("p-1", ymd(1970, 4, 12)),
+      patientRow("p-2", mdy(1971, 5, 13), "$89"),
+      ["Total Patients = 2"],
     ]);
 
-    const { rows, rejects } = adapter.parse("patients", content);
+    const { rows, rejects, layoutRowCount, declaredTotals } = adapter.parse("patients", content);
 
     expect(rejects).toEqual([]);
-    expect(rows).toEqual([
-      {
-        sourceIdentity: "p-1",
-        firstName: "Testerly",
-        lastName: "Fakeman",
-        dob: ymd(1970, 4, 12),
-        phone: "555-0100",
-        email: null,
-      },
-      {
-        sourceIdentity: "p-2",
-        firstName: null,
-        lastName: null,
-        dob: null,
-        phone: null,
-        email: "second@example.invalid",
-      },
-    ]);
+    expect(rows[0]).toEqual({
+      sourceIdentity: "p-1",
+      firstName: "Testerly",
+      lastName: "Fakeman",
+      dob: ymd(1970, 4, 12),
+      phone: "555-0100",
+      phoneType: "Mobile",
+      email: "p-1@example.invalid",
+      spendCents: 125_000,
+    });
+    // US-style dates read the same as ISO ones.
+    expect(rows[1]).toMatchObject({ dob: ymd(1971, 5, 13), spendCents: 8_900 });
+    expect(layoutRowCount).toBe(PREAMBLE.length + 1);
+    expect(declaredTotals).toEqual([2]);
   });
 
-  it("accepts the US-style date the 4D export may carry", () => {
-    const content = csvFile(PATIENT_HEADERS, [patientRow("p-1", mdy(1970, 4, 12))]);
-    expect(adapter.parse("patients", content).rows[0]?.dob).toBe(ymd(1970, 4, 12));
+  // Data minimization (R0): the export ships address columns; nothing may stage them.
+  it("never stages an address column the export happens to carry", () => {
+    const content = reportFile([], PATIENT_HEADERS, [patientRow("p-1", ymd(1970, 4, 12))]);
+
+    const { rows } = adapter.parse("patients", content);
+
+    expect(JSON.stringify(rows)).not.toContain("Nowhere");
+    expect(JSON.stringify(rows)).not.toContain("Faketown");
   });
 
   it("rejects a row whose birth date is not a calendar date, keeping the good rows", () => {
-    const content = csvFile(PATIENT_HEADERS, [
+    const content = reportFile([], PATIENT_HEADERS, [
       patientRow("p-1", ymd(1970, 4, 12)),
       patientRow("p-2", "the-thirteenth"),
       patientRow("p-3", ymd(1970, 2, 30)),
@@ -123,33 +211,24 @@ describe("4D adapter — patients", () => {
     }
   });
 
-  it("rejects a row with no source identity", () => {
-    const content = csvFile(PATIENT_HEADERS, [patientRow("", ymd(1970, 4, 12))]);
-
-    const { rows, rejects } = adapter.parse("patients", content);
-
-    expect(rows).toEqual([]);
-    expect(rejects).toHaveLength(1);
-    expect(rejects[0]?.reason).toContain("patient_id");
-  });
-
-  it("rejects the second row carrying a source identity already seen in the file", () => {
-    const content = csvFile(PATIENT_HEADERS, [
+  it("rejects a row with no source identity and the second row repeating one", () => {
+    const content = reportFile([], PATIENT_HEADERS, [
+      patientRow("", ymd(1970, 4, 12)),
       patientRow("p-1", ymd(1970, 4, 12)),
       patientRow("p-1", ymd(1971, 5, 13)),
     ]);
 
     const { rows, rejects } = adapter.parse("patients", content);
 
-    expect(rows).toHaveLength(1);
-    expect(rejects).toHaveLength(1);
-    expect(rejects[0]?.line).toBe(3);
-    expect(rejects[0]?.reason).toContain("duplicate");
+    expect(rows.map((r) => r.sourceIdentity)).toEqual(["p-1"]);
+    expect(rejects[0]?.reason).toContain("id");
+    expect(rejects[1]?.reason).toContain("duplicate");
   });
 
-  it("ignores columns it does not map and nulls the optional ones a file omits", () => {
-    const content = csvFile(
-      ["patient_id", "last_name", "loyalty_points"],
+  it("nulls the optional columns a file omits and ignores the ones it does not map", () => {
+    const content = reportFile(
+      [],
+      ["Id", "Last Name", "Loyalty Points"],
       [["p-1", "Fakeman", "9"]],
     );
 
@@ -162,169 +241,406 @@ describe("4D adapter — patients", () => {
       lastName: "Fakeman",
       dob: null,
       phone: null,
+      phoneType: null,
       email: null,
+      spendCents: null,
     });
   });
 
-  it("reads the first of a repeated column and ignores the later one", () => {
-    const content = csvFile(
-      ["patient_id", "phone", "last_name", "phone"],
-      [["p-1", "555-0100", "Fakeman", "555-0199"]],
-    );
+  // A roster row can legitimately fill ONE cell: an id with every optional column blank.
+  // Read as decoration it would vanish — neither staged nor rejected.
+  it("stages a row that fills only its id column", () => {
+    const content = reportFile(PREAMBLE, PATIENT_HEADERS, [
+      patientRow("p-1", ymd(1970, 4, 12)),
+      sparseRow(PATIENT_HEADERS.length, { 2: "p-2" }),
+    ]);
 
     const { rows, rejects } = adapter.parse("patients", content);
 
     expect(rejects).toEqual([]);
-    expect(rows[0]).toMatchObject({ sourceIdentity: "p-1", phone: "555-0100" });
+    expect(rows[1]).toEqual({
+      sourceIdentity: "p-2",
+      firstName: null,
+      lastName: null,
+      dob: null,
+      phone: null,
+      phoneType: null,
+      email: null,
+      spendCents: null,
+    });
   });
 
-  it("rejects a ragged row rather than staging fields that may have shifted", () => {
-    const short = ["p-2", "Testerly", "Fakeman"];
-    const long = [...patientRow("p-3", ymd(1972, 6, 14)), "surplus"];
-    const content = csvFile(PATIENT_HEADERS, [patientRow("p-1", ymd(1970, 4, 12)), short, long]);
+  // The header-spelling posture: R0 recorded what each column MEANS, not every exact
+  // string, so a miss prints the header names it did find — a one-line map fix.
+  it("fails the file when a required column is missing, naming the headers it found", () => {
+    const content = reportFile(PREAMBLE, ["First Name", "Last Name", "Spend"], [["a", "b", "1"]]);
 
-    const { rows, rejects } = adapter.parse("patients", content);
-
-    expect(rows.map((r) => r.sourceIdentity)).toEqual(["p-1"]);
-    expect(rejects.map((r) => r.line)).toEqual([3, 4]);
-    expect(rejects[0]?.reason).toBe("row has 3 fields, header has 6");
-    expect(rejects[1]?.reason).toBe("row has 7 fields, header has 6");
-    // Counts describe the shape; no field value reaches the reason.
-    for (const reject of rejects) {
-      expect(reject.reason).not.toContain("Testerly");
-      expect(reject.reason).not.toContain("surplus");
+    expect(() => adapter.parse("patients", content)).toThrow(SourceFileError);
+    try {
+      adapter.parse("patients", content);
+    } catch (err) {
+      const message = (err as Error).message;
+      expect(message).toContain("id");
+      expect(message).toContain("first name");
+      expect(message).toContain("spend");
+      // Header NAMES only: no row value may appear.
+      expect(message).not.toContain("Testerly");
     }
   });
 
-  it("fails the whole file when a required column is missing", () => {
-    const content = csvFile(["first_name", "last_name"], [["Testerly", "Fakeman"]]);
-
-    expect(() => adapter.parse("patients", content)).toThrow(SourceFileError);
-    expect(() => adapter.parse("patients", content)).toThrow(/patient_id/);
-  });
-
-  it("fails the whole file when there is no header row at all", () => {
+  it("fails the file when no row carries the entity's columns at all", () => {
     expect(() => adapter.parse("patients", "")).toThrow(SourceFileError);
+    expect(() => adapter.parse("patients", "alpha,beta\n1,2\n")).toThrow(SourceFileError);
   });
 });
 
-describe("4D adapter — appointments", () => {
-  const appointmentRow = (id: string, at: string) => [
-    id,
-    "p-1",
-    at,
-    "Completed",
-    " Injectables ",
-    "Dr Fakeman",
-  ];
-
-  it("reads the practice-local wall time as the instant it names (summer and winter)", () => {
-    const content = csvFile(APPOINTMENT_HEADERS, [
-      appointmentRow("a-1", ymdhm(2026, 7, 15, 14, 30)),
-      appointmentRow("a-2", ymdhm(2026, 1, 15, 9, 0)),
+describe("4D adapter — appointments (Detailed Appointment List)", () => {
+  it("carries provider sections and day separators down onto the rows beneath them", () => {
+    const content = reportFile(PREAMBLE, APPOINTMENT_HEADERS, [
+      ["Dr Fakeman"],
+      [mdy(2026, 7, 15)],
+      appointmentRow("9:00 AM", "Testerly F"),
+      appointmentRow("2:30 PM", "Otherly F"),
+      [mdy(2026, 7, 16)],
+      appointmentRow("09:00", "Thirdly F"),
+      ["Total Appointments = 3"],
     ]);
 
-    const { rows, rejects } = adapter.parse("appointments", content);
+    const { rows, rejects, declaredTotals } = adapter.parse("appointments", content);
 
     expect(rejects).toEqual([]);
-    // 2026-07-15 14:30 EDT (UTC-4) and 2026-01-15 09:00 EST (UTC-5).
-    expect(rows[0]?.startAt.toISOString()).toBe("2026-07-15T18:30:00.000Z");
-    expect(rows[1]?.startAt.toISOString()).toBe("2026-01-15T14:00:00.000Z");
+    expect(rows.map((r) => r.providerRaw)).toEqual(["Dr Fakeman", "Dr Fakeman", "Dr Fakeman"]);
+    // 09:00 EDT (UTC-4) on the day the separator named, and the afternoon in 12-hour form.
+    expect(rows.map((r) => r.startAt.toISOString())).toEqual([
+      "2026-07-15T13:00:00.000Z",
+      "2026-07-15T18:30:00.000Z",
+      "2026-07-16T13:00:00.000Z",
+    ]);
     expect(rows[0]).toMatchObject({
-      sourceIdentity: "a-1",
-      patientSourceIdentity: "p-1",
-      statusRaw: "Completed",
+      patientSourceIdentity: null,
+      statusRaw: null,
+      patientName: "Testerly F",
+      dob: ymd(1970, 4, 12),
+      phone: "555-0100",
       serviceCategoryRaw: "Injectables",
-      providerRaw: "Dr Fakeman",
     });
+    expect(declaredTotals).toEqual([3]);
+  });
+
+  it("reads a winter wall time in the practice's own zone", () => {
+    const content = reportFile([], APPOINTMENT_HEADERS, [
+      appointmentRow(ymdhm(2026, 1, 15, 9, 0), "Testerly F"),
+    ]);
+
+    expect(adapter.parse("appointments", content).rows[0]?.startAt.toISOString()).toBe(
+      "2026-01-15T14:00:00.000Z",
+    );
   });
 
   it("rejects an unparseable start time rather than falling back to UTC", () => {
-    const content = csvFile(APPOINTMENT_HEADERS, [
-      appointmentRow("a-1", "sometime tuesday"),
-      appointmentRow("a-2", ymd(2026, 7, 15)),
+    const content = reportFile([], APPOINTMENT_HEADERS, [
+      appointmentRow("sometime tuesday", "Testerly F"),
+      appointmentRow(ymd(2026, 7, 15), "Otherly F"),
     ]);
 
     const { rows, rejects } = adapter.parse("appointments", content);
 
     expect(rows).toEqual([]);
-    expect(rejects.map((r) => r.line)).toEqual([2, 3]);
     for (const reject of rejects) {
-      expect(reject.reason).toContain("start_datetime");
+      expect(reject.reason).toContain("date/time");
     }
   });
 
-  // R0: the real Detailed Appointment List carries NO patient id and NO status column —
-  // the roster join runs on name+DOB+phone, so neither may be a required field.
-  it("stages a row with no patient id and no status, keeping the roster join keys", () => {
-    const content = csvFile(
-      ["appointment_id", "start_datetime", "patient_name", "dob", "phone", "service_category"],
-      [
-        [
-          "a-1",
-          ymdhm(2026, 7, 15, 14, 30),
-          "Testerly Fakeman",
-          ymd(1970, 4, 12),
-          "555-0100",
-          "Injectables",
-        ],
-      ],
+  // R0 (iv): the calendar carries blocks that are not patients at all.
+  it("drops non-patient calendar blocks as layout, not as rejects", () => {
+    const content = reportFile(PREAMBLE, APPOINTMENT_HEADERS, [
+      ["Dr Fakeman"],
+      [mdy(2026, 7, 15)],
+      appointmentRow("09:00", "Testerly F"),
+      appointmentRow("10:00", "Happening", { 7: "Staff meeting" }),
+      appointmentRow("11:00", "#"),
+      appointmentRow("12:00", ""),
+    ]);
+
+    const { rows, rejects, layoutRowCount } = adapter.parse("appointments", content);
+
+    expect(rows.map((r) => r.patientName)).toEqual(["Testerly F"]);
+    expect(rejects).toEqual([]);
+    expect(layoutRowCount).toBe(PREAMBLE.length + 2 + 3);
+  });
+
+  // The two-store rule's live test (R0 (i)): Allergy is clinical, Description is
+  // operator free text that can carry a visit reason. Neither may reach a staged row.
+  it("never stages Allergy or Description, for any entity that ships them", () => {
+    const secret = "SENTINEL-CLINICAL-TEXT";
+    const appointments = reportFile([], APPOINTMENT_HEADERS, [
+      appointmentRow("09:00 AM", "Testerly F", {
+        0: ymdhm(2026, 7, 15, 9, 0),
+        6: secret,
+        8: secret,
+      }),
+    ]);
+    const transactions = reportFile([], TRANSACTION_HEADERS, [
+      [mdy(2026, 7, 15), "", "p-1", "Testerly F", secret, "Injectables", secret, "100.00"],
+    ]);
+
+    const staged = [
+      adapter.parse("appointments", appointments).rows,
+      adapter.parse("transactions", transactions).rows,
+    ];
+
+    for (const rows of staged) {
+      expect(rows).toHaveLength(1);
+      expect(JSON.stringify(rows)).not.toContain(secret);
+    }
+    // The columns are named here so a future alias can never quietly claim one.
+    expect(NEVER_MAPPED).toContain("allergy");
+    expect(NEVER_MAPPED).toContain("description");
+    expect(NEVER_MAPPED).toContain("report tag");
+  });
+
+  it("derives a stable identity from the row's identifying fields", () => {
+    const content = reportFile([], APPOINTMENT_HEADERS, [
+      appointmentRow(ymdhm(2026, 7, 15, 9, 0), "Testerly F", { 1: "Dr Fakeman" }),
+    ]);
+
+    const first = adapter.parse("appointments", content).rows[0]!.sourceIdentity;
+    const second = adapter.parse("appointments", content).rows[0]!.sourceIdentity;
+
+    expect(first).toMatch(/^[0-9a-f]{64}$/);
+    expect(second).toBe(first);
+  });
+
+  it("separates identical printed rows by occurrence, in file order", () => {
+    const twice = appointmentRow(ymdhm(2026, 7, 15, 9, 0), "Testerly F", { 1: "Dr Fakeman" });
+    const content = reportFile([], APPOINTMENT_HEADERS, [
+      twice,
+      twice,
+      twice,
+      appointmentRow(ymdhm(2026, 7, 15, 10, 0), "Testerly F", { 1: "Dr Fakeman" }),
+    ]);
+
+    const identities = adapter.parse("appointments", content).rows.map((r) => r.sourceIdentity);
+
+    const [base] = identities;
+    expect(identities.slice(0, 3)).toEqual([base, `${base}#2`, `${base}#3`]);
+    expect(identities[3]).not.toBe(base);
+    // Never a reject: two identical printed rows are two real appointments.
+    expect(new Set(identities).size).toBe(4);
+  });
+
+  // Provider is INFERRED from a section row, so it moves with pagination: the same
+  // appointment printed under a different page break carries a different provider and
+  // would otherwise hash differently, re-importing as a duplicate row.
+  it("derives one identity for the same appointment however the export paginated", () => {
+    const when = ymdhm(2026, 7, 15, 9, 0);
+    const layouts = [
+      // Carried from a section row, from a DIFFERENT section row, printed in its own
+      // column, and absent because the break left the row above the row that names it.
+      reportFile([], APPOINTMENT_HEADERS, [["Dr Fakeman"], appointmentRow(when, "Testerly F")]),
+      reportFile([], APPOINTMENT_HEADERS, [["Dr Otherly"], appointmentRow(when, "Testerly F")]),
+      reportFile([], APPOINTMENT_HEADERS, [
+        appointmentRow(when, "Testerly F", { 1: "Dr Fakeman" }),
+      ]),
+      reportFile([], APPOINTMENT_HEADERS, [appointmentRow(when, "Testerly F")]),
+    ];
+
+    const identities = layouts.map(
+      (content) => adapter.parse("appointments", content).rows[0]!.sourceIdentity,
     );
 
-    const { rows, rejects } = adapter.parse("appointments", content);
+    expect(new Set(identities).size).toBe(1);
+  });
 
-    expect(rejects).toEqual([]);
-    expect(rows[0]).toMatchObject({
-      sourceIdentity: "a-1",
-      patientSourceIdentity: null,
-      statusRaw: null,
-      patientName: "Testerly Fakeman",
-      dob: ymd(1970, 4, 12),
-      phone: "555-0100",
-    });
+  // The accepted cost of excluding provider: two appointments identical in every printed
+  // field but their provider now collide, and the occurrence suffix — the rule that
+  // already separates true duplicates — is what keeps them apart.
+  it("separates same-time rows under different providers by occurrence", () => {
+    const content = reportFile([], APPOINTMENT_HEADERS, [
+      appointmentRow(ymdhm(2026, 7, 15, 9, 0), "Testerly F", { 1: "Dr Fakeman" }),
+      appointmentRow(ymdhm(2026, 7, 15, 9, 0), "Testerly F", { 1: "Dr Otherly" }),
+    ]);
+
+    const identities = adapter.parse("appointments", content).rows.map((r) => r.sourceIdentity);
+
+    expect(identities[1]).toBe(`${identities[0]}#2`);
   });
 });
 
-describe("4D adapter — transactions", () => {
-  it("parses paid rows, reading dollars as integer cents", () => {
-    const content = csvFile(TRANSACTION_HEADERS, [
-      ["t-1", "p-1", ymd(2026, 7, 15), "Injectables", "$1,234.56"],
-      ["t-2", "", ymd(2026, 7, 16), "Garments", "89"],
+/**
+ * The two-store rule enforced BY CONSTRUCTION (R0 (i)): no map may claim an excluded
+ * column, and one that tried could not even be built.
+ */
+describe("4D adapter — columns excluded by construction", () => {
+  it("claims no NEVER_MAPPED column or alias, in any entity's map", () => {
+    const columns = fourDColumnNames(TZ);
+
+    // Every entity 4D exports is inspected — a new one cannot slip past this test.
+    expect(Object.keys(columns).sort()).toEqual([...adapter.entities].sort());
+    for (const [entity, names] of Object.entries(columns)) {
+      const claimed = names.filter((name) => NEVER_MAPPED.includes(name));
+      expect(claimed, entity).toEqual([]);
+    }
+  });
+
+  it("cannot construct a field that claims an excluded column, as name or alias", () => {
+    expect(() => text("appt type", false, ["description"])).toThrow(/description/);
+    expect(() => text("allergy", false)).toThrow(/allergy/);
+    // Spelling and spacing are normalized the same way header matching is.
+    expect(() => text("Report Tag", false)).toThrow(/report tag/);
+  });
+});
+
+describe("4D adapter — consults (Conversion By Provider)", () => {
+  it("stages the sparse columns R0 recorded, by name and quote number", () => {
+    const content = reportFile(
+      [["Fakeman Plastic Surgery"], ["Conversion By Provider"]],
+      CONSULT_HEADERS,
+      [["Dr Fakeman"], consultRow("q-1", ymd(2026, 7, 15)), ["Total Quotes = 1"]],
+    );
+
+    const { rows, rejects, declaredTotals } = adapter.parse("consults", content);
+
+    expect(rejects).toEqual([]);
+    expect(rows[0]).toEqual({
+      sourceIdentity: "q-1",
+      patientSourceIdentity: null,
+      patientName: "Testerly Fakeman",
+      consultDate: ymd(2026, 7, 15),
+      serviceCategoryRaw: "Surgical",
+      outcomeRaw: null,
+      providerRaw: "Dr Fakeman",
+      quoteAmountCents: 750_000,
+      bookedRaw: "No",
+      completedRaw: "Yes",
+    });
+    expect(declaredTotals).toEqual([1]);
+  });
+
+  it("stages neither the coordinator nor days-to-book", () => {
+    const content = reportFile([], CONSULT_HEADERS, [consultRow("q-1", ymd(2026, 7, 15))]);
+
+    expect(JSON.stringify(adapter.parse("consults", content).rows)).not.toContain("Coordinator");
+  });
+
+  it("rejects a consult row with no patient name — the only join key it has", () => {
+    const content = reportFile([], CONSULT_HEADERS, [
+      consultRow("q-1", ymd(2026, 7, 15), { 3: "" }),
+    ]);
+
+    const { rows, rejects } = adapter.parse("consults", content);
+
+    expect(rows).toEqual([]);
+    expect(rejects[0]?.reason).toContain("patient");
+  });
+
+  // R0 prints the provider section as a lone cell in COLUMN 0 — the consult date's own
+  // column. Deciding a lone cell by which column it sits in rejected every one of them
+  // ("patient is required") and left every consult beneath without a provider.
+  it("reads a provider section printed in the date column, with nothing rejected", () => {
+    const content = reportFile([], CONSULT_HEADERS, [
+      ["Dr Fakeman"],
+      consultRow("q-1", ymd(2026, 7, 15)),
+      consultRow("q-2", ymd(2026, 7, 16)),
+    ]);
+
+    const { rows, rejects } = adapter.parse("consults", content);
+
+    expect(rejects).toEqual([]);
+    expect(rows.map((r) => r.providerRaw)).toEqual(["Dr Fakeman", "Dr Fakeman"]);
+  });
+
+  // The cost of that rule, pinned rather than left to be discovered: a consult row that
+  // fills only its patient name reads as a section and rides down as the provider. It
+  // would have rejected as a data row anyway (no consult date), so what is lost is a
+  // reject line; what is gained is every systematic section row. First-run observation.
+  it("reads a lone patient name as a section — the ambiguity that buys the rule", () => {
+    const content = reportFile([], CONSULT_HEADERS, [
+      ["Dr Fakeman"],
+      sparseRow(CONSULT_WIDTH, { 3: "Testerly Fakeman" }),
+      consultRow("q-1", ymd(2026, 7, 15)),
+    ]);
+
+    const { rows, rejects } = adapter.parse("consults", content);
+
+    expect(rejects).toEqual([]);
+    expect(rows.map((r) => r.providerRaw)).toEqual(["Testerly Fakeman"]);
+  });
+
+  it("rejects a quote amount it cannot read rather than staging a zero", () => {
+    const content = reportFile([], CONSULT_HEADERS, [
+      consultRow("q-1", ymd(2026, 7, 15), { 17: "n/a" }),
+    ]);
+
+    const { rejects } = adapter.parse("consults", content);
+
+    expect(rejects[0]?.reason).toContain("quote amount");
+    expect(rejects[0]?.reason).not.toContain("n/a");
+  });
+});
+
+describe("4D adapter — transactions (Revenue by Staff)", () => {
+  it("prefers the date of service, reading dollars as integer cents", () => {
+    const content = reportFile([], TRANSACTION_HEADERS, [
+      transactionRow("p-1", mdy(2026, 7, 15), "$1,234.56"),
+      transactionRow("", mdy(2026, 7, 16), "89", "Garments"),
+      // A refund is a real row with negative money, never a missing one.
+      transactionRow("p-1", mdy(2026, 7, 17), "-250.00"),
     ]);
 
     const { rows, rejects } = adapter.parse("transactions", content);
 
     expect(rejects).toEqual([]);
-    expect(rows).toEqual([
-      {
-        sourceIdentity: "t-1",
-        patientSourceIdentity: "p-1",
-        transactionDate: ymd(2026, 7, 15),
-        serviceCategoryRaw: "Injectables",
-        amountCents: 123_456,
-      },
-      // A non-patient row stages with a null join key rather than being lost.
-      {
-        sourceIdentity: "t-2",
-        patientSourceIdentity: null,
-        transactionDate: ymd(2026, 7, 16),
-        serviceCategoryRaw: "Garments",
-        amountCents: 8_900,
-      },
+    expect(rows.map((r) => r.transactionDate)).toEqual([
+      ymd(2026, 7, 15),
+      ymd(2026, 7, 16),
+      ymd(2026, 7, 17),
     ]);
+    expect(rows.map((r) => r.amountCents)).toEqual([123_456, 8_900, -25_000]);
+    // R0 win (a): this export DOES carry a patient Id, so dormancy joins by id.
+    expect(rows[0]?.patientSourceIdentity).toBe("p-1");
+    expect(rows[1]?.patientSourceIdentity).toBeNull();
   });
 
-  it("keeps a refund negative rather than reading it as zero", () => {
-    const content = csvFile(TRANSACTION_HEADERS, [
-      ["t-1", "p-1", ymd(2026, 7, 15), "Injectables", "-250.00"],
+  it("falls back to the paid date when the export has no DOS column", () => {
+    const content = reportFile(
+      [],
+      ["Paid Date", "Id", "Category", "Amount"],
+      [[mdy(2026, 7, 15), "p-1", "Injectables", "100.00"]],
+    );
+
+    expect(adapter.parse("transactions", content).rows[0]?.transactionDate).toBe(ymd(2026, 7, 15));
+  });
+
+  // A refund is as likely to be printed the way an accounting package writes one:
+  // parentheses for the sign, which may also sit on either side of the currency symbol.
+  it("reads a refund written in accounting spelling", () => {
+    const content = reportFile([], TRANSACTION_HEADERS, [
+      transactionRow("p-1", mdy(2026, 7, 15), "(250.00)"),
+      transactionRow("p-2", mdy(2026, 7, 16), "($250.00)"),
+      transactionRow("p-3", mdy(2026, 7, 17), "$-250.00"),
     ]);
 
-    expect(adapter.parse("transactions", content).rows[0]?.amountCents).toBe(-25_000);
+    const { rows, rejects } = adapter.parse("transactions", content);
+
+    expect(rejects).toEqual([]);
+    expect(rows.map((r) => r.amountCents)).toEqual([-25_000, -25_000, -25_000]);
+  });
+
+  it("rejects a bracketed value that is not money at all", () => {
+    const content = reportFile([], TRANSACTION_HEADERS, [
+      transactionRow("p-1", mdy(2026, 7, 15), "(abc)"),
+    ]);
+
+    const { rows, rejects } = adapter.parse("transactions", content);
+
+    expect(rows).toEqual([]);
+    expect(rejects[0]?.reason).toContain("amount");
   });
 
   it("rejects an unreadable amount rather than staging a zero", () => {
-    const content = csvFile(TRANSACTION_HEADERS, [
-      ["t-1", "p-1", ymd(2026, 7, 15), "Injectables", "n/a"],
+    const content = reportFile([], TRANSACTION_HEADERS, [
+      transactionRow("p-1", mdy(2026, 7, 15), "n/a"),
     ]);
 
     const { rows, rejects } = adapter.parse("transactions", content);
@@ -333,99 +649,37 @@ describe("4D adapter — transactions", () => {
     expect(rejects[0]?.reason).toContain("amount");
     expect(rejects[0]?.reason).not.toContain("n/a");
   });
-});
 
-describe("4D adapter — inquiries and consults", () => {
-  it("parses inquiries, allowing an inquirer who is not a patient", () => {
-    const content = csvFile(INQUIRY_HEADERS, [
-      ["i-1", "", ymdhm(2026, 7, 15, 10, 0), "Phone", "No booking", "Testerly F", "555-0101"],
-    ]);
+  it("separates a patient charged the same amount twice in a day by occurrence", () => {
+    const twice = transactionRow("p-1", mdy(2026, 7, 15), "100.00");
+    const content = reportFile([], TRANSACTION_HEADERS, [twice, twice]);
 
-    const { rows, rejects } = adapter.parse("inquiries", content);
+    const identities = adapter.parse("transactions", content).rows.map((r) => r.sourceIdentity);
 
-    expect(rejects).toEqual([]);
-    expect(rows[0]).toEqual({
-      sourceIdentity: "i-1",
-      patientSourceIdentity: null,
-      occurredAt: new Date("2026-07-15T14:00:00.000Z"),
-      channelRaw: "Phone",
-      outcomeRaw: "No booking",
-      name: "Testerly F",
-      phone: "555-0101",
-    });
-  });
-
-  // R0: the Conversion By Provider CSV carries a patient NAME and a date (no id, no
-  // time) — the name-join happens at query time, so the id column stays null here.
-  it("parses consults by name and date, with the quoted dollars as cents", () => {
-    const content = csvFile(CONSULT_HEADERS, [
-      [
-        "c-1",
-        "",
-        "Testerly Fakeman",
-        ymd(2026, 7, 15),
-        "Surgical",
-        "Not booked",
-        "Dr Fakeman",
-        "$7,500.00",
-        "No",
-        "Yes",
-      ],
-    ]);
-
-    const { rows, rejects } = adapter.parse("consults", content);
-
-    expect(rejects).toEqual([]);
-    expect(rows[0]).toEqual({
-      sourceIdentity: "c-1",
-      patientSourceIdentity: null,
-      patientName: "Testerly Fakeman",
-      consultDate: ymd(2026, 7, 15),
-      serviceCategoryRaw: "Surgical",
-      outcomeRaw: "Not booked",
-      providerRaw: "Dr Fakeman",
-      quoteAmountCents: 750_000,
-      bookedRaw: "No",
-      completedRaw: "Yes",
-    });
-  });
-
-  it("rejects a consult row with no patient name — the only join key it has", () => {
-    const content = csvFile(CONSULT_HEADERS, [
-      ["c-1", "", "", ymd(2026, 7, 15), "Surgical", "Not booked", "Dr Fakeman", "", "", ""],
-    ]);
-
-    const { rows, rejects } = adapter.parse("consults", content);
-
-    expect(rows).toEqual([]);
-    expect(rejects[0]?.reason).toContain("patient_name");
+    expect(identities[0]).toMatch(/^[0-9a-f]{64}$/);
+    expect(identities[1]).toBe(`${identities[0]}#2`);
   });
 });
 
-describe("4D adapter — RFC 4180 handling", () => {
+describe("4D adapter — CSV handling", () => {
   it("keeps quoted commas, embedded newlines, and escaped quotes intact", () => {
-    const content = csvFile(APPOINTMENT_HEADERS, [
-      [
-        "a-1",
-        "p-1",
-        ymdhm(2026, 7, 15, 14, 30),
-        "Completed, late",
-        'Injectables\n"top up"',
-        "Dr Fakeman",
-      ],
+    const content = reportFile([], APPOINTMENT_HEADERS, [
+      appointmentRow(ymdhm(2026, 7, 15, 14, 30), 'Testerly, "Junior"', {
+        7: "Injectables\ntop up",
+      }),
     ]);
 
     const { rows, rejects } = adapter.parse("appointments", content);
 
     expect(rejects).toEqual([]);
-    expect(rows[0]?.statusRaw).toBe("Completed, late");
-    expect(rows[0]?.serviceCategoryRaw).toBe('Injectables\n"top up"');
+    expect(rows[0]?.patientName).toBe('Testerly, "Junior"');
+    expect(rows[0]?.serviceCategoryRaw).toBe("Injectables\ntop up");
   });
 
   it("counts lines across a record that spans several of them", () => {
-    const content = csvFile(PATIENT_HEADERS, [
-      ["p-1", "Testerly\nFakeman", "Fakeman", ymd(1970, 4, 12), "555-0100", ""],
-      ["p-2", "Testerly", "Fakeman", "not-a-date", "555-0100", ""],
+    const content = reportFile([], PATIENT_HEADERS, [
+      patientRow("p-1", ymd(1970, 4, 12)).map((c, at) => (at === 0 ? "Testerly\nFakeman" : c)),
+      patientRow("p-2", "not-a-date"),
     ]);
 
     const { rejects } = adapter.parse("patients", content);
@@ -434,8 +688,30 @@ describe("4D adapter — RFC 4180 handling", () => {
     expect(rejects.map((r) => r.line)).toEqual([4]);
   });
 
+  it("rejects a row carrying MORE fields than the header, which may have shifted", () => {
+    const long = [...patientRow("p-2", ymd(1972, 6, 14)), "surplus"];
+    const content = reportFile([], PATIENT_HEADERS, [patientRow("p-1", ymd(1970, 4, 12)), long]);
+
+    const { rows, rejects } = adapter.parse("patients", content);
+
+    expect(rows.map((r) => r.sourceIdentity)).toEqual(["p-1"]);
+    expect(rejects[0]?.reason).toBe("row has 11 fields, header has 10");
+    expect(rejects[0]?.reason).not.toContain("surplus");
+  });
+
+  it("reads a row the export truncated at its last filled cell", () => {
+    const content = reportFile([], PATIENT_HEADERS, [
+      ["Testerly", "Fakeman", "p-1", ymd(1970, 4, 12)],
+    ]);
+
+    const { rows, rejects } = adapter.parse("patients", content);
+
+    expect(rejects).toEqual([]);
+    expect(rows[0]).toMatchObject({ sourceIdentity: "p-1", phone: null, spendCents: null });
+  });
+
   it("fails the whole file on unclosed quoting, without echoing row content", () => {
-    const content = `${csvRow(...PATIENT_HEADERS)}\np-1,"Testerly,Fakeman,,,\n`;
+    const content = `${csvRow(...PATIENT_HEADERS)}\nTesterly,"Fakeman,p-1,,,\n`;
 
     expect(() => adapter.parse("patients", content)).toThrow(SourceFileError);
     try {
@@ -449,8 +725,19 @@ describe("4D adapter — RFC 4180 handling", () => {
 describe("4D adapter — PHI discipline", () => {
   it("never puts a field value in a reject reason (raw carries it, reasons do not)", () => {
     const badDate = "1970-13-45";
-    const content = csvFile(PATIENT_HEADERS, [
-      ["p-1", "Zzyzxine", "Quibbleworth", badDate, "555-0177", "leaky@example.invalid"],
+    const content = reportFile([], PATIENT_HEADERS, [
+      [
+        "Zzyzxine",
+        "Quibbleworth",
+        "p-1",
+        badDate,
+        "leaky@example.invalid",
+        "555-0177",
+        "Mobile",
+        "1 Nowhere Ln",
+        "Faketown",
+        "10.00",
+      ],
     ]);
 
     const { rejects } = adapter.parse("patients", content);

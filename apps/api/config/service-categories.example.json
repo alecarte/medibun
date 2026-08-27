@@ -1,0 +1,25 @@
+{
+  "_comment": [
+    "EXAMPLE cadence config for `pnpm --filter @medibun/api categories:seed`.",
+    "Synthetic categories only — the real one describes a practice's own menu and is",
+    "written locally at the RECOVERY_DESIGN.md §7 runbook run, kept outside the repo",
+    "with the exports.",
+    "",
+    "Each key is a service category, written either as the source label or as its code",
+    "(the label slugged); both resolve to the same category. expectedReturnIntervalDays",
+    "is hand-set clinical-cadence judgment and is never derived from the data — null",
+    "means the category defines no dormancy at all, and a category absent from this file",
+    "is treated the same way. typicalTicketCents is an optional override for a category",
+    "with no usable revenue history; without it the ticket is the revenue average."
+  ],
+  "categories": {
+    "Example Injectables": { "expectedReturnIntervalDays": 120 },
+    "Example Skin Care": { "expectedReturnIntervalDays": 90 },
+    "Example Laser": { "expectedReturnIntervalDays": 365 },
+    "Example Surgical Consult": {
+      "expectedReturnIntervalDays": 730,
+      "typicalTicketCents": 850000
+    },
+    "Example Retail": { "expectedReturnIntervalDays": null }
+  }
+}
