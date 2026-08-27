@@ -3,8 +3,8 @@ import { basename } from "node:path";
 
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 
-import { createFourDAdapter, UnknownTimeZoneError } from "./adapter-4d.js";
-import { createImportService } from "./importer.js";
+import { createFourDAdapter, FOUR_D_ENTITIES, UnknownTimeZoneError } from "./adapter-4d.js";
+import { createImportService, type ImportSummary } from "./importer.js";
 import { SourceFileError } from "./types.js";
 import type { StagedEntity } from "../db/schema.js";
 
@@ -21,13 +21,9 @@ import type { StagedEntity } from "../db/schema.js";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = PgDatabase<PgQueryResultHKT, any, any>;
 
-const ENTITIES: readonly StagedEntity[] = [
-  "patients",
-  "appointments",
-  "inquiries",
-  "consults",
-  "transactions",
-];
+/** Exactly what the 4D adapter can stage — `inquiries` is not among them (R0: 4D
+ *  tracks none), and the usage line says so rather than failing halfway through. */
+const ENTITIES: readonly StagedEntity[] = FOUR_D_ENTITIES;
 
 export const USAGE = [
   "usage: pnpm --filter @medibun/api import:4d -- \\",
@@ -90,6 +86,26 @@ const FORMULA_LEAD = /^[=+\-@\t\r]/;
 
 const rejectCell = (value: string): string =>
   `"${(FORMULA_LEAD.test(value) ? `'${value}` : value).replaceAll('"', '""')}"`;
+
+/**
+ * The per-file reconciliation line (R0 win (b)): 4D's exports print their own
+ * `Total X = N`, so a run can be checked against the source with no side channel.
+ * Subtotals print alongside a grand total, so the LARGEST declared number is the one
+ * that should account for every data row. COUNTS ONLY — no label, no content — and a
+ * mismatch is a warning, never a failure: the operator decides what it means.
+ */
+function reconciliationLine(summary: ImportSummary): string | undefined {
+  if (summary.declaredTotals.length === 0) {
+    return undefined;
+  }
+  const declared = Math.max(...summary.declaredTotals.map((total) => total.count));
+  const accounted = summary.stagedCount + summary.rejectedCount;
+  return declared === accounted
+    ? `  file declares ${declared} · staged ${summary.stagedCount} + ` +
+        `rejected ${summary.rejectedCount} ✓`
+    : `  ⚠ file declares ${declared} · staged ${summary.stagedCount} + ` +
+        `rejected ${summary.rejectedCount} (${Math.abs(declared - accounted)} unaccounted)`;
+}
 
 const readArg = (argv: readonly string[], name: string): string | undefined => {
   const index = argv.indexOf(`--${name}`);
@@ -156,6 +172,15 @@ export async function runImportCli(deps: {
     `  ${summary.rowCount} rows · ${summary.insertedCount} new · ` +
       `${summary.updatedCount} reconciled · ${summary.rejectedCount} rejected`,
   );
+  if (summary.layoutRowCount > 0) {
+    // Report furniture the pre-pass skipped: preamble, section and day rows, totals,
+    // reprinted headers, non-patient calendar blocks. Counted, never rejected.
+    deps.out(`  ${summary.layoutRowCount} report-layout rows skipped`);
+  }
+  const reconciliation = reconciliationLine(summary);
+  if (reconciliation) {
+    deps.out(reconciliation);
+  }
   if (summary.rejects.length > 0) {
     // Basename only, same rule as the ledger columns and the unreadable-input error:
     // captured terminal output must not carry the directory an export was filed under.

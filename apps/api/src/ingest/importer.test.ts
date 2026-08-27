@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 
-import { eq } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/pglite";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -15,34 +14,28 @@ let importer: ImportService;
 
 const adapter = createFourDAdapter("America/New_York");
 
-const PATIENT_HEADERS = ["patient_id", "first_name", "last_name", "dob", "phone", "email"];
+// R0's real 4D header names (adapter-4d.ts owns the aliases); the report furniture
+// those exports also carry is exercised in adapter-4d.test.ts, not here.
+const PATIENT_HEADERS = ["Id", "First Name", "Last Name", "DOB", "Phone", "Email"];
 const APPOINTMENT_HEADERS = [
-  "appointment_id",
-  "patient_id",
-  "start_datetime",
-  "status",
-  "service_category",
-  "provider",
+  "Patient Id",
+  "Patient",
+  "Date/Time",
+  "Status",
+  "Appt Type",
+  "Provider",
 ];
 const CONSULT_HEADERS = [
-  "consult_id",
-  "patient_id",
-  "patient_name",
-  "consult_date",
-  "service_category",
-  "outcome",
-  "provider",
-  "quote_amount",
-  "booked",
-  "completed",
+  "Consult Date",
+  "Patient",
+  "Quote Number",
+  "Provider",
+  "Procedure",
+  "Quote Amount",
+  "Booked",
+  "Completed",
 ];
-const TRANSACTION_HEADERS = [
-  "transaction_id",
-  "patient_id",
-  "transaction_date",
-  "category",
-  "amount",
-];
+const TRANSACTION_HEADERS = ["DOS", "Id", "Category", "Amount"];
 
 const roster = (rows: readonly (readonly string[])[]): string => csvFile(PATIENT_HEADERS, rows);
 const patientRow = (id: string, first: string, birth: string) => [
@@ -264,23 +257,41 @@ describe("import service — other entities", () => {
       entity: "appointments",
       fileName: "appointments.csv",
       content: csvFile(APPOINTMENT_HEADERS, [
-        ["a-1", "p-1", ymdhm(2026, 7, 15, 14, 30), "Completed", "Injectables", "Dr Fakeman"],
+        ["p-1", "Testerly Fakeman", ymdhm(2026, 7, 15, 14, 30), "Completed", "Injectables", "Dr F"],
       ]),
     });
 
     expect(summary).toMatchObject({ rowCount: 1, stagedCount: 1 });
-    const [row] = await db
-      .select()
-      .from(schema.stagedAppointments)
-      .where(eq(schema.stagedAppointments.sourceIdentity, "a-1"));
+    const [row] = await db.select().from(schema.stagedAppointments);
     expect(row).toMatchObject({
       patientSourceIdentity: "p-1",
+      patientName: "Testerly Fakeman",
       statusRaw: "Completed",
       serviceCategoryRaw: "Injectables",
-      providerRaw: "Dr Fakeman",
+      providerRaw: "Dr F",
       importId: summary.importId,
     });
     expect(row!.startAt.toISOString()).toBe("2026-07-15T18:30:00.000Z");
+    // This export carries no row id, so the adapter derived one (DATA_MODEL.md).
+    expect(row!.sourceIdentity).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  // A derived identity has to survive a re-import, or every run would duplicate the
+  // whole appointment history instead of reconciling it.
+  it("re-imports a derived-identity export onto the same rows", async () => {
+    const content = csvFile(APPOINTMENT_HEADERS, [
+      ["", "Testerly Fakeman", ymdhm(2026, 7, 15, 14, 30), "", "Injectables", "Dr F"],
+      ["", "Otherly Fakeman", ymdhm(2026, 7, 15, 15, 30), "", "Injectables", "Dr F"],
+    ]);
+    const run = (body: string) =>
+      importer.runImport({ adapter, entity: "appointments", fileName: "appts.csv", content: body });
+
+    const first = await run(content);
+    const second = await run(content);
+
+    expect(first).toMatchObject({ insertedCount: 2, updatedCount: 0 });
+    expect(second).toMatchObject({ insertedCount: 0, updatedCount: 2 });
+    expect(await db.select().from(schema.stagedAppointments)).toHaveLength(2);
   });
 
   // R0: the real appointment export has no patient id and no status column, so both
@@ -291,10 +302,9 @@ describe("import service — other entities", () => {
       entity: "appointments",
       fileName: "appointments.csv",
       content: csvFile(
-        ["appointment_id", "start_datetime", "patient_name", "dob", "phone", "service_category"],
+        ["Date/Time", "Patient", "DOB", "Phone", "Appt Type"],
         [
           [
-            "a-2",
             ymdhm(2026, 7, 16, 9, 0),
             "Testerly Fakeman",
             ymd(1970, 4, 12),
@@ -305,10 +315,7 @@ describe("import service — other entities", () => {
       ),
     });
 
-    const [row] = await db
-      .select()
-      .from(schema.stagedAppointments)
-      .where(eq(schema.stagedAppointments.sourceIdentity, "a-2"));
+    const [row] = await db.select().from(schema.stagedAppointments);
     expect(row).toMatchObject({
       patientSourceIdentity: null,
       statusRaw: null,
@@ -325,13 +332,11 @@ describe("import service — other entities", () => {
       fileName: "conversion.csv",
       content: csvFile(CONSULT_HEADERS, [
         [
-          "q-1",
-          "",
-          "Testerly Fakeman",
           ymd(2026, 7, 15),
-          "Surgical",
-          "Not booked",
+          "Testerly Fakeman",
+          "q-1",
           "Dr Fakeman",
+          "Surgical",
           "7500.00",
           "No",
           "Yes",
@@ -346,7 +351,7 @@ describe("import service — other entities", () => {
       patientName: "Testerly Fakeman",
       consultDate: ymd(2026, 7, 15),
       serviceCategoryRaw: "Surgical",
-      outcomeRaw: "Not booked",
+      outcomeRaw: null,
       providerRaw: "Dr Fakeman",
       quoteAmountCents: 750_000,
       bookedRaw: "No",
@@ -356,30 +361,34 @@ describe("import service — other entities", () => {
   });
 
   it("stages transactions, keeping a refund negative and reconciling a re-import", async () => {
-    const rows = (amount: string) =>
-      csvFile(TRANSACTION_HEADERS, [
-        ["t-1", "p-1", ymd(2026, 7, 15), "Injectables", amount],
-        ["t-2", "", ymd(2026, 7, 16), "Garments", "-89.00"],
-      ]);
-    const runTransactions = (content: string) =>
-      importer.runImport({ adapter, entity: "transactions", fileName: "revenue.csv", content });
+    const content = csvFile(TRANSACTION_HEADERS, [
+      [ymd(2026, 7, 15), "p-1", "Injectables", "1234.56"],
+      [ymd(2026, 7, 16), "", "Garments", "-89.00"],
+    ]);
+    const runTransactions = (body: string) =>
+      importer.runImport({
+        adapter,
+        entity: "transactions",
+        fileName: "revenue.csv",
+        content: body,
+      });
 
-    const first = await runTransactions(rows("1234.56"));
-    const second = await runTransactions(rows("1300.00"));
+    const first = await runTransactions(content);
+    const second = await runTransactions(content);
 
     expect(first).toMatchObject({ stagedCount: 2, insertedCount: 2, updatedCount: 0 });
+    // Derived identities are stable across runs — a re-import reconciles, never doubles.
     expect(second).toMatchObject({ stagedCount: 2, insertedCount: 0, updatedCount: 2 });
     const staged = await db.select().from(schema.stagedTransactions);
     expect(staged).toHaveLength(2);
-    expect(staged.find((r) => r.sourceIdentity === "t-1")).toMatchObject({
+    expect(staged.find((r) => r.serviceCategoryRaw === "Injectables")).toMatchObject({
       patientSourceIdentity: "p-1",
       transactionDate: ymd(2026, 7, 15),
-      serviceCategoryRaw: "Injectables",
-      amountCents: 130_000,
+      amountCents: 123_456,
       importId: second.importId,
     });
-    // A refund is negative money, not a missing row.
-    expect(staged.find((r) => r.sourceIdentity === "t-2")).toMatchObject({
+    // A refund is negative money, not a missing row; a non-patient row keeps a null id.
+    expect(staged.find((r) => r.serviceCategoryRaw === "Garments")).toMatchObject({
       patientSourceIdentity: null,
       amountCents: -8_900,
     });
