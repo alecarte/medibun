@@ -21,6 +21,8 @@ import { ymd } from "../ingest/test-fixtures.js";
  */
 
 const AS_OF = ymd(2026, 6, 1);
+/** The practice's own zone — four hours behind UTC on the as-of date. */
+const TZ = "America/New_York";
 
 const snapshot = (parts: Partial<StagingSnapshot>): StagingSnapshot => ({
   patients: [],
@@ -28,6 +30,7 @@ const snapshot = (parts: Partial<StagingSnapshot>): StagingSnapshot => ({
   consults: [],
   transactions: [],
   categories: [],
+  superseded: { patients: 0, appointments: 0, consults: 0, transactions: 0 },
   ...parts,
 });
 
@@ -105,8 +108,8 @@ describe("dormant pool", () => {
       transactions: [paid("p-1", daysBefore(91), "Injectables")],
     });
 
-    expect(dormantPool(atEdge, { asOf: AS_OF }).opportunityCount).toBe(0);
-    expect(dormantPool(pastEdge, { asOf: AS_OF }).opportunityCount).toBe(1);
+    expect(dormantPool(atEdge, { asOf: AS_OF, timeZone: TZ }).opportunityCount).toBe(0);
+    expect(dormantPool(pastEdge, { asOf: AS_OF, timeZone: TZ }).opportunityCount).toBe(1);
   });
 
   it("measures dormancy from the patient's LAST paid visit in the category", () => {
@@ -119,7 +122,7 @@ describe("dormant pool", () => {
       ],
     });
 
-    expect(dormantPool(staging, { asOf: AS_OF }).opportunityCount).toBe(0);
+    expect(dormantPool(staging, { asOf: AS_OF, timeZone: TZ }).opportunityCount).toBe(0);
   });
 
   it("ignores a category with no expected-return interval", () => {
@@ -131,7 +134,7 @@ describe("dormant pool", () => {
       transactions: [paid("p-1", daysBefore(900), "Garments")],
     });
 
-    expect(dormantPool(staging, { asOf: AS_OF }).opportunityCount).toBe(0);
+    expect(dormantPool(staging, { asOf: AS_OF, timeZone: TZ }).opportunityCount).toBe(0);
   });
 
   it("ignores a refunded visit — dormancy runs off PAID visits", () => {
@@ -146,7 +149,7 @@ describe("dormant pool", () => {
     });
 
     // The recent visit netted to nothing, so the 200-day-old one is the last paid visit.
-    expect(dormantPool(staging, { asOf: AS_OF }).opportunityCount).toBe(1);
+    expect(dormantPool(staging, { asOf: AS_OF, timeZone: TZ }).opportunityCount).toBe(1);
   });
 
   it("counts one opportunity per patient per category, and each patient once", () => {
@@ -159,7 +162,7 @@ describe("dormant pool", () => {
       ],
     });
 
-    const pool = dormantPool(staging, { asOf: AS_OF });
+    const pool = dormantPool(staging, { asOf: AS_OF, timeZone: TZ });
 
     expect(pool).toMatchObject({ opportunityCount: 2, patientCount: 1 });
     expect(pool.categories.map((c) => [c.code, c.patientCount])).toEqual([
@@ -182,7 +185,7 @@ describe("dormant pool", () => {
       ],
     });
 
-    const pool = dormantPool(staging, { asOf: AS_OF });
+    const pool = dormantPool(staging, { asOf: AS_OF, timeZone: TZ });
 
     expect(pool.expectedValueCents).toBe(120_000);
     expect(pool.categories.find((c) => c.code === "injectables")!.expectedValueCents).toBe(100_000);
@@ -195,7 +198,7 @@ describe("dormant pool", () => {
       transactions: [paid("p-1", daysBefore(200), "Injectables")],
     });
 
-    const pool = dormantPool(staging, { asOf: AS_OF });
+    const pool = dormantPool(staging, { asOf: AS_OF, timeZone: TZ });
 
     expect(pool.expectedValueCents).toBe(0);
     expect(pool.categoriesWithoutTicket).toBe(1);
@@ -222,10 +225,10 @@ describe("dormant pool", () => {
         ],
       });
 
-      const pool = dormantPool(staging, { asOf: AS_OF });
+      const pool = dormantPool(staging, { asOf: AS_OF, timeZone: TZ });
 
       expect(pool.opportunityCount).toBe(0);
-      expect(pool.appointmentJoin).toMatchObject({ rows: 1, resolvedRows: 1, futureRows: 1 });
+      expect(pool.appointmentJoin).toMatchObject({ rows: 1, resolvedRows: 1 });
     });
 
     it("matches a name printed in the other order", () => {
@@ -240,7 +243,7 @@ describe("dormant pool", () => {
         ],
       });
 
-      expect(dormantPool(staging, { asOf: AS_OF }).opportunityCount).toBe(0);
+      expect(dormantPool(staging, { asOf: AS_OF, timeZone: TZ }).opportunityCount).toBe(0);
     });
 
     it("joins straight through when the export carries a patient id", () => {
@@ -253,7 +256,81 @@ describe("dormant pool", () => {
         ],
       });
 
-      expect(dormantPool(staging, { asOf: AS_OF }).opportunityCount).toBe(0);
+      expect(dormantPool(staging, { asOf: AS_OF, timeZone: TZ }).opportunityCount).toBe(0);
+    });
+
+    // The cutoff is the practice's own midnight. Read in UTC it under-excludes east of
+    // UTC, where the as-of day has already ended — and under-excluding is the one
+    // mistake this engine cannot make: it contacts a patient who has already rebooked.
+    it("excludes an appointment that is the next morning in the practice's zone", () => {
+      const staging = dormant({
+        appointments: [
+          appointment({
+            patientSourceIdentity: "p-1",
+            startAt: new Date(Date.parse(`${AS_OF}T22:00:00Z`)),
+          }),
+        ],
+      });
+
+      // 09:00 the morning after the as-of date, eleven hours east of UTC.
+      expect(
+        dormantPool(staging, { asOf: AS_OF, timeZone: "Pacific/Guadalcanal" }).opportunityCount,
+      ).toBe(0);
+      // The same instant is still the as-of afternoon four hours behind UTC.
+      expect(dormantPool(staging, { asOf: AS_OF, timeZone: TZ }).opportunityCount).toBe(1);
+    });
+
+    // The bound itself: the practice's midnight opens the day after, so a booking on it
+    // is a future booking.
+    it("excludes an appointment at the practice's midnight the morning after", () => {
+      const staging = dormant({
+        appointments: [
+          appointment({
+            patientSourceIdentity: "p-1",
+            // 00:00 on the following day in a practice four hours behind UTC.
+            startAt: new Date(Date.parse(`${ymd(2026, 6, 2)}T04:00:00Z`)),
+          }),
+        ],
+      });
+
+      expect(dormantPool(staging, { asOf: AS_OF, timeZone: TZ }).opportunityCount).toBe(0);
+    });
+
+    // A zone whose clocks skip MIDNIGHT: Santiago springs forward at 00:00 on 2026-09-06,
+    // so that day has no midnight and "the start of the following day" resolves to 23:00
+    // on the as-of day. Measured against that instant, the last hour of the as-of evening
+    // read as tomorrow and excluded a patient who holds no future booking at all.
+    // Comparing calendar days carries no such arithmetic.
+    it("keeps an evening appointment in a zone whose clocks skip midnight", () => {
+      const staging = dormant({
+        appointments: [
+          appointment({
+            patientSourceIdentity: "p-1",
+            // 23:30 practice-local on the as-of day, the night the transition lands on.
+            startAt: new Date(Date.parse(`${ymd(2026, 9, 6)}T03:30:00Z`)),
+          }),
+        ],
+        transactions: [paid("p-1", ymd(2025, 1, 10), "Injectables")],
+      });
+
+      expect(
+        dormantPool(staging, { asOf: ymd(2026, 9, 5), timeZone: "America/Santiago" })
+          .opportunityCount,
+      ).toBe(1);
+    });
+
+    it("keeps an evening appointment on the as-of day itself in the pool", () => {
+      const staging = dormant({
+        appointments: [
+          appointment({
+            patientSourceIdentity: "p-1",
+            // 21:00 practice-local on the as-of day — already the next day in UTC.
+            startAt: new Date(Date.parse(`${ymd(2026, 6, 2)}T01:00:00Z`)),
+          }),
+        ],
+      });
+
+      expect(dormantPool(staging, { asOf: AS_OF, timeZone: TZ }).opportunityCount).toBe(1);
     });
 
     it("keeps a PAST appointment from excluding anyone", () => {
@@ -266,7 +343,7 @@ describe("dormant pool", () => {
         ],
       });
 
-      expect(dormantPool(staging, { asOf: AS_OF }).opportunityCount).toBe(1);
+      expect(dormantPool(staging, { asOf: AS_OF, timeZone: TZ }).opportunityCount).toBe(1);
     });
 
     it("still pools a patient whose appointment rows will not join, and says so", () => {
@@ -281,7 +358,7 @@ describe("dormant pool", () => {
         ],
       });
 
-      const pool = dormantPool(staging, { asOf: AS_OF });
+      const pool = dormantPool(staging, { asOf: AS_OF, timeZone: TZ });
 
       expect(pool.opportunityCount).toBe(1);
       expect(pool.appointmentJoin).toMatchObject({ rows: 1, resolvedRows: 0 });
@@ -304,7 +381,7 @@ describe("dormant pool", () => {
       ],
     });
 
-    expect(dormantPool(staging, { asOf: AS_OF }).contactability).toEqual({
+    expect(dormantPool(staging, { asOf: AS_OF, timeZone: TZ }).contactability).toEqual({
       withPhone: 1,
       withEmail: 1,
       withEither: 2,
@@ -345,7 +422,7 @@ describe("unconverted consults", () => {
     snapshot({ consults: [consult({ patientName: "Otherly Fakeman" })], ...parts });
 
   it("pools an unbooked consult and values it at the quoted dollars", () => {
-    const pool = unconvertedConsults(unbooked({}), { asOf: AS_OF });
+    const pool = unconvertedConsults(unbooked({}), { asOf: AS_OF, timeZone: TZ });
 
     expect(pool).toMatchObject({
       poolCount: 1,
@@ -360,7 +437,7 @@ describe("unconverted consults", () => {
       consults: [consult({ patientName: "Otherly Fakeman", bookedRaw: "Yes" })],
     });
 
-    expect(unconvertedConsults(staging, { asOf: AS_OF })).toMatchObject({
+    expect(unconvertedConsults(staging, { asOf: AS_OF, timeZone: TZ })).toMatchObject({
       poolCount: 0,
       bookedCount: 1,
     });
@@ -371,7 +448,7 @@ describe("unconverted consults", () => {
       consults: [consult({ patientName: "Otherly Fakeman", bookedRaw: "maybe" })],
     });
 
-    expect(unconvertedConsults(staging, { asOf: AS_OF })).toMatchObject({
+    expect(unconvertedConsults(staging, { asOf: AS_OF, timeZone: TZ })).toMatchObject({
       poolCount: 0,
       uninterpretableCount: 1,
     });
@@ -382,11 +459,13 @@ describe("unconverted consults", () => {
       consults: [consult({ patientName: "Otherly Fakeman", consultDate: daysBefore(29) })],
     });
 
-    expect(unconvertedConsults(staging, { asOf: AS_OF })).toMatchObject({
+    expect(unconvertedConsults(staging, { asOf: AS_OF, timeZone: TZ })).toMatchObject({
       poolCount: 0,
       tooRecentCount: 1,
     });
-    expect(unconvertedConsults(staging, { asOf: AS_OF, minAgeDays: 14 }).poolCount).toBe(1);
+    expect(
+      unconvertedConsults(staging, { asOf: AS_OF, timeZone: TZ, minAgeDays: 14 }).poolCount,
+    ).toBe(1);
   });
 
   it("counts a quote-less consult separately instead of valuing it at zero", () => {
@@ -394,7 +473,7 @@ describe("unconverted consults", () => {
       consults: [consult({ patientName: "Otherly Fakeman", quoteAmountCents: null })],
     });
 
-    expect(unconvertedConsults(staging, { asOf: AS_OF })).toMatchObject({
+    expect(unconvertedConsults(staging, { asOf: AS_OF, timeZone: TZ })).toMatchObject({
       poolCount: 1,
       quotedValueCents: 0,
       withoutQuoteCount: 1,
@@ -408,7 +487,7 @@ describe("unconverted consults", () => {
       transactions: [paid("p-9", daysBefore(60), "Injectables")],
     });
 
-    expect(unconvertedConsults(staging, { asOf: AS_OF })).toMatchObject({
+    expect(unconvertedConsults(staging, { asOf: AS_OF, timeZone: TZ })).toMatchObject({
       poolCount: 0,
       excludedReturnedCount: 1,
     });
@@ -425,7 +504,7 @@ describe("unconverted consults", () => {
       ],
     });
 
-    expect(unconvertedConsults(staging, { asOf: AS_OF })).toMatchObject({
+    expect(unconvertedConsults(staging, { asOf: AS_OF, timeZone: TZ })).toMatchObject({
       poolCount: 0,
       excludedReturnedCount: 1,
     });
@@ -438,7 +517,7 @@ describe("unconverted consults", () => {
       transactions: [paid("p-9", daysBefore(120), "Injectables")],
     });
 
-    expect(unconvertedConsults(staging, { asOf: AS_OF }).poolCount).toBe(1);
+    expect(unconvertedConsults(staging, { asOf: AS_OF, timeZone: TZ }).poolCount).toBe(1);
   });
 
   it("flags a name that matches two patients rather than picking one", () => {
@@ -449,14 +528,14 @@ describe("unconverted consults", () => {
       ],
     });
 
-    expect(unconvertedConsults(staging, { asOf: AS_OF })).toMatchObject({
+    expect(unconvertedConsults(staging, { asOf: AS_OF, timeZone: TZ })).toMatchObject({
       poolCount: 0,
       ambiguousNameCount: 1,
     });
   });
 
   it("keeps a consult whose name is in no roster row, and says so", () => {
-    const pool = unconvertedConsults(unbooked({}), { asOf: AS_OF });
+    const pool = unconvertedConsults(unbooked({}), { asOf: AS_OF, timeZone: TZ });
 
     expect(pool).toMatchObject({ poolCount: 1, unresolvedNameCount: 1 });
   });

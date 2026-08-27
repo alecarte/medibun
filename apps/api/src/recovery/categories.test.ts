@@ -99,6 +99,14 @@ describe("typical tickets — per-visit grouping", () => {
     expect(summary.categories[0]).toMatchObject({ visitCount: 1, typicalTicketCents: 20_000 });
   });
 
+  // Each counter answers its own question, so the seed CLI's line stays honest: a row
+  // missing both fields is missing a category AND missing a patient id.
+  it("counts a row missing both a category and a patient id under both", () => {
+    const summary = typicalTickets([line(null, D1, null, 30_000)]);
+
+    expect(summary).toMatchObject({ rowsWithoutCategory: 1, rowsWithoutPatient: 1 });
+  });
+
   it("drops a visit that nets to nothing — a refund is not a ticket", () => {
     const summary = typicalTickets([
       line("p-1", D1, "Injectables", -20_000),

@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 
 import { serviceCategories, stagedTransactions } from "../db/schema.js";
+import { currentImportIds } from "../ingest/importer.js";
 
 /**
  * Service-category seeding (R2c, RECOVERY_DESIGN.md §3). Two numbers per category, from
@@ -32,6 +33,23 @@ export type TransactionInput = {
   readonly serviceCategoryRaw: string | null;
   readonly amountCents: number;
 };
+
+/** The staged revenue read both callers make — the ticket math here and the pools'
+ *  snapshot (`readStaging`, segmentation.ts) — with the run stamp each of them filters by.
+ *  One column list on purpose: two copies of it are two answers to "which columns is this
+ *  number computed over", and they drift silently. */
+export const selectStagedTransactions = async (
+  db: Db,
+): Promise<readonly (TransactionInput & { readonly importId: string })[]> =>
+  db
+    .select({
+      patientSourceIdentity: stagedTransactions.patientSourceIdentity,
+      transactionDate: stagedTransactions.transactionDate,
+      serviceCategoryRaw: stagedTransactions.serviceCategoryRaw,
+      amountCents: stagedTransactions.amountCents,
+      importId: stagedTransactions.importId,
+    })
+    .from(stagedTransactions);
 
 /**
  * The category's primary key: the source label, folded to a slug. Case and punctuation
@@ -107,12 +125,16 @@ export function groupVisits(rows: readonly TransactionInput[]): VisitGrouping {
 
   for (const row of rows) {
     const label = row.serviceCategoryRaw?.trim() ?? "";
+    // Each condition is counted on its own, so a row missing BOTH increments both: the
+    // seed CLI prints these as two independent answers ("N rows carry no category · M
+    // carry no patient id"), and they deliberately do not sum to the rows dropped.
     if (label === "") {
       rowsWithoutCategory += 1;
-      continue;
     }
     if (!row.patientSourceIdentity) {
       rowsWithoutPatient += 1;
+    }
+    if (label === "" || !row.patientSourceIdentity) {
       continue;
     }
     const code = categoryCode(label);
@@ -270,6 +292,10 @@ export type SeedSummary = {
   readonly rowsWithoutCategory: number;
   readonly rowsWithoutPatient: number;
   readonly nonPositiveVisits: number;
+  /** Staged revenue rows the latest counted import no longer contains, excluded from
+   *  the ticket math. Counted so the CLI can state the exclusion rather than make it in
+   *  silence — the same posture the report takes. */
+  readonly superseded: number;
 };
 
 /** Merges the computed tickets with the operator's config. The config is authoritative
@@ -309,14 +335,14 @@ function merge(tickets: TicketSummary, config: CadenceConfig): SeededCategory[] 
  * export and config rewrites the same rows.
  */
 export async function seedServiceCategories(db: Db, config: CadenceConfig): Promise<SeedSummary> {
-  const rows = await db
-    .select({
-      patientSourceIdentity: stagedTransactions.patientSourceIdentity,
-      transactionDate: stagedTransactions.transactionDate,
-      serviceCategoryRaw: stagedTransactions.serviceCategoryRaw,
-      amountCents: stagedTransactions.amountCents,
-    })
-    .from(stagedTransactions);
+  // Only the rows the LATEST COUNTED revenue import still contains — the same rule the
+  // pools read staging by (`currentImportIds`, and the full-dump assumption it carries). A
+  // corrected line stages as a new row beside the old one, and averaging both would net a
+  // single visit twice over. What that leaves out is COUNTED and returned, so the seed CLI
+  // states the exclusion instead of making it silently.
+  const current = await currentImportIds(db);
+  const staged = await selectStagedTransactions(db);
+  const rows = staged.filter((row) => current.has(row.importId));
 
   const tickets = typicalTickets(rows);
   const categories = merge(tickets, config);
@@ -354,5 +380,6 @@ export async function seedServiceCategories(db: Db, config: CadenceConfig): Prom
     rowsWithoutCategory: tickets.rowsWithoutCategory,
     rowsWithoutPatient: tickets.rowsWithoutPatient,
     nonPositiveVisits: tickets.nonPositiveVisits,
+    superseded: staged.length - rows.length,
   };
 }

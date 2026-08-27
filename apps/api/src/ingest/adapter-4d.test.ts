@@ -182,7 +182,7 @@ describe("4D adapter — patients (Patient Export)", () => {
     // US-style dates read the same as ISO ones.
     expect(rows[1]).toMatchObject({ dob: ymd(1971, 5, 13), spendCents: 8_900 });
     expect(layoutRowCount).toBe(PREAMBLE.length + 1);
-    expect(declaredTotals).toEqual([{ label: "Patients", count: 2 }]);
+    expect(declaredTotals).toEqual([2]);
   });
 
   // Data minimization (R0): the export ships address columns; nothing may stage them.
@@ -324,7 +324,7 @@ describe("4D adapter — appointments (Detailed Appointment List)", () => {
       phone: "555-0100",
       serviceCategoryRaw: "Injectables",
     });
-    expect(declaredTotals).toEqual([{ label: "Appointments", count: 3 }]);
+    expect(declaredTotals).toEqual([3]);
   });
 
   it("reads a winter wall time in the practice's own zone", () => {
@@ -514,7 +514,7 @@ describe("4D adapter — consults (Conversion By Provider)", () => {
       bookedRaw: "No",
       completedRaw: "Yes",
     });
-    expect(declaredTotals).toEqual([{ label: "Quotes", count: 1 }]);
+    expect(declaredTotals).toEqual([1]);
   });
 
   it("stages neither the coordinator nor days-to-book", () => {
@@ -532,6 +532,39 @@ describe("4D adapter — consults (Conversion By Provider)", () => {
 
     expect(rows).toEqual([]);
     expect(rejects[0]?.reason).toContain("patient");
+  });
+
+  // R0 prints the provider section as a lone cell in COLUMN 0 — the consult date's own
+  // column. Deciding a lone cell by which column it sits in rejected every one of them
+  // ("patient is required") and left every consult beneath without a provider.
+  it("reads a provider section printed in the date column, with nothing rejected", () => {
+    const content = reportFile([], CONSULT_HEADERS, [
+      ["Dr Fakeman"],
+      consultRow("q-1", ymd(2026, 7, 15)),
+      consultRow("q-2", ymd(2026, 7, 16)),
+    ]);
+
+    const { rows, rejects } = adapter.parse("consults", content);
+
+    expect(rejects).toEqual([]);
+    expect(rows.map((r) => r.providerRaw)).toEqual(["Dr Fakeman", "Dr Fakeman"]);
+  });
+
+  // The cost of that rule, pinned rather than left to be discovered: a consult row that
+  // fills only its patient name reads as a section and rides down as the provider. It
+  // would have rejected as a data row anyway (no consult date), so what is lost is a
+  // reject line; what is gained is every systematic section row. First-run observation.
+  it("reads a lone patient name as a section — the ambiguity that buys the rule", () => {
+    const content = reportFile([], CONSULT_HEADERS, [
+      ["Dr Fakeman"],
+      sparseRow(CONSULT_WIDTH, { 3: "Testerly Fakeman" }),
+      consultRow("q-1", ymd(2026, 7, 15)),
+    ]);
+
+    const { rows, rejects } = adapter.parse("consults", content);
+
+    expect(rejects).toEqual([]);
+    expect(rows.map((r) => r.providerRaw)).toEqual(["Testerly Fakeman"]);
   });
 
   it("rejects a quote amount it cannot read rather than staging a zero", () => {
@@ -577,6 +610,32 @@ describe("4D adapter — transactions (Revenue by Staff)", () => {
     );
 
     expect(adapter.parse("transactions", content).rows[0]?.transactionDate).toBe(ymd(2026, 7, 15));
+  });
+
+  // A refund is as likely to be printed the way an accounting package writes one:
+  // parentheses for the sign, which may also sit on either side of the currency symbol.
+  it("reads a refund written in accounting spelling", () => {
+    const content = reportFile([], TRANSACTION_HEADERS, [
+      transactionRow("p-1", mdy(2026, 7, 15), "(250.00)"),
+      transactionRow("p-2", mdy(2026, 7, 16), "($250.00)"),
+      transactionRow("p-3", mdy(2026, 7, 17), "$-250.00"),
+    ]);
+
+    const { rows, rejects } = adapter.parse("transactions", content);
+
+    expect(rejects).toEqual([]);
+    expect(rows.map((r) => r.amountCents)).toEqual([-25_000, -25_000, -25_000]);
+  });
+
+  it("rejects a bracketed value that is not money at all", () => {
+    const content = reportFile([], TRANSACTION_HEADERS, [
+      transactionRow("p-1", mdy(2026, 7, 15), "(abc)"),
+    ]);
+
+    const { rows, rejects } = adapter.parse("transactions", content);
+
+    expect(rows).toEqual([]);
+    expect(rejects[0]?.reason).toContain("amount");
   });
 
   it("rejects an unreadable amount rather than staging a zero", () => {

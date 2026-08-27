@@ -65,17 +65,25 @@ export class UnknownTimeZoneError extends Error {
  *  (minute precision is what the schedule works in; a trailing :ss is read and dropped). */
 const DATE_TIME = /^(.+?)[ T](\d{1,2}):(\d{2})(?::\d{2})?\s*(?:([ap])\.?m\.?)?$/i;
 
-/** Money written as dollars ("1234.56", "$1,234.56", "-250.00" for a refund) as integer
- *  cents, or undefined if it is not a money amount at all. A value we cannot read is a
- *  rejected row, never a zero: a silent zero understates the leak. */
+/** Money written as dollars ("1234.56", "$1,234.56") as integer cents, or undefined if it
+ *  is not a money amount at all. A refund may be spelled any way an accounting package
+ *  spells one — "-250.00", "-$250.00", "$-250.00", "(250.00)", "($250.00)" — because a
+ *  refund read as a positive charge would net the wrong way into a visit total. A value we
+ *  cannot read is a rejected row, never a zero: a silent zero understates the leak. */
 function moneyCents(value: string): number | undefined {
-  const match = /^(-?)\$?(\d+|\d{1,3}(?:,\d{3})+)(?:\.(\d{1,2}))?$/.exec(value.replaceAll(" ", ""));
+  const compact = value.replaceAll(" ", "");
+  // Parentheses wrap the whole amount, so they are peeled before the sign is read; an
+  // unbalanced one falls through to the match below and rejects.
+  const bracketed = /^\((.*)\)$/.exec(compact);
+  const match = /^(-?)\$?(-?)(\d+|\d{1,3}(?:,\d{3})+)(?:\.(\d{1,2}))?$/.exec(
+    bracketed ? bracketed[1]! : compact,
+  );
   if (!match) {
     return undefined;
   }
   const cents =
-    Number(match[2]!.replaceAll(",", "")) * 100 + Number((match[3] ?? "").padEnd(2, "0"));
-  return match[1] === "-" ? -cents : cents;
+    Number(match[3]!.replaceAll(",", "")) * 100 + Number((match[4] ?? "").padEnd(2, "0"));
+  return bracketed || match[1] === "-" || match[2] === "-" ? -cents : cents;
 }
 
 /** A practice-local wall time as the instant it names, in 24-hour or AM/PM spelling
@@ -230,7 +238,14 @@ function entitySpecs(timeZone: string): EntitySpecs {
    *  DOB, phone, Appt Type. No patient-id and no status column exist — `status` stays
    *  mapped as an optional upgrade, nothing depends on it. Provider arrives as a section
    *  row and the day as a separator row above rows that carry only a time; the pre-pass
-   *  carries both down. Allergy and Description are NEVER mapped (see NEVER_MAPPED). */
+   *  carries both down. Allergy and Description are NEVER mapped (see NEVER_MAPPED).
+   *
+   *  Known limit, the first-run posture: `startAt` reads ONE column. If the real export
+   *  prints Date and Time as two separate columns, the alias list binds it to the date
+   *  column and every row rejects — loudly, on the first run, naming the column. Composing
+   *  two columns into one instant is the fix to make THEN, against the header the export
+   *  actually prints; building it speculatively means guessing both column names and the
+   *  precedence between them, and carrying a branch no export has yet asked for. */
   const appointments: EntitySpec<StagedAppointmentRow> = {
     // DERIVED identity: this export has no row id. sha256 over the row's normalized
     // identifying fields, plus an occurrence suffix (#2, #3 … in file order) that keeps
@@ -253,6 +268,13 @@ function entitySpecs(timeZone: string): EntitySpecs {
     // occurrence suffix goes stale. Both are visible as unmatched staging rows, and
     // neither can double-count a recovery: attribution runs off the Medplum booking, not
     // off staging. A source that carries a real row id never has this problem.
+    //
+    // The suffix binds to FILE ORDER, which is the last thing here that is not a property
+    // of the row: two rows identical but for their provider take #1 and #2 in the order
+    // the export prints its provider sections, so an export that orders those sections
+    // differently swaps which suffix carries which provider. Latent today — nothing reads
+    // `providerRaw` — and real the moment something does, which is the point at which the
+    // provider has to enter the hash (and the reconciliation cost of that be accepted).
     identity: {
       derive: (row) => [row.patientName, row.dob, row.phone, row.startAt, row.serviceCategoryRaw],
     },
@@ -381,7 +403,7 @@ const identityPart = (value: unknown): string => {
 
 const derivedIdentity = (entity: string, parts: readonly unknown[]): string =>
   createHash("sha256")
-    .update([entity, ...parts.map(identityPart)].join(" "))
+    .update([entity, ...parts.map(identityPart)].join("\u0000"))
     .digest("hex");
 
 type RowResult<Row> = { ok: true; row: Row } | { ok: false; reason: string };
