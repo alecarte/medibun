@@ -9,7 +9,7 @@ import { runLeakReportCli, runSeedCategoriesCli } from "./cli.js";
 import { RECOVERED_DEFINITION } from "./leak-report.js";
 import { createFourDAdapter } from "../ingest/adapter-4d.js";
 import { createImportService } from "../ingest/importer.js";
-import { csvFile, reportFile, ymd, ymdhm } from "../ingest/test-fixtures.js";
+import { csvFile, prose, reportFile, ymd, ymdhm } from "../ingest/test-fixtures.js";
 import * as schema from "../db/schema.js";
 import { bootTestDb } from "../db/test-db.js";
 import type { StagedEntity } from "../db/schema.js";
@@ -212,9 +212,9 @@ let db: ReturnType<typeof drizzle>;
 let dir: string;
 const out: string[] = [];
 let html: string;
-/** The document's prose, markup stripped and whitespace collapsed — how a reader reads
- *  it, so assertions do not depend on where the template happens to wrap. */
-let prose: string;
+/** The document as a reader reads it (test-fixtures.ts: markup stripped, whitespace
+ *  collapsed), so assertions do not depend on where the template happens to wrap. */
+let reportProse: string;
 
 beforeAll(async () => {
   db = await bootTestDb();
@@ -250,7 +250,7 @@ beforeAll(async () => {
     out: (line) => out.push(line),
   });
   html = readFileSync(run.outPath, "utf8");
-  prose = html.replaceAll(/<[^>]*>/g, " ").replaceAll(/\s+/g, " ");
+  reportProse = prose(html);
 }, 60_000);
 
 describe("category seeding", () => {
@@ -283,38 +283,38 @@ describe("category seeding", () => {
 
 describe("the leak report", () => {
   it("counts the dormant pool from the revenue rows, less the patient booked ahead", () => {
-    expect(prose).toContain("3 opportunities across 3 patients");
+    expect(reportProse).toContain("3 opportunities across 3 patients");
     // 2 dormant injectables patients at $500, plus 1 dormant peels patient at $200.
-    expect(prose).toContain("$1,200");
-    expect(prose).toContain(INJECTABLES);
-    expect(prose).toContain("1 otherwise-dormant patient was left out of the pool");
+    expect(reportProse).toContain("$1,200");
+    expect(reportProse).toContain(INJECTABLES);
+    expect(reportProse).toContain("1 otherwise-dormant patient was left out of the pool");
   });
 
   it("counts the unconverted consults and every degradation beside them", () => {
     // Booked, too recent, returned, ambiguous, and uninterpretable are each held back.
-    expect(prose).toContain("2 consults quoted and not booked");
-    expect(prose).toContain("$8,000");
-    expect(prose).toContain("1 consult removed");
-    expect(prose).toContain("1 consult held back as ambiguous");
-    expect(prose).toContain("1 consult whose booked column carried no answer");
-    expect(prose).toContain("1 consult kept in the pool whose name matched no roster record");
-    expect(prose).toContain("1 consult read as booked and 1 consult as too recent");
+    expect(reportProse).toContain("2 consults quoted and not booked");
+    expect(reportProse).toContain("$8,000");
+    expect(reportProse).toContain("1 consult removed");
+    expect(reportProse).toContain("1 consult held back as ambiguous");
+    expect(reportProse).toContain("1 consult whose booked column carried no answer");
+    expect(reportProse).toContain("1 consult kept in the pool whose name matched no roster record");
+    expect(reportProse).toContain("1 consult read as booked and 1 consult as too recent");
   });
 
   it("states one headline figure — both pools", () => {
-    expect(prose).toContain("$9,200");
+    expect(reportProse).toContain("$9,200");
   });
 
   it("reports the appointment join honestly rather than hiding the misses", () => {
-    expect(prose).toContain("2 of 3 rows matched (67%)");
+    expect(reportProse).toContain("2 of 3 rows matched (67%)");
   });
 
   // Staged instants are timestamptz; the report dates them in the PRACTICE's zone. The
   // 21:30 appointment falls on the next UTC day, and printing that would tell a practice
   // its export covers a day it does not.
   it("dates the appointment window in the practice's zone, not UTC", () => {
-    expect(prose).toContain(`${ymd(2025, 11, 1)} to ${ymd(2026, 8, 1)}`);
-    expect(prose).not.toContain(ymd(2026, 8, 2));
+    expect(reportProse).toContain(`${ymd(2025, 11, 1)} to ${ymd(2026, 8, 1)}`);
+    expect(reportProse).not.toContain(ymd(2026, 8, 2));
   });
 
   it("quotes the contractual definition of recovered, verbatim", () => {

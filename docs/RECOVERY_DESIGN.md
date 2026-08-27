@@ -167,6 +167,20 @@ campaign-builder UI · automation levels above approve-every-touch · external-c
 
 ## Review log
 
+- 2026-08-15 — **R2 code-review follow-ups (quality round, no behavior change).** The rules
+  the R2 CLIs hold twice are now held once: the PHI-safe failure line is one parameterized
+  implementation (`ingest/import-cli.ts` `makeErrorLine`, each CLI supplying its own safe
+  classes and prefix) with `readArg` shared beside it; the local scripts' bootstrap —
+  `EXPERIENCE_DATABASE_URL` guard, pool, exit code, print-`errorLine`-only failure posture —
+  is one `runLocalScript` (`src/local-script.ts`), leaving each `scripts/*.ts` a two-line
+  composition root; per-visit grouping is one `groupVisits` (`recovery/categories.ts`) that
+  both the ticket average and the dormant pool's last-paid-visit fold over, so "both numbers
+  mean one thing" is enforced rather than maintained; the NEVER_MAPPED guard normalizes
+  through header matching's own `normalizeHeader`, so guard and matching cannot drift. Also:
+  the roster index and the future-appointment join are computed ONCE per report and passed
+  into both pools (`prepareIndexes`) instead of rebuilt per pool, and the index appends to
+  its collision lists instead of rebuilding them. The existing suites are the proof — no
+  test changed except the two leak suites, which now share one `prose` helper.
 - 2026-08-14 — **R2c built: the pool queries and the Leak Report v1.** Segmentation
   (`apps/api/src/recovery/segmentation.ts`) is a pure layer over one read of staging, so
   every pool rule is testable without a database. **Dormant** runs on revenue exactly as R0

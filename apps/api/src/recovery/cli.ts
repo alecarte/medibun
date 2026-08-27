@@ -17,7 +17,7 @@ import {
   type LeakReportData,
 } from "./leak-report.js";
 import { calendarDate, isKnownTimeZone } from "../ingest/dates.js";
-import { errorCodeOf, UsageError } from "../ingest/import-cli.js";
+import { errorCodeOf, makeErrorLine, readArg, UsageError } from "../ingest/import-cli.js";
 
 /**
  * The two recovery CLIs' bodies, separated from `scripts/` so they can be tested — the
@@ -37,30 +37,15 @@ type Db = PgDatabase<PgQueryResultHKT, any, any>;
 export { UsageError };
 
 /**
- * The one line a failure is allowed to print, on the same rule as the import CLI: only
- * our own typed errors are safe in full, because a driver error's message embeds the
+ * The one line a failure is allowed to print, built from the import CLI's shared rule:
+ * only our own typed errors are safe in full, because a driver error's message embeds the
  * failed query and its bound parameters. Everything else degrades to a class name and a
  * driver code — enough to diagnose, nothing to leak.
  */
-export function errorLine(err: unknown): string {
-  if (
-    err instanceof UsageError ||
-    err instanceof ConfigError ||
-    err instanceof NoStagedRevenueError
-  ) {
-    return err.message;
-  }
-  if (err instanceof Error) {
-    const code = errorCodeOf(err);
-    return `command failed: ${err.name}${code ? ` (${code})` : ""}`;
-  }
-  return "command failed";
-}
-
-const readArg = (argv: readonly string[], name: string): string | undefined => {
-  const index = argv.indexOf(`--${name}`);
-  return index === -1 ? undefined : argv[index + 1];
-};
+export const errorLine = makeErrorLine(
+  [UsageError, ConfigError, NoStagedRevenueError],
+  "command failed",
+);
 
 /** Reads a file for the operator without letting its path reach the terminal: a
  *  directory a human chose can itself name a patient. */
